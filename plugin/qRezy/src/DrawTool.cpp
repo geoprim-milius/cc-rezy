@@ -393,22 +393,22 @@ CCVector2d DrawTool::snapPoint( const QPoint& pos, SnapType& type ) const
 	}
 
 	// jen úsečky v dosahu
-	std::vector<const Segment*> near;
+	std::vector<const Segment*> nearSegs;
 	for ( const Segment& s : segs )
 	{
 		if ( dist( closestOnSegment( s.a, s.b, P ), P ) < tol )
 		{
-			near.push_back( &s );
+			nearSegs.push_back( &s );
 		}
 	}
 
 	// 2) průsečíky
-	for ( size_t i = 0; i < near.size(); ++i )
+	for ( size_t i = 0; i < nearSegs.size(); ++i )
 	{
-		for ( size_t j = i + 1; j < near.size(); ++j )
+		for ( size_t j = i + 1; j < nearSegs.size(); ++j )
 		{
 			CCVector2d I;
-			if ( segmentIntersection( near[i]->a, near[i]->b, near[j]->a, near[j]->b, I ) )
+			if ( segmentIntersection( nearSegs[i]->a, nearSegs[i]->b, nearSegs[j]->a, nearSegs[j]->b, I ) )
 			{
 				const double d = dist( I, P );
 				if ( d < best )
@@ -426,7 +426,7 @@ CCVector2d DrawTool::snapPoint( const QPoint& pos, SnapType& type ) const
 	}
 
 	// 3) středy
-	for ( const Segment* s : near )
+	for ( const Segment* s : nearSegs )
 	{
 		const CCVector2d M = ( s->a + s->b ) * 0.5;
 		const double d = dist( M, P );
@@ -444,7 +444,7 @@ CCVector2d DrawTool::snapPoint( const QPoint& pos, SnapType& type ) const
 
 	// 4) na čáře
 	best = tol;
-	for ( const Segment* s : near )
+	for ( const Segment* s : nearSegs )
 	{
 		const CCVector2d C = closestOnSegment( s->a, s->b, P );
 		const double d = dist( C, P );
