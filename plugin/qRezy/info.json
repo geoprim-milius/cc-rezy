@@ -1,0 +1,9 @@
+{
+	"type" : "Standard",
+	"name" : "Řezy",
+	"icon" : ":/CC/plugin/qRezy/images/icon.png",
+	"description": "Vodorovné a svislé řezy mračnem bodů a kreslení 2D výkresu nad nimi (výstup MicroStation V7).",
+	"authors" : [
+		{ "name" : "Geoprim" }
+	]
+}

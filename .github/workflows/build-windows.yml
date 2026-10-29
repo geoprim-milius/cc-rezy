@@ -1,0 +1,102 @@
+name: Sestavení pro Windows
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CC_VERSION: v2.13.2
+  LASZIP_VERSION: 3.4.4
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 150
+
+    steps:
+      - name: Kód pluginu
+        uses: actions/checkout@v4
+        with:
+          path: rezy
+
+      - name: Zdrojový kód CloudCompare ${{ env.CC_VERSION }}
+        shell: bash
+        run: |
+          git clone --depth 1 --branch "$CC_VERSION" https://github.com/CloudCompare/CloudCompare.git cc
+          cd cc
+          git submodule update --init --depth 1 libs/qCC_db/extern/CCCoreLib
+          git -C libs/qCC_db/extern/CCCoreLib submodule update --init --depth 1
+          mkdir -p plugins/private
+          cp -r ../rezy/plugin/qRezy plugins/private/qRezy
+
+      - name: Qt 5.15.2
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          arch: win64_msvc2019_64
+          cache: true
+
+      - name: LASzip ${{ env.LASZIP_VERSION }}
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch $env:LASZIP_VERSION https://github.com/LASzip/LASzip.git laszip-src
+          cmake -S laszip-src -B laszip-build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_POLICY_VERSION_MINIMUM="3.5" `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE/laszip"
+          cmake --build laszip-build --config Release --parallel
+          cmake --install laszip-build --config Release
+          Get-ChildItem -Recurse "$env:GITHUB_WORKSPACE/laszip" | Select-Object FullName
+
+      - name: Konfigurace
+        shell: pwsh
+        run: |
+          $lz = "$env:GITHUB_WORKSPACE/laszip"
+          $lib = (Get-ChildItem -Recurse "$lz/lib" -Filter "laszip*.lib" | Where-Object { $_.Name -notmatch "api" } | Select-Object -First 1).FullName
+          $dll = (Get-ChildItem -Recurse $lz -Filter "laszip*.dll" | Where-Object { $_.Name -notmatch "api" } | Select-Object -First 1).FullName
+          Write-Host "LASzip lib: $lib  dll: $dll"
+          cmake -S cc -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_POLICY_VERSION_MINIMUM="3.5" `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE/out" `
+            -DOPTION_BUILD_CCVIEWER=OFF `
+            -DOPTION_MP_BUILD=ON `
+            -DPLUGIN_STANDARD_QREZY=ON `
+            -DPLUGIN_IO_QCORE=ON `
+            -DPLUGIN_IO_QADDITIONAL=ON `
+            -DPLUGIN_IO_QLAS=ON `
+            -DPLUGIN_GL_QEDL=ON `
+            -DLASZIP_INCLUDE_DIR="$lz/include" `
+            -DLASZIP_LIBRARY="$lib" `
+            -DLASZIP_DLL="$dll"
+
+      - name: Překlad
+        run: cmake --build build --config Release --parallel
+
+      - name: Instalace
+        shell: pwsh
+        run: |
+          cmake --install build --config Release
+          # běhové knihovny MSVC, aby program běžel i bez Visual C++ Redistributable
+          $redist = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio\2022\*\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" -Directory | Select-Object -First 1
+          if ($redist) { Copy-Item "$($redist.FullName)\*.dll" "out/CloudCompare/" }
+          Get-ChildItem out/CloudCompare | Select-Object Name
+          Get-ChildItem out/CloudCompare/plugins | Select-Object Name
+
+      - name: Test spuštění (načtení pluginů)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "out/CloudCompare/CloudCompare.exe" -ArgumentList "-SILENT","-LOG_FILE","$env:GITHUB_WORKSPACE/cc_log.txt" -PassThru
+          if (-not $p.WaitForExit(120000)) { Write-Host "Timeout - ukončuji"; $p.Kill() }
+          Write-Host "Exit code: $($p.ExitCode)"
+          if (Test-Path cc_log.txt) { Get-Content cc_log.txt }
+
+      - name: Uložit výsledek
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloudCompare-Rezy
+          path: out/CloudCompare
+          retention-days: 30
