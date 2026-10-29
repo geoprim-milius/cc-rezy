@@ -11,6 +11,8 @@ class QDoubleSpinBox;
 class QCheckBox;
 class QPushButton;
 class QShortcut;
+class QComboBox;
+class DrawTool;
 
 //! Panel „Řezy“: vodorovný řez mračnem s posunem nahoru/dolů
 class RezDock : public QDockWidget
@@ -37,6 +39,11 @@ private:
 	void topView();
 	void zeroFromFloor();
 	double estimateFloor( ccGenericPointCloud* cloud ) const;
+	void toggleDrawing( bool on );
+	void exportV7();
+	void chooseSeed();
+	void editSymbology();
+	void focusView();
 
 	ccMainAppInterface* m_app = nullptr;
 	unsigned m_cloudID = 0;
@@ -52,4 +59,14 @@ private:
 	QLabel* m_relLabel = nullptr;
 	QShortcut* m_up = nullptr;
 	QShortcut* m_down = nullptr;
+
+	// kreslení
+	DrawTool* m_draw = nullptr;
+	QPushButton* m_drawBtn = nullptr;
+	QComboBox* m_catCombo = nullptr;
+	QCheckBox* m_hiddenChk = nullptr;
+	QCheckBox* m_orthoChk = nullptr;
+	QPushButton* m_deleteBtn = nullptr;
+	QLabel* m_status = nullptr;
+	QLabel* m_seedLabel = nullptr;
 };

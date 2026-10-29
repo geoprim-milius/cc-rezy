@@ -83,7 +83,9 @@ jobs:
           $redist = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio\2022\*\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" -Directory | Select-Object -First 1
           if ($redist) { Copy-Item "$($redist.FullName)\*.dll" "out/CloudCompare/" }
           Get-ChildItem out/CloudCompare | Select-Object Name
-          Get-ChildItem out/CloudCompare/plugins | Select-Object Name
+          $plugins = (Get-ChildItem out/CloudCompare/plugins -Filter *.dll | ForEach-Object { $_.Name }) -join ", "
+          Write-Host "::notice title=Pluginy::$plugins"
+          if (-not (Test-Path out/CloudCompare/plugins/QREZY_PLUGIN.dll)) { Write-Host "::error::Chybí QREZY_PLUGIN.dll"; exit 1 }
 
       - name: Test spuštění (načtení pluginů)
         continue-on-error: true
@@ -92,7 +94,11 @@ jobs:
           $p = Start-Process -FilePath "out/CloudCompare/CloudCompare.exe" -ArgumentList "-SILENT","-LOG_FILE","$env:GITHUB_WORKSPACE/cc_log.txt" -PassThru
           if (-not $p.WaitForExit(120000)) { Write-Host "Timeout - ukončuji"; $p.Kill() }
           Write-Host "Exit code: $($p.ExitCode)"
-          if (Test-Path cc_log.txt) { Get-Content cc_log.txt }
+          if (Test-Path cc_log.txt) {
+            Get-Content cc_log.txt
+            $lines = (Get-Content cc_log.txt | Select-String -Pattern "plugin|Plugin|error|Error" | ForEach-Object { $_.Line }) -join " | "
+            Write-Host "::notice title=Log spuštění::$lines"
+          } else { Write-Host "::warning::Log spuštění nevznikl" }
 
       - name: Uložit výsledek
         uses: actions/upload-artifact@v4

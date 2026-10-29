@@ -2,6 +2,9 @@ target_sources( ${PROJECT_NAME}
 	PRIVATE
 		${CMAKE_CURRENT_LIST_DIR}/qRezy.h
 		${CMAKE_CURRENT_LIST_DIR}/RezDock.h
+		${CMAKE_CURRENT_LIST_DIR}/DrawTool.h
+		${CMAKE_CURRENT_LIST_DIR}/Drawing.h
+		${CMAKE_CURRENT_LIST_DIR}/DgnV7.h
 )
 
 target_include_directories( ${PROJECT_NAME}

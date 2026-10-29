@@ -2,4 +2,7 @@ target_sources( ${PROJECT_NAME}
 	PRIVATE
 		${CMAKE_CURRENT_LIST_DIR}/qRezy.cpp
 		${CMAKE_CURRENT_LIST_DIR}/RezDock.cpp
+		${CMAKE_CURRENT_LIST_DIR}/DrawTool.cpp
+		${CMAKE_CURRENT_LIST_DIR}/Drawing.cpp
+		${CMAKE_CURRENT_LIST_DIR}/DgnV7.cpp
 )
