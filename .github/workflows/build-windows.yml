@@ -73,7 +73,14 @@ jobs:
             -DLASZIP_DLL="$dll"
 
       - name: Překlad
-        run: cmake --build build --config Release --parallel
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel 2>&1 | Tee-Object -FilePath build.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Select-String -Path build.log -Pattern ": error|: fatal error|unresolved external" | Select-Object -First 30 | ForEach-Object { Write-Host "::error::$($_.Line)" }
+            exit 1
+          }
 
       - name: Instalace
         shell: pwsh
