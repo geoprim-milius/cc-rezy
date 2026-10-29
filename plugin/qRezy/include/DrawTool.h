@@ -1,8 +1,9 @@
 #pragma once
 
-// Kreslení 2D čar nad řezem s ovládáním jako v MicroStationu:
-// levé tlačítko = datový bod, pravé kliknutí = reset (konec čáry), pravé tažení = posun pohledu,
-// kolečko = zoom. Uchopení na konce, středy, průsečíky a na čáru.
+// Kreslení a úpravy 2D čar nad řezem s ovládáním jako v MicroStationu:
+// levé tlačítko = datový bod, pravé kliknutí = reset, pravé tažení = posun pohledu,
+// kolečko = zoom, prostřední kliknutí = ukázat místo ve 3D.
+// Uchopení na konce, středy, průsečíky a na čáru.
 
 #include "Drawing.h"
 
@@ -28,8 +29,14 @@ class DrawTool : public QObject
 public:
 	enum class Mode
 	{
-		Line,  //!< kreslení úseček navazujících na sebe
-		Delete //!< mazání čar kliknutím
+		Line,       //!< kreslení navazujících úseček
+		Delete,     //!< mazání
+		Move,       //!< přesun
+		Copy,       //!< kopie
+		Offset,     //!< rovnoběžná kopie
+		Extend,     //!< prodloužit / zkrátit
+		Corner,     //!< dvě čáry do průsečíku (roh)
+		RotateView  //!< natočit pohled podle čáry
 	};
 
 	enum class SnapType
@@ -57,15 +64,9 @@ public:
 	Mode mode() const { return m_mode; }
 	void setOrtho( bool on );
 	bool ortho() const { return m_ortho; }
-	void setSnap( bool on ) { m_snapEnabled = on; }
+	void setOffsetDistance( double d ) { m_offsetDist = d; }
 
-	//! natočení os pro ortogonální kreslení (rad)
-	void setAxisAngle( double rad ) { m_axisAngle = rad; }
-	double axisAngle() const { return m_axisAngle; }
-	//! další klik na čáru nastaví natočení os podle ní
-	void pickAxisFromLine() { m_pickAxis = true; }
-
-	void resetChain();
+	void resetTool();
 	void undo();
 
 	//! skupina s nakreslenými čarami (vytvoří ji, pokud neexistuje)
@@ -74,11 +75,20 @@ public:
 	//! všechny nakreslené prvky jako prvky V7 v globálních souřadnicích
 	std::vector<DgnV7::Element> exportElements( const Drawing::SymbologyTable& table ) const;
 
+	//! natočení pohledu (rad) – směr osy X obrazovky ve světě
+	double viewAngle() const;
+
+	//! převod lokálních (posunutých) souřadnic na globální
+	CCVector3d toGlobal( const CCVector2d& local ) const;
+
 Q_SIGNALS:
 	void statusChanged( const QString& text );
 	void categoryChanged( int cat );
 	void hiddenChanged( bool hidden );
 	void orthoChanged( bool on );
+	void modeChanged( Mode m );
+	void rotateViewRequested( double angleRad );
+	void show3DRequested( double localX, double localY );
 
 protected:
 	bool eventFilter( QObject* obj, QEvent* event ) override;
@@ -91,19 +101,52 @@ private:
 		ccPolyline* poly;
 	};
 
+	struct Action
+	{
+		enum Kind
+		{
+			Add,
+			Remove,
+			Modify
+		} kind;
+		unsigned id = 0;
+		ccPolyline* poly = nullptr; //!< u smazaných držíme objekt
+		CCVector2d a;               //!< původní body (Modify)
+		CCVector2d b;
+	};
+	using UndoItem = std::vector<Action>;
+
+	// převody souřadnic
 	bool screenToLocal( const QPoint& pos, CCVector2d& out ) const;
 	bool localToScreen( const CCVector2d& P, CCVector2d& centered ) const;
 	double pixelSize() const;
+
+	// geometrie výkresu
 	std::vector<Segment> collectSegments() const;
+	ccPolyline* pickLine( const QPoint& pos, CCVector2d* clicked = nullptr ) const;
+	bool lineEnds( ccPolyline* poly, CCVector2d& a, CCVector2d& b ) const;
+	bool lineExists( ccPolyline* poly ) const;
 	CCVector2d snapPoint( const QPoint& pos, SnapType& type ) const;
 	CCVector2d applyOrtho( const CCVector2d& from, const CCVector2d& to ) const;
-	void addPoint( const CCVector2d& P );
-	ccPolyline* addLine( const CCVector2d& a, const CCVector2d& b );
-	void deleteAt( const QPoint& pos );
+	CCVector2d cursorPoint( const QPoint& pos, SnapType& type, const CCVector2d* orthoFrom ) const;
+
+	// úpravy
+	ccPolyline* addLine( const CCVector2d& a, const CCVector2d& b, int cat, bool hidden, UndoItem* undo );
+	void setLine( ccPolyline* poly, const CCVector2d& a, const CCVector2d& b, UndoItem* undo );
+	void removeLine( ccPolyline* poly, UndoItem* undo );
+	void pushUndo( UndoItem&& u );
+	void select( ccPolyline* poly );
+
+	// obsluha režimů
+	void onDataPoint( const QPoint& pos );
+	void onTypedValue( double v );
+	bool previewGeometry( CCVector2d& a, CCVector2d& b ) const; //!< náhled upravované čáry
+
 	void updateTip();
 	void updateStatus();
 	void redraw2D();
-	void placeTypedDistance();
+	void redraw3D();
+	void keepCrossCursor();
 
 	ccMainAppInterface* m_app = nullptr;
 	ccGLWindowInterface* m_win = nullptr;
@@ -119,30 +162,34 @@ private:
 	bool m_hidden = false;
 	Mode m_mode = Mode::Line;
 	bool m_ortho = false;
-	bool m_snapEnabled = true;
-	double m_axisAngle = 0.0;
-	bool m_pickAxis = false;
+	double m_offsetDist = 0.0;
 
-	std::vector<CCVector2d> m_chain; //!< body rozkreslené čáry (lokální souřadnice)
+	// stav nástroje
+	int m_step = 0;
+	std::vector<CCVector2d> m_chain; //!< body rozkreslené čáry
+	ccPolyline* m_sel = nullptr;     //!< vybraná čára (úpravy)
+	ccPolyline* m_sel2 = nullptr;
+	CCVector2d m_selClick;           //!< kde byla čára vybrána
+	CCVector2d m_base;               //!< výchozí bod přesunu/kopie
+	int m_selEnd = 0;                //!< upravovaný konec (prodloužení)
+
 	CCVector2d m_cursor;
 	SnapType m_cursorSnap = SnapType::None;
 	bool m_hasCursor = false;
-	QString m_typed; //!< zadávaná délka z klávesnice
+	QString m_typed; //!< hodnota zadávaná z klávesnice
 
 	QPoint m_rightPressPos;
 	bool m_rightPressed = false;
+	QPoint m_midPressPos;
+	bool m_midPressed = false;
 
 	// náhled (2D prvky v okně)
 	ccPolyline* m_tip = nullptr;
 	ccPointCloud* m_tipVerts = nullptr;
+	ccPolyline* m_ghost = nullptr;
+	ccPointCloud* m_ghostVerts = nullptr;
 	ccPolyline* m_marker = nullptr;
 	ccPointCloud* m_markerVerts = nullptr;
 
-	struct UndoItem
-	{
-		bool added;            //!< true = čára byla přidána (undo ji smaže)
-		ccPolyline* poly;      //!< pro smazané čáry držíme objekt
-		unsigned id;
-	};
 	std::vector<UndoItem> m_undo;
 };

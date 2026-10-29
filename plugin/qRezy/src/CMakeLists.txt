@@ -5,4 +5,6 @@ target_sources( ${PROJECT_NAME}
 		${CMAKE_CURRENT_LIST_DIR}/DrawTool.cpp
 		${CMAKE_CURRENT_LIST_DIR}/Drawing.cpp
 		${CMAKE_CURRENT_LIST_DIR}/DgnV7.cpp
+		${CMAKE_CURRENT_LIST_DIR}/RezLine.cpp
+		${CMAKE_CURRENT_LIST_DIR}/View3D.cpp
 )

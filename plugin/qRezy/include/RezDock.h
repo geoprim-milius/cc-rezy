@@ -13,6 +13,8 @@ class QPushButton;
 class QShortcut;
 class QComboBox;
 class DrawTool;
+class View3D;
+class QButtonGroup;
 
 //! Panel „Řezy“: vodorovný řez mračnem s posunem nahoru/dolů
 class RezDock : public QDockWidget
@@ -44,6 +46,8 @@ private:
 	void chooseSeed();
 	void editSymbology();
 	void focusView();
+	bool ensure3D();
+	void show3DAt( double localX, double localY );
 
 	ccMainAppInterface* m_app = nullptr;
 	unsigned m_cloudID = 0;
@@ -66,7 +70,11 @@ private:
 	QComboBox* m_catCombo = nullptr;
 	QCheckBox* m_hiddenChk = nullptr;
 	QCheckBox* m_orthoChk = nullptr;
-	QPushButton* m_deleteBtn = nullptr;
+	QButtonGroup* m_toolGroup = nullptr;
+	QDoubleSpinBox* m_offsetSpin = nullptr;
+	QDoubleSpinBox* m_radius3D = nullptr;
+	double m_viewAngle = 0.0; //!< natočení půdorysného pohledu (rad)
+	View3D* m_view3D = nullptr;
 	QLabel* m_status = nullptr;
 	QLabel* m_seedLabel = nullptr;
 };

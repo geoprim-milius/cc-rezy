@@ -2,14 +2,20 @@
 #include "DgnV7.h"
 #include "DrawTool.h"
 #include "Drawing.h"
+#include "View3D.h"
 
 #include "ccMainAppInterface.h"
 #include "ccGLWindowInterface.h"
+#include "ccGLUtils.h"
 
 #include <ccGenericPointCloud.h>
 #include <ccHObjectCaster.h>
+#include <ccPointCloud.h>
 
+#include <QApplication>
+#include <QButtonGroup>
 #include <QCheckBox>
+#include <QGridLayout>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -19,6 +25,7 @@
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QMessageBox>
+#include <QScrollArea>
 #include <QSettings>
 #include <QSpinBox>
 #include <QTableWidget>
@@ -132,32 +139,80 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 	dl->addLayout( df );
 
 	m_hiddenChk = new QCheckBox( QStringLiteral( "Zakrytá / nad řezem (F5)" ) );
-	m_orthoChk = new QCheckBox( QStringLiteral( "Ortogonálně (F8)" ) );
+	m_orthoChk = new QCheckBox( QStringLiteral( "Ortogonálně podle pohledu (F8)" ) );
 	dl->addWidget( m_hiddenChk );
 	dl->addWidget( m_orthoChk );
 
-	auto* drow = new QHBoxLayout;
-	auto* axisBtn = new QPushButton( QStringLiteral( "Osy podle čáry" ) );
-	axisBtn->setToolTip( QStringLiteral( "Klikněte potom na nakreslenou čáru – ortogonální kreslení se natočí podle ní" ) );
-	m_deleteBtn = new QPushButton( QStringLiteral( "Mazat (Del)" ) );
-	m_deleteBtn->setCheckable( true );
+	// nástroje
+	auto* toolGrid = new QGridLayout;
+	m_toolGroup = new QButtonGroup( this );
+	m_toolGroup->setExclusive( true );
+	struct ToolDef
+	{
+		DrawTool::Mode mode;
+		const char* text;
+		const char* tip;
+	};
+	const ToolDef tools[] = {
+		{ DrawTool::Mode::Line, "Čára (L)", "Navazující úsečky; pravé kliknutí ukončí" },
+		{ DrawTool::Mode::Move, "Přesun (M)", "Čára → výchozí bod → cílový bod (nebo vzdálenost)" },
+		{ DrawTool::Mode::Copy, "Kopie (C)", "Čára → výchozí bod → cílové body (nebo vzdálenost)" },
+		{ DrawTool::Mode::Offset, "Rovnoběžně (O)", "Čára → strana; vzdálenost podle pole níže nebo napsat" },
+		{ DrawTool::Mode::Extend, "Prodloužit (E)", "Klik u konce čáry → nový konec nebo celková délka" },
+		{ DrawTool::Mode::Corner, "Roh (R)", "Dvě čáry do průsečíku; klikejte na části, které zůstanou" },
+		{ DrawTool::Mode::Delete, "Mazat (Del)", "Klik na čáru ji smaže" },
+	};
+	int idx = 0;
+	for ( const ToolDef& t : tools )
+	{
+		auto* b = new QPushButton( QString::fromUtf8( t.text ) );
+		b->setToolTip( QString::fromUtf8( t.tip ) );
+		b->setCheckable( true );
+		m_toolGroup->addButton( b, static_cast<int>( t.mode ) );
+		toolGrid->addWidget( b, idx / 3, idx % 3 );
+		++idx;
+	}
 	auto* undoBtn = new QPushButton( QStringLiteral( "Zpět (Ctrl+Z)" ) );
-	drow->addWidget( axisBtn );
-	drow->addWidget( m_deleteBtn );
-	drow->addWidget( undoBtn );
-	dl->addLayout( drow );
+	toolGrid->addWidget( undoBtn, idx / 3, idx % 3 );
+	dl->addLayout( toolGrid );
+	m_toolGroup->button( static_cast<int>( DrawTool::Mode::Line ) )->setChecked( true );
+
+	auto* of = new QFormLayout;
+	m_offsetSpin = makeSpin( 0.0, 1000.0, 0.0, 0.05, 3, QStringLiteral( " m" ) );
+	m_offsetSpin->setSpecialValueText( QStringLiteral( "bodem (myší)" ) );
+	of->addRow( QStringLiteral( "Vzdálenost rovnoběžky:" ), m_offsetSpin );
+	dl->addLayout( of );
+
+	auto* vrow = new QHBoxLayout;
+	auto* rotBtn = new QPushButton( QStringLiteral( "Natočit pohled podle čáry" ) );
+	rotBtn->setToolTip( QStringLiteral( "Klikněte potom na čáru – pohled se natočí, aby byla vodorovně. Souřadnice zůstávají." ) );
+	auto* northBtn = new QPushButton( QStringLiteral( "Sever nahoru" ) );
+	vrow->addWidget( rotBtn );
+	vrow->addWidget( northBtn );
+	dl->addLayout( vrow );
 
 	m_status = new QLabel;
 	m_status->setWordWrap( true );
-	m_status->setStyleSheet( QStringLiteral( "color: #555;" ) );
+	m_status->setStyleSheet( QStringLiteral( "color: #444;" ) );
+	m_status->setMinimumHeight( 40 );
 	dl->addWidget( m_status );
 
 	auto* help = new QLabel( QStringLiteral(
-		"<small>Levé = bod, pravé kliknutí = reset (konec čáry), pravé tažení = posun, kolečko = zoom.<br>"
-		"Délka z klávesnice: napište číslo a Enter. Esc = zrušit čáru.</small>" ) );
+		"<small>Levé = bod, pravé kliknutí = reset, pravé tažení = posun, kolečko = zoom, "
+		"<b>prostřední kliknutí = ukázat místo ve 3D</b>.<br>"
+		"Délka/vzdálenost: napište číslo a Enter. Esc = zrušit / zpět na čáru.</small>" ) );
 	help->setWordWrap( true );
 	dl->addWidget( help );
 	lay->addWidget( drawBox );
+
+	// --- 3D náhled
+	auto* box3D = new QGroupBox( QStringLiteral( "3D náhled" ) );
+	auto* l3 = new QFormLayout( box3D );
+	m_radius3D = makeSpin( 0.2, 100.0, 1.5, 0.25, 2, QStringLiteral( " m" ) );
+	l3->addRow( QStringLiteral( "Okolí (poloměr):" ), m_radius3D );
+	auto* open3DBtn = new QPushButton( QStringLiteral( "Otevřít 3D okno" ) );
+	l3->addRow( open3DBtn );
+	lay->addWidget( box3D );
 
 	// --- výstup
 	auto* outBox = new QGroupBox( QStringLiteral( "Výstup MicroStation V7" ) );
@@ -182,9 +237,39 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 	connect( m_catCombo, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this]( int i ) { m_draw->setCategory( i ); focusView(); } );
 	connect( m_hiddenChk, &QCheckBox::toggled, this, [this]( bool b ) { m_draw->setHidden( b ); focusView(); } );
 	connect( m_orthoChk, &QCheckBox::toggled, this, [this]( bool b ) { m_draw->setOrtho( b ); focusView(); } );
-	connect( axisBtn, &QPushButton::clicked, this, [this]() { m_draw->pickAxisFromLine(); m_status->setText( QStringLiteral( "Klikněte na čáru, podle které se natočí osy." ) ); focusView(); } );
-	connect( m_deleteBtn, &QPushButton::toggled, this, [this]( bool b ) { m_draw->setMode( b ? DrawTool::Mode::Delete : DrawTool::Mode::Line ); focusView(); } );
+	connect( m_toolGroup, qOverload<int>( &QButtonGroup::buttonClicked ), this, [this]( int id ) { m_draw->setMode( static_cast<DrawTool::Mode>( id ) ); focusView(); } );
+	connect( m_draw, &DrawTool::modeChanged, this, [this]( DrawTool::Mode m )
+	{
+		if ( QAbstractButton* b = m_toolGroup->button( static_cast<int>( m ) ) )
+		{
+			const QSignalBlocker bl( m_toolGroup );
+			b->setChecked( true );
+		}
+		else
+		{
+			// dočasný režim (natočení pohledu) – žádné tlačítko
+			const bool ex = m_toolGroup->exclusive();
+			m_toolGroup->setExclusive( false );
+			if ( m_toolGroup->checkedButton() )
+				m_toolGroup->checkedButton()->setChecked( false );
+			m_toolGroup->setExclusive( ex );
+		}
+	} );
+	connect( m_offsetSpin, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]( double v ) { m_draw->setOffsetDistance( v ); } );
 	connect( undoBtn, &QPushButton::clicked, this, [this]() { m_draw->undo(); focusView(); } );
+	connect( rotBtn, &QPushButton::clicked, this, [this]()
+	{
+		if ( !m_draw->isActive() )
+		{
+			m_drawBtn->setChecked( true );
+		}
+		m_draw->setMode( DrawTool::Mode::RotateView );
+		focusView();
+	} );
+	connect( northBtn, &QPushButton::clicked, this, [this]() { m_viewAngle = 0.0; topView(); focusView(); } );
+	connect( m_draw, &DrawTool::rotateViewRequested, this, [this]( double a ) { m_viewAngle = a; topView(); focusView(); } );
+	connect( m_draw, &DrawTool::show3DRequested, this, &RezDock::show3DAt );
+	connect( open3DBtn, &QPushButton::clicked, this, [this]() { ensure3D(); } );
 	connect( m_draw, &DrawTool::statusChanged, m_status, &QLabel::setText );
 	connect( m_draw, &DrawTool::categoryChanged, this, [this]( int c ) { const QSignalBlocker b( m_catCombo ); m_catCombo->setCurrentIndex( c ); } );
 	connect( m_draw, &DrawTool::hiddenChanged, this, [this]( bool h ) { const QSignalBlocker b( m_hiddenChk ); m_hiddenChk->setChecked( h ); } );
@@ -200,7 +285,13 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 		m_seedLabel->setToolTip( seed );
 	}
 
-	setWidget( w );
+	// panel je vysoký – na menších obrazovkách se posouvá
+	auto* scroll = new QScrollArea;
+	scroll->setWidgetResizable( true );
+	scroll->setFrameShape( QFrame::NoFrame );
+	scroll->setHorizontalScrollBarPolicy( Qt::ScrollBarAlwaysOff );
+	scroll->setWidget( w );
+	setWidget( scroll );
 
 	// klávesy fungují v celém okně CloudCompare
 	m_up = new QShortcut( QKeySequence( Qt::Key_PageUp ), parent );
@@ -421,7 +512,51 @@ void RezDock::topView()
 		return;
 	}
 	win->setPerspectiveState( false, true ); // pravoúhlé zobrazení
-	m_app->setView( CC_TOP_VIEW );
+	// pohled shora natočený podle objektu – souřadnice se nemění
+	ccGLMatrixd rotZ;
+	rotZ.initFromParameters( -m_viewAngle, CCVector3d( 0, 0, 1 ), CCVector3d( 0, 0, 0 ) );
+	ccGLMatrixd view = ccGLUtils::GenerateViewMat( CC_TOP_VIEW ) * rotZ;
+	win->setBaseViewMat( view );
+	win->redraw();
+	if ( m_draw && m_draw->isActive() )
+	{
+		m_status->setText( QStringLiteral( "Pohled natočen o %1°" ).arg( QString::number( m_viewAngle * 57.29577951308232, 'f', 2 ).replace( '.', ',' ) ) );
+	}
+}
+
+bool RezDock::ensure3D()
+{
+	ccGenericPointCloud* g = cloud();
+	ccPointCloud* pc = g ? ccHObjectCaster::ToPointCloud( g ) : nullptr;
+	if ( !pc )
+	{
+		m_app->dispToConsole( QStringLiteral( "[Řezy] Nejdřív vyberte mračno." ), ccMainAppInterface::WRN_CONSOLE_MESSAGE );
+		return false;
+	}
+	if ( !m_view3D )
+	{
+		m_view3D = new View3D( m_app, m_app->getMainWindow() );
+		m_app->getMainWindow()->addDockWidget( Qt::RightDockWidgetArea, m_view3D );
+		m_view3D->setFloating( true );
+		m_view3D->resize( 700, 550 );
+	}
+	m_view3D->show();
+	m_view3D->raise();
+	QApplication::setOverrideCursor( Qt::WaitCursor );
+	const bool ok = m_view3D->setSource( pc, 20000000 );
+	QApplication::restoreOverrideCursor();
+	return ok;
+}
+
+void RezDock::show3DAt( double x, double y )
+{
+	if ( !ensure3D() )
+	{
+		return;
+	}
+	ccGenericPointCloud* c = cloud();
+	const double zLocal = c ? c->toLocal3d( CCVector3d( 0, 0, m_height->value() ) ).z : 0.0;
+	m_view3D->focusOn( CCVector3d( x, y, zLocal ), m_radius3D->value() * ( c ? c->getGlobalScale() : 1.0 ), m_viewAngle );
 }
 
 void RezDock::zeroFromFloor()
@@ -477,7 +612,7 @@ void RezDock::chooseSeed()
 {
 	QSettings st;
 	const QString old = st.value( QStringLiteral( "qRezy/seed" ) ).toString();
-	const QString f = QFileDialog::getOpenFileName( this, QStringLiteral( "Seed výkres MicroStation V7" ), old, QStringLiteral( "MicroStation V7 (*.dgn);;Všechny soubory (*)" ) );
+	const QString f = QFileDialog::getOpenFileName( this, QStringLiteral( "Vyberte SEED – existující výkres V7 (šablona, nemění se)" ), old, QStringLiteral( "MicroStation V7 (*.dgn);;Všechny soubory (*)" ) );
 	if ( f.isEmpty() )
 	{
 		return;
@@ -516,6 +651,10 @@ void RezDock::exportV7()
 	QString seed = st.value( QStringLiteral( "qRezy/seed" ) ).toString();
 	if ( seed.isEmpty() || !QFileInfo::exists( seed ) )
 	{
+		QMessageBox::information( this, QStringLiteral( "Řezy" ),
+			QStringLiteral( "Nejdřív vyberte <b>seed</b> – existující výkres V7, ze kterého se převezmou jednotky a nastavení "
+			                "(např. váš vzorový výkres). Seed se nezmění a zapamatuje se.<br><br>"
+			                "Potom se otevře okno pro uložení nového výkresu." ) );
 		chooseSeed();
 		seed = st.value( QStringLiteral( "qRezy/seed" ) ).toString();
 		if ( seed.isEmpty() )
@@ -542,7 +681,7 @@ void RezDock::exportV7()
 	}
 
 	const QString lastOut = st.value( QStringLiteral( "qRezy/lastOut" ), QFileInfo( seed ).absolutePath() ).toString();
-	QString out = QFileDialog::getSaveFileName( this, QStringLiteral( "Uložit výkres V7" ), lastOut, QStringLiteral( "MicroStation V7 (*.dgn)" ) );
+	QString out = QFileDialog::getSaveFileName( this, QStringLiteral( "Uložit NOVÝ výkres V7 jako…" ), lastOut, QStringLiteral( "MicroStation V7 (*.dgn)" ) );
 	if ( out.isEmpty() )
 	{
 		return;

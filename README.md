@@ -16,18 +16,34 @@ Rozbalte zip kamkoli (např. `C:\CloudCompare-Rezy`) a spusťte `CloudCompare.ex
 | Akce | Ovládání |
 |---|---|
 | bod | levé tlačítko |
-| reset (konec čáry) | pravé kliknutí |
+| reset (konec čáry / zpět o krok) | pravé kliknutí |
 | posun pohledu | pravé tažení |
 | zoom | kolečko |
-| délka z klávesnice | napsat číslo + Enter |
-| zrušit rozkreslenou čáru | Esc |
+| **ukázat místo ve 3D** | **prostřední kliknutí** (otevře 3D náhled okolí) |
+| délka / vzdálenost z klávesnice | napsat číslo + Enter |
+| zrušit | Esc (2× = zpět na čáru) |
 | hladina Zdi / Překlady / Trámy / Drobné prvky | F1 / F2 / F3 / F4 |
 | plná ↔ zakrytá (nad řezem) | F5 |
-| ortogonálně | F8 (osy lze natočit tlačítkem *Osy podle čáry*) |
-| mazání | Del (pak klik na čáru) |
+| ortogonálně (podle natočení pohledu) | F8 |
 | zpět | Ctrl+Z |
 
+Nástroje (tlačítka v panelu nebo klávesa, kurzor nad oknem):
+
+| Nástroj | Klávesa | Postup |
+|---|---|---|
+| Čára | L | body, pravé kliknutí ukončí |
+| Přesun | M | čára → výchozí bod → cílový bod (nebo vzdálenost) |
+| Kopie | C | čára → výchozí bod → cílové body (nebo vzdálenost) |
+| Rovnoběžně | O | čára → strana; vzdálenost z pole v panelu nebo napsat + Enter |
+| Prodloužit/zkrátit | E | klik u konce čáry → nový konec, nebo napsat celkovou délku |
+| Roh | R | dvě čáry do průsečíku – klikejte na části, které mají zůstat |
+| Mazat | Del | klik na čáru |
+
+**Natočit pohled podle čáry** – klik na čáru, pohled se natočí, aby byla vodorovně (souřadnice
+zůstávají v S-JTSK, natočí se jen zobrazení a ortogonalita). **Sever nahoru** vrátí natočení.
+
 Uchopení: konec (čtverec), průsečík (křížek), střed (trojúhelník), na čáře (kosočtverec).
+Zakryté čáry se zobrazují čárkovaně.
 
 5. **Uložit výkres V7** – hlavička (jednotky, hladiny) se vezme ze *seed* výkresu,
    hladiny / barvy / styly čar se nastaví v **Hladiny a barvy…**.
