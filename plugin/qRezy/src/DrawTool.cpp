@@ -1,5 +1,6 @@
 #include "DrawTool.h"
 #include "RezLine.h"
+#include "RezLayer.h"
 
 #include "ccGLWindowInterface.h"
 #include "ccGuiParameters.h"
@@ -12,6 +13,13 @@
 
 #include <QApplication>
 #include <QCursor>
+#include <QFile>
+#include <QFileInfo>
+#include <QInputDialog>
+#include <QSettings>
+#include <QTextCodec>
+#include <QTextStream>
+#include <QRegExp>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
@@ -314,6 +322,9 @@ bool DrawTool::start( ccGenericPointCloud* cloud )
 	{
 		w->setFocus();
 	}
+	m_layer = new RezLayer;
+	m_layer->setDisplay( m_win );
+	m_win->addToOwnDB( m_layer );
 
 	drawingGroup( true );
 	updateLineVisibility();
@@ -383,6 +394,12 @@ void DrawTool::stop()
 		m_winObject->removeEventFilter( this );
 	}
 	clearOverlayPool();
+	if ( m_layer )
+	{
+		m_win->removeFromOwnDB( m_layer );
+		delete m_layer;
+		m_layer = nullptr;
+	}
 	m_hoverTimer->stop();
 	m_acquired.clear();
 	m_win->setInteractionMode( static_cast<ccGLWindowInterface::INTERACTION_FLAGS>( m_savedInteraction ) );
@@ -644,6 +661,10 @@ CCVector2d DrawTool::snapPoint( const QPoint& pos, SnapType& type ) const
 		ends.push_back( s.b );
 	}
 	ends.insert( ends.end(), m_chain.begin(), m_chain.end() );
+	for ( const VisPoint& vp : visiblePoints() )
+	{
+		ends.push_back( vp.uv );
+	}
 
 	double best = tol;
 	CCVector2d bestP = P;
@@ -1397,13 +1418,35 @@ void DrawTool::onDataPoint( const QPoint& pos )
 				}
 				else
 				{
-					const int cat = m_sel->getMetaData( Drawing::MetaCategory ).toInt();
-					const bool hid = m_sel->getMetaData( Drawing::MetaHidden ).toBool();
-					addLine( a, b, cat, hid, &u );
+					if ( isText( m_sel ) )
+					{
+						addText( a, m_sel->getMetaData( "qRezy.text" ).toString(), &u );
+					}
+					else
+					{
+						const int cat = m_sel->getMetaData( Drawing::MetaCategory ).toInt();
+						const bool hid = m_sel->getMetaData( Drawing::MetaHidden ).toBool();
+						addLine( a, b, cat, hid, &u );
+					}
 					pushUndo( std::move( u ) );
 				}
 			}
 		}
+		break;
+	}
+	case Mode::Text:
+	{
+		const CCVector2d P = cursorPoint( pos, st, nullptr );
+		bool ok = false;
+		const QString txt = QInputDialog::getText( qobject_cast<QWidget*>( m_winObject ), QStringLiteral( "Vložit text" ), QStringLiteral( "Text:" ), QLineEdit::Normal, m_lastText, &ok );
+		if ( ok && !txt.trimmed().isEmpty() )
+		{
+			m_lastText = txt;
+			UndoItem u;
+			addText( P, txt, &u );
+			pushUndo( std::move( u ) );
+		}
+		keepCrossCursor();
 		break;
 	}
 	case Mode::Offset:
@@ -2063,6 +2106,7 @@ void DrawTool::redraw2D()
 {
 	if ( m_win )
 	{
+		refreshLayer();
 		m_win->redraw( true, false );
 	}
 }
@@ -2071,6 +2115,7 @@ void DrawTool::redraw3D()
 {
 	if ( m_win )
 	{
+		refreshLayer();
 		m_win->redraw( false, false );
 	}
 }
@@ -2236,7 +2281,7 @@ void DrawTool::updateStatus()
 	}
 	case Mode::SectionDef:
 	{
-		const QString n = m_defKind == 1 ? QStringLiteral( "Nový pohled" ) : QStringLiteral( "Nový řez" );
+		const QString n = m_defKind == 1 ? QStringLiteral( "Nový pohled" ) : m_defKind == 2 ? QStringLiteral( "Pomocný řez" ) : QStringLiteral( "Nový řez" );
 		prompt = m_step == 0 ? n + QStringLiteral( ": první bod roviny" )
 		       : m_step == 1 ? n + QStringLiteral( ": druhý bod roviny" )
 		                     : n + QStringLiteral( ": klikněte na stranu, KAM se díváte (šipky)" );
@@ -2270,6 +2315,9 @@ void DrawTool::updateStatus()
 	case Mode::Break:
 		prompt = m_step == 0 ? QStringLiteral( "Rozdělit: první bod na čáře" )
 		                     : QStringLiteral( "Rozdělit: druhý bod – část mezi body se smaže (stejný bod = jen rozdělit)" );
+		break;
+	case Mode::Text:
+		prompt = QStringLiteral( "Text: klikněte, kam text vložit (levý dolní roh)" );
 		break;
 	case Mode::Trim:
 		prompt = m_step == 0 ? QStringLiteral( "Oříznout k prvku: vyberte hraniční čáru" )
@@ -2639,8 +2687,333 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 	return QObject::eventFilter( obj, event );
 }
 
-std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTable& table, const ExportMap& map ) const
+
+// ---------------------------------------------------------------- body a texty
+
+bool DrawTool::isText( const ccHObject* obj )
 {
+	return obj && obj->hasMetaData( "qRezy.text" );
+}
+
+ccPolyline* DrawTool::addText( const CCVector2d& P, const QString& text, UndoItem* undo )
+{
+	ccHObject* group = drawingGroup( true );
+	if ( !group )
+	{
+		return nullptr;
+	}
+	// text = „čára“ se dvěma stejnými body (uloží se s projektem, jde přesunout/kopírovat/smazat)
+	auto* verts = new ccPointCloud( "vertices" );
+	verts->reserve( 2 );
+	verts->addPoint( m_frame.to3D( P ).toFloat() );
+	verts->addPoint( m_frame.to3D( P ).toFloat() );
+	verts->setEnabled( false );
+	verts->setGlobalShift( m_shift );
+	verts->setGlobalScale( m_scale );
+	auto* poly = new ccPolyline( verts );
+	poly->addChild( verts );
+	poly->addPointIndex( 0, 2 );
+	poly->setGlobalShift( m_shift );
+	poly->setGlobalScale( m_scale );
+	poly->setColor( ccColor::Rgb( 255, 235, 140 ) );
+	poly->showColors( true );
+	poly->setName( QStringLiteral( "Text: " ) + text );
+	poly->setMetaData( "qRezy.text", text );
+	poly->setMetaData( Drawing::MetaView, m_frame.viewId );
+	poly->setMetaData( "qRezy.fx", m_frame.N.x * m_frame.back );
+	poly->setMetaData( "qRezy.fy", m_frame.N.y * m_frame.back );
+	poly->setMetaData( "qRezy.fz", m_frame.N.z * m_frame.back );
+	group->addChild( poly );
+	m_app->addToDB( poly, false, false, false, false );
+	if ( undo )
+	{
+		Action act;
+		act.kind = Action::Add;
+		act.id = poly->getUniqueID();
+		undo->push_back( act );
+	}
+	return poly;
+}
+
+void DrawTool::setShowPoints( bool on )
+{
+	m_showPoints = on;
+	redraw2D();
+}
+
+void DrawTool::setShowCodes( bool on )
+{
+	m_showCodes = on;
+	redraw2D();
+}
+
+std::vector<DrawTool::VisPoint> DrawTool::visiblePoints() const
+{
+	std::vector<VisPoint> out;
+	if ( !m_showPoints )
+	{
+		return out;
+	}
+	ccHObject* group = const_cast<DrawTool*>( this )->drawingGroup( false );
+	if ( !group )
+	{
+		return out;
+	}
+	for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+	{
+		ccHObject* ch = group->getChild( i );
+		if ( !ch->isA( CC_TYPES::POINT_CLOUD ) || !ch->hasMetaData( "qRezy.points" ) || !ch->isEnabled() )
+		{
+			continue;
+		}
+		auto* pc = static_cast<ccPointCloud*>( ch );
+		const QStringList names = pc->getMetaData( "qRezy.names" ).toStringList();
+		const QStringList codes = pc->getMetaData( "qRezy.codes" ).toStringList();
+		const QString hasZ = pc->getMetaData( "qRezy.hasZ" ).toString();
+		for ( unsigned k = 0; k < pc->size(); ++k )
+		{
+			const CCVector3d P = CCVector3d::fromArray( pc->getPoint( k )->u );
+			const bool z = ( static_cast<int>( k ) < hasZ.size() ) && hasZ[static_cast<int>( k )] == QChar( '1' );
+			if ( m_frame.viewId != 0 )
+			{
+				// řez / pohled: jen body s výškou v dosahu roviny (sklopí se do ní)
+				if ( !z )
+				{
+					continue;
+				}
+				const double sN = ( P - m_frame.O ).dot( m_frame.N );
+				if ( sN < m_frame.ptMin || sN > m_frame.ptMax )
+				{
+					continue;
+				}
+			}
+			VisPoint vp;
+			vp.uv = m_frame.toUV( P );
+			vp.name = ( static_cast<int>( k ) < names.size() ) ? names[static_cast<int>( k )] : QString();
+			vp.code = ( static_cast<int>( k ) < codes.size() ) ? codes[static_cast<int>( k )] : QString();
+			out.push_back( vp );
+		}
+	}
+	return out;
+}
+
+void DrawTool::refreshLayer()
+{
+	if ( !m_layer )
+	{
+		return;
+	}
+	m_layer->items.clear();
+	// směr „nahoru“ na obrazovce (půdorys může být natočený)
+	CCVector3d up = m_frame.V;
+	if ( m_frame.viewId == 0 )
+	{
+		const double a = viewAngle();
+		up = CCVector3d( -std::sin( a ), std::cos( a ), 0.0 );
+	}
+	for ( const VisPoint& vp : visiblePoints() )
+	{
+		RezLayer::Item it;
+		it.P = m_frame.to3D( vp.uv );
+		it.up = up;
+		it.marker = true;
+		it.color = ccColor::Rgb( 255, 120, 255 );
+		it.text = vp.name;
+		if ( m_showCodes && !vp.code.isEmpty() )
+		{
+			it.text += QStringLiteral( "  " ) + vp.code;
+		}
+		m_layer->items.push_back( it );
+	}
+	// texty aktuálního pohledu
+	ccHObject* group = drawingGroup( false );
+	if ( group )
+	{
+		const double h = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+		for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+		{
+			ccHObject* ch = group->getChild( i );
+			if ( !ch->isA( CC_TYPES::POLY_LINE ) || !isText( ch ) )
+			{
+				continue;
+			}
+			const int view = ch->getMetaData( Drawing::MetaView ).toInt();
+			auto* poly = static_cast<ccPolyline*>( ch );
+			if ( view != m_frame.viewId || poly->size() == 0 )
+			{
+				continue;
+			}
+			RezLayer::Item it;
+			it.P = CCVector3d::fromArray( poly->getPoint( 0 )->u );
+			it.up = up;
+			it.height = h;
+			it.text = ch->getMetaData( "qRezy.text" ).toString();
+			it.color = ( ch == m_sel ) ? ccColor::Rgb( 255, 220, 0 ) : ccColor::Rgb( 255, 235, 140 );
+			m_layer->items.push_back( it );
+		}
+	}
+}
+
+bool DrawTool::importPoints( const QString& path, QString& message )
+{
+	ccHObject* root = m_app ? m_app->dbRootObject() : nullptr;
+	auto* cloud = root ? dynamic_cast<ccGenericPointCloud*>( root->find( m_cloudID ) ) : nullptr;
+	if ( !cloud )
+	{
+		message = QStringLiteral( "Nejdřív vyberte mračno." );
+		return false;
+	}
+	QFile f( path );
+	if ( !f.open( QIODevice::ReadOnly | QIODevice::Text ) )
+	{
+		message = QStringLiteral( "Soubor nelze otevřít." );
+		return false;
+	}
+	struct Rec
+	{
+		QString name;
+		double a = 0;
+		double b = 0;
+		double z = 0;
+		bool hasZ = false;
+		QString code;
+	};
+	std::vector<Rec> recs;
+	QTextStream ts( &f );
+	ts.setCodec( "Windows-1250" );
+	while ( !ts.atEnd() )
+	{
+		const QString line = ts.readLine().trimmed();
+		if ( line.isEmpty() || line.startsWith( '#' ) )
+		{
+			continue;
+		}
+		QStringList tok = line.split( QRegExp( QStringLiteral( "[\\s;\\t]+" ) ), QString::SkipEmptyParts );
+		if ( tok.size() < 3 )
+		{
+			continue;
+		}
+		Rec r;
+		r.name = tok[0];
+		std::vector<double> nums;
+		QStringList rest;
+		for ( int i = 1; i < tok.size(); ++i )
+		{
+			bool ok = false;
+			const double v = QString( tok[i] ).replace( ',', '.' ).toDouble( &ok );
+			if ( ok && rest.isEmpty() && nums.size() < 3 )
+			{
+				nums.push_back( v );
+			}
+			else
+			{
+				rest << tok[i];
+			}
+		}
+		if ( nums.size() < 2 )
+		{
+			continue;
+		}
+		r.a = nums[0];
+		r.b = nums[1];
+		if ( nums.size() >= 3 && std::abs( nums[2] ) > 1e-6 )
+		{
+			r.z = nums[2];
+			r.hasZ = true;
+		}
+		r.code = rest.join( ' ' );
+		recs.push_back( r );
+	}
+	if ( recs.empty() )
+	{
+		message = QStringLiteral( "V souboru nejsou body (očekává se: číslo Y X [Z] [kód])." );
+		return false;
+	}
+
+	// orientace souřadnic S-JTSK v mračnu: (−Y, −X), (Y, X), …  – vybere se ta, kde body padnou do mračna
+	const ccBBox bb = cloud->getOwnBB();
+	const CCVector3d gmin = cloud->toGlobal3d( bb.minCorner() );
+	const CCVector3d gmax = cloud->toGlobal3d( bb.maxCorner() );
+	const double margin = 50.0;
+	auto mapXY = [&]( int variant, const Rec& r ) -> CCVector2d
+	{
+		switch ( variant )
+		{
+		case 0:
+			return CCVector2d( -r.a, -r.b );
+		case 1:
+			return CCVector2d( r.a, r.b );
+		case 2:
+			return CCVector2d( -r.b, -r.a );
+		default:
+			return CCVector2d( r.b, r.a );
+		}
+	};
+	int best = 0;
+	int bestCount = -1;
+	for ( int v = 0; v < 4; ++v )
+	{
+		int count = 0;
+		for ( const Rec& r : recs )
+		{
+			const CCVector2d P = mapXY( v, r );
+			if ( P.x > gmin.x - margin && P.x < gmax.x + margin && P.y > gmin.y - margin && P.y < gmax.y + margin )
+			{
+				++count;
+			}
+		}
+		if ( count > bestCount )
+		{
+			bestCount = count;
+			best = v;
+		}
+	}
+
+	ccHObject* group = drawingGroup( true );
+	auto* pc = new ccPointCloud( QStringLiteral( "Body: " ) + QFileInfo( path ).fileName() );
+	pc->reserve( static_cast<unsigned>( recs.size() ) );
+	QStringList names;
+	QStringList codes;
+	QString hasZ;
+	const double zMid = ( gmin.z + gmax.z ) / 2.0;
+	for ( const Rec& r : recs )
+	{
+		const CCVector2d P = mapXY( best, r );
+		const CCVector3d L = cloud->toLocal3d( CCVector3d( P.x, P.y, r.hasZ ? r.z : zMid ) );
+		pc->addPoint( L.toFloat() );
+		names << r.name;
+		codes << r.code;
+		hasZ += r.hasZ ? QChar( '1' ) : QChar( '0' );
+	}
+	pc->setGlobalShift( cloud->getGlobalShift() );
+	pc->setGlobalScale( cloud->getGlobalScale() );
+	pc->setMetaData( "qRezy.points", true );
+	pc->setMetaData( "qRezy.names", names );
+	pc->setMetaData( "qRezy.codes", codes );
+	pc->setMetaData( "qRezy.hasZ", hasZ );
+	pc->setVisible( false ); // kreslí je vrstva popisků
+	pc->setEnabled( true );
+	group->addChild( pc );
+	m_app->addToDB( pc, false, false, false, false );
+
+	const int noZ = static_cast<int>( hasZ.count( QChar( '0' ) ) );
+	message = QStringLiteral( "Načteno %1 bodů" ).arg( recs.size() );
+	if ( noZ > 0 )
+	{
+		message += QStringLiteral( " (%1 bez výšky – jen v půdorysu)" ).arg( noZ );
+	}
+	if ( bestCount < static_cast<int>( recs.size() ) / 2 )
+	{
+		message += QStringLiteral( ". POZOR: většina bodů leží mimo mračno – je mračno v S-JTSK?" );
+	}
+	m_showPoints = true;
+	redraw2D();
+	return true;
+}
+
+std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTable& table, const ExportMap& map, int textLevel, double textHeight ) const
+{
+	QTextCodec* codec = QTextCodec::codecForName( "Windows-1250" );
 	std::vector<DgnV7::Element> out;
 	ccHObject* group = const_cast<DrawTool*>( this )->drawingGroup( false );
 	if ( !group )
@@ -2656,6 +3029,24 @@ std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTa
 		}
 		auto* poly = static_cast<ccPolyline*>( ch );
 		const int view = poly->hasMetaData( Drawing::MetaView ) ? poly->getMetaData( Drawing::MetaView ).toInt() : 0;
+		if ( view >= 0 && isText( poly ) && poly->size() > 0 )
+		{
+			DgnV7::Element t;
+			t.isText = true;
+			t.sym.level = textLevel;
+			t.sym.color = 0;
+			t.textHeight = textHeight;
+			DgnV7::Point2 P;
+			if ( map( view, CCVector3d::fromArray( poly->getPoint( 0 )->u ), P ) )
+			{
+				t.pts.push_back( P );
+				const QString str = poly->getMetaData( "qRezy.text" ).toString();
+				const QByteArray bytes = codec ? codec->fromUnicode( str ) : str.toLatin1();
+				t.text = std::string( bytes.constData(), static_cast<size_t>( bytes.size() ) );
+				out.push_back( t );
+			}
+			continue;
+		}
 		if ( view < 0 || !poly->hasMetaData( Drawing::MetaCategory ) )
 		{
 			continue; // definice řezu apod.

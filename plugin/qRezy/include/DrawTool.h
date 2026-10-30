@@ -36,6 +36,8 @@ struct DrawFrame
 	CCVector3d N = CCVector3d( 0, 0, 1 ); //!< k pozorovateli
 	double front = 0.0;                    //!< posun čar k pozorovateli (aby je body nezakryly)
 	double back = 0.0;                     //!< skutečná poloha čáry = vrchol − N·back (pro 3D náhled)
+	double ptMin = -1e30;                  //!< změřené body: rozsah (P − O)·N, ve kterém se v řezu zobrazí
+	double ptMax = 1e30;
 
 	CCVector3d to3D( const CCVector2d& uv, bool withFront = true ) const
 	{
@@ -66,7 +68,8 @@ public:
 		SectionDef, //!< nový svislý řez / pohled: 2 body roviny + strana pohledu
 		Measure,    //!< měření vzdálenosti
 		Break,      //!< rozdělit čáru / smazat část mezi 2 body
-		Trim        //!< oříznout / prodloužit k hraniční čáře
+		Trim,       //!< oříznout / prodloužit k hraniční čáře
+		Text        //!< vložit text
 	};
 
 	enum class SnapType
@@ -119,7 +122,14 @@ public:
 	//! převod 3D bodu čáry na 2D bod výkresu (globálně), vrací false = vynechat
 	using ExportMap = std::function<bool( int viewId, const CCVector3d& local3D, DgnV7::Point2& out )>;
 	//! všechny nakreslené prvky jako prvky V7
-	std::vector<DgnV7::Element> exportElements( const Drawing::SymbologyTable& table, const ExportMap& map ) const;
+	std::vector<DgnV7::Element> exportElements( const Drawing::SymbologyTable& table, const ExportMap& map, int textLevel, double textHeight ) const;
+
+	//! načte změřené body (číslo Y X [Z] [kód], S-JTSK); vrací false a zprávu při chybě
+	bool importPoints( const QString& path, QString& message );
+	void setShowPoints( bool on );
+	bool showPoints() const { return m_showPoints; }
+	void setShowCodes( bool on );
+	bool showCodes() const { return m_showCodes; }
 
 	//! střed okna v rovině kreslení (lokálně 3D)
 	bool viewCenter( CCVector3d& out ) const;
@@ -223,6 +233,18 @@ private:
 	void keepCrossCursor();
 	void panBy( const QPoint& d );
 	void showToolMenu( int group ); //!< 3 = Manipulace, 7 = Úpravy
+
+	// změřené body a texty
+	struct VisPoint
+	{
+		CCVector2d uv;
+		QString name;
+		QString code;
+	};
+	std::vector<VisPoint> visiblePoints() const;
+	void refreshLayer();
+	ccPolyline* addText( const CCVector2d& P, const QString& text, UndoItem* undo );
+	static bool isText( const ccHObject* obj );
 	bool pickingCursor() const;
 
 	ccMainAppInterface* m_app = nullptr;
@@ -279,6 +301,11 @@ private:
 	Qt::MouseButton m_panButton = Qt::NoButton;
 	QPoint m_panPress;
 	QPoint m_panLast;
+
+	class RezLayer* m_layer = nullptr; //!< popisky bodů a texty
+	bool m_showPoints = true;
+	bool m_showCodes = true;
+	QString m_lastText;
 
 	// náhledy (2D prvky v okně) – zásobník znovu používaných čar
 	std::vector<ccPolyline*> m_overlayPool;

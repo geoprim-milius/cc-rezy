@@ -209,6 +209,46 @@ namespace Icons
 				p.drawLine( QPointF( 24, 6 ), QPointF( 18, 1 ) );
 				arrowHead( p, QPointF( 17, 0 ), QPointF( 24, 6 ), 6 );
 			}
+			else if ( n == "auxsec" )
+			{
+				// tenká čára řezu + metr (jen měření)
+				p.setPen( QPen( QColor( 0, 170, 170 ), 1.6, Qt::DashLine ) );
+				p.drawLine( QPointF( 4, 28 ), QPointF( 28, 4 ) );
+				p.setPen( QPen( Ink, 1.6 ) );
+				p.setBrush( QColor( 250, 220, 120 ) );
+				p.drawRect( QRectF( 14, 8, 6, 20 ) );
+				p.setBrush( Qt::NoBrush );
+				for ( int i = 0; i < 4; ++i )
+				{
+					p.drawLine( QPointF( 14, 11 + i * 4 ), QPointF( i % 2 ? 16.5 : 18, 11 + i * 4 ) );
+				}
+			}
+			else if ( n == "points" )
+			{
+				p.setPen( QPen( QColor( 200, 40, 200 ), 2 ) );
+				for ( const QPointF& c : { QPointF( 8, 9 ), QPointF( 22, 14 ), QPointF( 11, 24 ) } )
+				{
+					p.drawLine( c + QPointF( -3, -3 ), c + QPointF( 3, 3 ) );
+					p.drawLine( c + QPointF( -3, 3 ), c + QPointF( 3, -3 ) );
+				}
+				p.setPen( QPen( Ink, 1 ) );
+				QFont f = p.font();
+				f.setPixelSize( 8 );
+				p.setFont( f );
+				p.drawText( QPointF( 13, 9 ), QStringLiteral( "1" ) );
+				p.drawText( QPointF( 24, 24 ), QStringLiteral( "2" ) );
+			}
+			else if ( n == "text" )
+			{
+				p.setPen( QPen( Ink, 1 ) );
+				QFont f = p.font();
+				f.setPixelSize( 22 );
+				f.setBold( true );
+				p.setFont( f );
+				p.drawText( QRectF( 2, 2, 28, 28 ), Qt::AlignCenter, QStringLiteral( "A" ) );
+				p.setPen( QPen( Blue, 2 ) );
+				p.drawLine( QPointF( 5, 29 ), QPointF( 27, 29 ) );
+			}
 			else if ( n == "facade" )
 			{
 				p.setPen( QPen( Ink, 1.8 ) );

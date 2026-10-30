@@ -45,7 +45,14 @@ public:
 	//! nakreslené čáry (kopie pro toto okno)
 	void setLines( const std::vector<Line>& lines );
 
+	//! pomocný řez: pravoúhlý pohled na rovinu A–B (lokálně), N = k pozorovateli; jen pro měření
+	void auxSection( const CCVector3d& A, const CCVector3d& B, const CCVector3d& N, double planZ, double zeroGlobal, double thickness );
+	bool isAux() const { return m_aux; }
+
 	unsigned sourceID() const { return m_sourceID; }
+
+protected:
+	bool eventFilter( QObject* obj, QEvent* event ) override;
 	double scale() const { return m_scale; }
 
 private:
@@ -55,6 +62,10 @@ private:
 	void updateRanges();   //!< rozsah posuvníků podle mračna kolem bodu
 	void updateValueLabels();
 	void saveSettings() const;
+	void leaveAux( bool refocus );
+	bool auxPoint( const QPoint& pos, CCVector3d& P ) const;
+	void updateMeasure( bool live );
+	QString heightText( const CCVector3d& P ) const;
 
 	ccMainAppInterface* m_app = nullptr;
 	ccGLWindowInterface* m_win = nullptr;
@@ -73,4 +84,17 @@ private:
 	double m_angle = 0.0;
 	bool m_hasFocus = false;
 	ccClipPlaneSet m_clipSet;
+
+	// pomocný řez
+	bool m_aux = false;
+	CCVector3d m_auxA;
+	CCVector3d m_auxU;
+	CCVector3d m_auxN;
+	double m_zeroG = 0.0;
+	class QPushButton* m_backBtn = nullptr;
+	class ccPolyline* m_measPoly = nullptr;
+	int m_measStep = 0;
+	CCVector3d m_m1;
+	CCVector3d m_m2;
+	CCVector3d m_mCursor;
 };

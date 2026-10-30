@@ -34,6 +34,7 @@ Rozbalte zip do nové složky a spusťte `CloudCompare.exe`.
 | hranice | Oříznout k prvku | 7 → 5 | hraniční čára, pak čáry k oříznutí / prodloužení (klik na část, která zůstane) |
 | křížek | Mazat | 8 / Del | klik na čáru |
 | metr | Měřit | D | dva body → délka, vodorovně/výškově (ΔX/ΔY), úhel |
+| A | Vložit text | | klik a napsat (např. naměřenou výšku); přesun, kopie, mazání jako u čar; do DGN na hladinu z okna Uložit |
 | šipka zpět | Zpět | Ctrl+Z | |
 | pravý úhel | Orto | F8 | podle natočení pohledu |
 | zelený kříž | Trasování | F11 | podržte kurzor na konci/středu čáry → bod se „získá“ (zelené +); pomocné čáry vodorovně/svisle od získaných bodů i od posledního bodu, uchopí se na ně, na jejich průsečíky i na průsečík s čarou; napsané číslo = vzdálenost od získaného bodu |
@@ -42,6 +43,8 @@ Rozbalte zip do nové složky a spusťte `CloudCompare.exe`.
 | otočení | Natočit pohled | | 2 body: směr 1. → 2. bod bude vodorovně doprava |
 | S se šipkou | Sever nahoru | | |
 | značka řezu | Nový svislý řez | | 2 body v půdorysu, pak klik na stranu, kam se díváte (šipky) |
+| pravítko | Pomocný řez | | 2 body v půdorysu a strana → okno 3D náhledu se přepne do řezu jen pro měření (nic se neukládá) |
+| křížky 1 2 | Změřené body | | načíst seznam (číslo Y X [Z] [kód], S-JTSK), zobrazit/skrýt body (i uchopování), kódy |
 | dům | Nový pohled (fasáda) | | rovina před objektem: 2 body, pak strana pohledu; vidět je vše za rovinou do *Hloubky* |
 | kostka | 3D náhled | | |
 | disketa | Uložit V7 | | seed, hladiny, umístění řezů, výšky |
@@ -63,11 +66,23 @@ v metrech od místa kliknutí; horní jezdec výšky doleva = uříznutá střec
 *výchozí* = ±1,5 m / ±2 m, *vše* = celé mračno, *čáry* = zobrazení nakreslených čar.
 Levé tažení = otáčení, kolečko = zoom.
 
+## Změřené body
+Soubor „číslo Y X [Z] [kód]“ v S-JTSK (mezery, tabulátory nebo středníky). Body se ukážou v půdorysu
+se značkou, číslem a kódem a dá se na ně uchopit. Body s výškou se v řezu (±1 m od roviny)
+a v pohledu (do hloubky pohledu) samy sklopí do roviny. Body se do DGN neukládají.
+Jednotlivé soubory jdou vypnout zaškrtnutím v seznamu objektů (skupina *Výkres (Řezy)*).
+
+## Pomocný řez
+Natáhněte čáru v půdorysu a klikněte na stranu pohledu. Okno 3D náhledu ukáže pravoúhlý řez
+(tloušťka = posuvník Hloubka). Levé kliknutí 2 body = vodorovně / svisle / šikmo, u kurzoru výška
+nad ±0,000 a v Bpv. Pravé tažení = posun, kolečko = zoom, tlačítko **3D** = zpět.
+
 ## Výstup V7
 Ikona diskety: **seed** (existující výkres – převezmou se jednotky a nastavení, nemění se),
 **Hladiny a barvy**, umístění řezů/pohledů ve výkresu (X/Y = levý konec, ±0,000),
 výšky relativně nebo absolutně (Bpv), výška popisů. Řezy a pohledy jsou ve výkresu 2D
-s popisem „Řez A-A'“ a „±0,000 = … m n. m. Bpv“ (hladina 14).
+s popisem „Řez A-A'“ a „±0,000 = … m n. m. Bpv“ (hladina 14). Vložené texty mají vlastní
+výšku a hladinu (výchozí 15) v okně Uložit.
 
 Nakreslené čáry jsou v seznamu objektů pod mračnem ve skupině *Výkres (Řezy)*
 a uloží se s projektem CloudCompare (.bin).

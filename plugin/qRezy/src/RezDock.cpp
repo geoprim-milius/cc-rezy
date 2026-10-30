@@ -49,6 +49,7 @@
 #include <QTextCodec>
 #include <QToolBar>
 #include <QToolButton>
+#include <QMenu>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -412,6 +413,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Trim, "trim", "Oříznout k prvku (7 → 5) – hraniční čára, pak čáry k oříznutí/prodloužení" },
 		{ DrawTool::Mode::Delete, "delete", "Mazat (8 nebo Del) – klik na čáru" },
 		{ DrawTool::Mode::Measure, "measure", "Měřit vzdálenost (D) – dva body" },
+		{ DrawTool::Mode::Text, "text", "Vložit text – klik a napsat (např. naměřenou výšku); přesun, kopie a mazání jako u čar" },
 	};
 	for ( const ToolDef& t : tools )
 	{
@@ -509,6 +511,57 @@ void RezDock::buildToolbar()
 	};
 	connect( sec, &QAction::triggered, this, [startDef]() { startDef( 0 ); } );
 	connect( fac, &QAction::triggered, this, [startDef]() { startDef( 1 ); } );
+	QAction* aux = m_toolbar->addAction( Icons::get( QStringLiteral( "auxsec" ) ), QStringLiteral( "Pomocný řez – 2 body v půdorysu a strana; otevře okno pro měření výšek (nic se neukládá)" ) );
+	connect( aux, &QAction::triggered, this, [startDef]() { startDef( 2 ); } );
+	m_toolbar->addSeparator();
+
+	// změřené body
+	auto* ptBtn = new QToolButton;
+	ptBtn->setIcon( Icons::get( QStringLiteral( "points" ) ) );
+	ptBtn->setToolTip( QStringLiteral( "Změřené body (S-JTSK): načíst, zobrazit, kódy" ) );
+	ptBtn->setPopupMode( QToolButton::InstantPopup );
+	auto* ptMenu = new QMenu( ptBtn );
+	QAction* ptLoad = ptMenu->addAction( QStringLiteral( "Načíst body… (číslo Y X [Z] [kód])" ) );
+	QAction* ptShow = ptMenu->addAction( QStringLiteral( "Zobrazit body (a uchopovat na ně)" ) );
+	ptShow->setCheckable( true );
+	ptShow->setChecked( true );
+	QAction* ptCodes = ptMenu->addAction( QStringLiteral( "Zobrazit kódy" ) );
+	ptCodes->setCheckable( true );
+	ptCodes->setChecked( true );
+	ptBtn->setMenu( ptMenu );
+	m_toolbar->addWidget( ptBtn );
+	connect( ptLoad, &QAction::triggered, this, [this, ptShow]()
+	{
+		if ( !cloud() )
+		{
+			QMessageBox::information( this, QStringLiteral( "Řezy" ), QStringLiteral( "Nejdřív vyberte mračno." ) );
+			return;
+		}
+		if ( !m_draw->isActive() )
+		{
+			m_drawAct->setChecked( true );
+		}
+		QSettings st;
+		const QString path = QFileDialog::getOpenFileName( this, QStringLiteral( "Načíst změřené body (S-JTSK)" ), st.value( QStringLiteral( "qRezy/pointsDir" ) ).toString(),
+		                                                   QStringLiteral( "Seznam souřadnic (*.txt *.csv *.ss *.xyz);;Všechny soubory (*)" ) );
+		if ( path.isEmpty() )
+		{
+			return;
+		}
+		st.setValue( QStringLiteral( "qRezy/pointsDir" ), QFileInfo( path ).absolutePath() );
+		QString msg;
+		const bool ok = m_draw->importPoints( path, msg );
+		m_app->dispToConsole( QStringLiteral( "[Řezy] %1: %2" ).arg( QFileInfo( path ).fileName(), msg ), ok ? ccMainAppInterface::STD_CONSOLE_MESSAGE : ccMainAppInterface::WRN_CONSOLE_MESSAGE );
+		m_status->setText( msg );
+		if ( ok )
+		{
+			const QSignalBlocker b( ptShow );
+			ptShow->setChecked( true );
+		}
+		focusView();
+	} );
+	connect( ptShow, &QAction::toggled, this, [this]( bool on ) { m_draw->setShowPoints( on ); focusView(); } );
+	connect( ptCodes, &QAction::toggled, this, [this]( bool on ) { m_draw->setShowCodes( on ); focusView(); } );
 	m_toolbar->addSeparator();
 
 	QAction* v3 = m_toolbar->addAction( Icons::get( QStringLiteral( "3d" ) ), QStringLiteral( "3D náhled (prostřední klik do řezu ukáže místo)" ) );
@@ -1200,6 +1253,12 @@ void RezDock::openSaveDialog()
 	auto* tf = new QFormLayout;
 	auto* textH = makeSpin( 0.01, 10.0, st.value( QStringLiteral( "qRezy/textHeight" ), 0.25 ).toDouble(), 0.05, 2, QStringLiteral( " m" ) );
 	tf->addRow( QStringLiteral( "Výška popisů (název, ±0,000):" ), textH );
+	auto* uTextH = makeSpin( 0.01, 10.0, st.value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble(), 0.05, 2, QStringLiteral( " m" ) );
+	tf->addRow( QStringLiteral( "Vložené texty – výška:" ), uTextH );
+	auto* uTextL = new QSpinBox;
+	uTextL->setRange( 1, 63 );
+	uTextL->setValue( st.value( QStringLiteral( "qRezy/userTextLevel" ), 15 ).toInt() );
+	tf->addRow( QStringLiteral( "Vložené texty – hladina:" ), uTextL );
 	secL->addLayout( tf );
 	l->addWidget( secBox );
 
@@ -1216,6 +1275,8 @@ void RezDock::openSaveDialog()
 	// nastavení se ukládá vždy
 	st.setValue( QStringLiteral( "qRezy/absHeights" ), absH->isChecked() );
 	st.setValue( QStringLiteral( "qRezy/textHeight" ), textH->value() );
+	st.setValue( QStringLiteral( "qRezy/userTextHeight" ), uTextH->value() );
+	st.setValue( QStringLiteral( "qRezy/userTextLevel" ), uTextL->value() );
 	for ( int i = 0; i < static_cast<int>( sections.size() ); ++i )
 	{
 		SectionInfo si = sections[i];
@@ -1271,7 +1332,8 @@ void RezDock::exportV7()
 		}
 		return false; // řez byl smazán
 	};
-	std::vector<DgnV7::Element> elements = m_draw->exportElements( table, map );
+	std::vector<DgnV7::Element> elements = m_draw->exportElements( table, map, st.value( QStringLiteral( "qRezy/userTextLevel" ), 15 ).toInt(),
+	                                                               st.value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() );
 	if ( elements.empty() )
 	{
 		QMessageBox::information( this, QStringLiteral( "Řezy" ), QStringLiteral( "Zatím není nic nakreslené (u vybraného mračna)." ) );
@@ -1464,6 +1526,16 @@ void RezDock::createSection( int kind, double ax, double ay, double bx, double b
 	// pozorovatel stojí na opačné straně, než kam se dívá
 	const CCVector2d N = ( side >= 0 ) ? p * -1.0 : p;
 
+	if ( kind == 2 )
+	{
+		// pomocný řez: jen okno pro měření, nic se neukládá
+		if ( ensure3D() )
+		{
+			m_view3D->auxSection( CCVector3d( ax, ay, 0 ), CCVector3d( bx, by, 0 ), CCVector3d( N.x, N.y, 0 ), planZLocal(), m_zero->value(), m_thickness->value() );
+		}
+		return;
+	}
+
 	// id = jedinečné; číslo = pořadí v rámci řezů (A, B, …) nebo pohledů (1, 2, …)
 	int id = 1;
 	int no = 1;
@@ -1583,6 +1655,18 @@ DrawFrame RezDock::frameFor( int viewId ) const
 	// čáry před rovinou (k pozorovateli), aby je body nezakryly; skutečná poloha = rovina s posunem
 	f.back = 20.0 * sc;
 	f.front = f.back - si.offset * sc;
+	// změřené body: řez ±1 m od roviny, pohled za rovinou do hloubky (+0,5 m před ní)
+	const double s0 = -si.offset * sc;
+	if ( si.kind == 1 )
+	{
+		f.ptMin = s0 - si.depth * sc;
+		f.ptMax = s0 + 0.5 * sc;
+	}
+	else
+	{
+		f.ptMin = s0 - 1.0 * sc;
+		f.ptMax = s0 + 1.0 * sc;
+	}
 	return f;
 }
 

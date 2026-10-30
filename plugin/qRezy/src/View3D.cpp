@@ -6,6 +6,7 @@
 #include "ccMainAppInterface.h"
 
 #include <ccPointCloud.h>
+#include <ccPolyline.h>
 
 #include <CloudSamplingTools.h>
 #include <ReferenceCloud.h>
@@ -222,6 +223,10 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent )
 	side->addWidget( m_showLines );
 	side->addWidget( resetBtn );
 	side->addWidget( allBtn );
+	m_backBtn = new QPushButton( QStringLiteral( "3D" ) );
+	m_backBtn->setToolTip( QStringLiteral( "Zpět z pomocného řezu do 3D náhledu" ) );
+	m_backBtn->setVisible( false );
+	side->addWidget( m_backBtn );
 	auto* top = new QHBoxLayout;
 	top->addLayout( grid, 1 );
 	top->addLayout( side );
@@ -246,6 +251,11 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent )
 	}
 	setWidget( w );
 
+	connect( m_backBtn, &QPushButton::clicked, this, [this]() { leaveAux( true ); } );
+	if ( m_widget )
+	{
+		m_widget->installEventFilter( this );
+	}
 	connect( resetBtn, &QPushButton::clicked, this, [this]()
 	{
 		for ( int i = 0; i < 3; ++i )
@@ -330,6 +340,15 @@ void View3D::updateRanges()
 
 View3D::~View3D()
 {
+	if ( m_measPoly )
+	{
+		if ( m_win )
+		{
+			m_win->removeFromOwnDB( m_measPoly );
+		}
+		delete m_measPoly;
+		m_measPoly = nullptr;
+	}
 	clearLines();
 	release();
 	if ( m_win )
@@ -461,7 +480,10 @@ void View3D::applyClip()
 	{
 		return;
 	}
-	saveSettings();
+	if ( !m_aux )
+	{
+		saveSettings();
+	}
 	const CCVector3d& P = m_focus;
 	const double c = std::cos( m_angle );
 	const double s = std::sin( m_angle );
@@ -509,6 +531,10 @@ void View3D::focusOn( const CCVector3d& P, double viewAngle )
 	{
 		return;
 	}
+	if ( m_aux )
+	{
+		leaveAux( false );
+	}
 	m_focus = P;
 	m_angle = viewAngle;
 	m_hasFocus = true;
@@ -535,4 +561,254 @@ void View3D::focusOn( const CCVector3d& P, double viewAngle )
 	{
 		show();
 	}
+}
+
+// ---------------------------------------------------------------- pomocný řez
+
+void View3D::auxSection( const CCVector3d& A, const CCVector3d& B, const CCVector3d& N, double planZ, double zeroGlobal, double thickness )
+{
+	if ( !m_win || !m_clone )
+	{
+		return;
+	}
+	const CCVector3d V( 0, 0, 1 );
+	CCVector3d n( N.x, N.y, 0.0 );
+	if ( n.norm() < 1e-9 )
+	{
+		return;
+	}
+	n.normalize();
+	const CCVector3d U = V.cross( n );
+	const double uA = A.dot( U );
+	const double uB = B.dot( U );
+	const CCVector3d left = ( uA <= uB ) ? A : B;
+	const double len = std::abs( uB - uA );
+
+	m_aux = true;
+	m_auxA = CCVector3d( left.x, left.y, planZ );
+	m_auxU = U;
+	m_auxN = n;
+	m_zeroG = zeroGlobal;
+	m_measStep = 0;
+	m_focus = m_auxA + U * ( len / 2.0 );
+	m_angle = std::atan2( U.y, U.x );
+	m_hasFocus = true;
+	updateRanges();
+	const double halfLen = len / 2.0 / m_scale + 0.3;
+	const double halfT = std::max( 0.005, thickness / 2.0 );
+	m_rs[0]->setValues( -halfLen, halfLen );
+	m_rs[1]->setValues( -halfT, halfT );
+	m_rs[2]->setValues( m_rs[2]->minimum(), m_rs[2]->maximum() );
+	updateValueLabels();
+	applyClip();
+
+	// pravoúhlý pohled proti N
+	ccGLMatrixd view;
+	view.toIdentity();
+	double* m = view.data();
+	m[0] = U.x;
+	m[4] = U.y;
+	m[8] = U.z;
+	m[1] = V.x;
+	m[5] = V.y;
+	m[9] = V.z;
+	m[2] = n.x;
+	m[6] = n.y;
+	m[10] = n.z;
+	m_win->setPerspectiveState( false, true );
+	m_win->setBaseViewMat( view );
+	m_win->setInteractionMode( ccGLWindowInterface::MODE_PAN_ONLY );
+	m_win->setPivotVisibility( ccGLWindowInterface::PIVOT_HIDE );
+	m_win->setWindowCursor( Qt::CrossCursor );
+	const ccBBox bb = m_clone->getOwnBB();
+	const CCVector3d P0 = m_auxA;
+	const CCVector3d P1 = m_auxA + U * len;
+	CCVector3 mn( static_cast<PointCoordinateType>( std::min( P0.x, P1.x ) ), static_cast<PointCoordinateType>( std::min( P0.y, P1.y ) ), bb.minCorner().z );
+	CCVector3 mx( static_cast<PointCoordinateType>( std::max( P0.x, P1.x ) ), static_cast<PointCoordinateType>( std::max( P0.y, P1.y ) ), bb.maxCorner().z );
+	ccBBox box( mn, mx, true );
+	m_win->updateConstellationCenterAndZoom( &box );
+	if ( m_measPoly )
+	{
+		m_measPoly->setEnabled( false );
+	}
+	m_backBtn->setVisible( true );
+	setWindowTitle( QStringLiteral( "Řezy – pomocný řez (měření)" ) );
+	m_info->setText( QStringLiteral( "<b>Pomocný řez</b> – klikněte 2 body = vzdálenost a převýšení; u kurzoru výška nad ±0,000 a v Bpv. "
+	                                 "Pravé tažení = posun, kolečko = zoom, tlačítko 3D = zpět." ) );
+	m_win->redraw();
+	if ( !isVisible() )
+	{
+		show();
+	}
+	raise();
+}
+
+void View3D::leaveAux( bool refocus )
+{
+	if ( !m_aux )
+	{
+		return;
+	}
+	m_aux = false;
+	m_measStep = 0;
+	if ( m_measPoly )
+	{
+		m_measPoly->setEnabled( false );
+	}
+	m_backBtn->setVisible( false );
+	setWindowTitle( QStringLiteral( "Řezy – 3D náhled" ) );
+	if ( m_win )
+	{
+		m_win->setInteractionMode( ccGLWindowInterface::MODE_TRANSFORM_CAMERA );
+		m_win->setWindowCursor( Qt::ArrowCursor );
+		m_win->setPivotVisibility( ccGLWindowInterface::PIVOT_SHOW_ON_MOVE );
+		m_win->setPerspectiveState( true, true );
+	}
+	// zpět uložené hodnoty posuvníků 3D náhledu
+	QSettings st;
+	for ( int i = 0; i < 3; ++i )
+	{
+		const QString k = QStringLiteral( "qRezy/3d%1" ).arg( QLatin1String( AxisKey[i] ) );
+		m_rs[i]->setValues( st.value( k + QStringLiteral( "0" ), AxisDefault[i][0] ).toDouble(), st.value( k + QStringLiteral( "1" ), AxisDefault[i][1] ).toDouble() );
+	}
+	updateValueLabels();
+	m_info->setText( QStringLiteral( "Prostřední klik do řezu = ukázat místo. Levé tažení = otáčení, kolečko = zoom." ) );
+	if ( refocus && m_hasFocus )
+	{
+		focusOn( m_focus, m_angle );
+	}
+}
+
+bool View3D::auxPoint( const QPoint& pos, CCVector3d& P ) const
+{
+	if ( !m_win )
+	{
+		return false;
+	}
+	ccGLCameraParameters cam;
+	m_win->getGLCameraParameters( cam );
+	const QPointF g = m_win->toCornerGLCoordinates( pos.x(), pos.y() );
+	CCVector3d Q;
+	if ( !cam.unproject( CCVector3d( g.x(), g.y(), 0.5 ), Q ) )
+	{
+		return false;
+	}
+	// průmět do roviny řezu
+	P = Q - m_auxN * ( ( Q - m_auxA ).dot( m_auxN ) );
+	return true;
+}
+
+QString View3D::heightText( const CCVector3d& P ) const
+{
+	const double zG = m_clone ? m_clone->toGlobal3d( P ).z : P.z;
+	const double rel = zG - m_zeroG;
+	QString r = QString::number( std::abs( rel ), 'f', 3 ).replace( '.', ',' );
+	r = ( std::abs( rel ) < 0.0005 ) ? QStringLiteral( "±0,000" ) : ( ( rel > 0 ? QStringLiteral( "+" ) : QStringLiteral( "-" ) ) + r );
+	return QStringLiteral( "%1 (Bpv %2)" ).arg( r, QString::number( zG, 'f', 3 ).replace( '.', ',' ) );
+}
+
+void View3D::updateMeasure( bool live )
+{
+	if ( !m_win )
+	{
+		return;
+	}
+	QString txt = QStringLiteral( "<b>Pomocný řez</b> – kurzor: výška %1" ).arg( heightText( m_mCursor ) );
+	if ( m_measStep >= 1 )
+	{
+		const CCVector3d B = ( m_measStep == 1 ) ? m_mCursor : m_m2;
+		const double du = std::abs( ( B - m_m1 ).dot( m_auxU ) ) / m_scale;
+		const double dz = ( B.z - m_m1.z ) / m_scale;
+		const double d = std::sqrt( du * du + dz * dz );
+		auto f = []( double v ) { return QString::number( v, 'f', 3 ).replace( '.', ',' ); };
+		txt += QStringLiteral( "<br>1. bod: %1 · 2. bod: %2<br><b>vodorovně %3 m · svisle %4 m · šikmo %5 m</b>" )
+		           .arg( heightText( m_m1 ), heightText( B ), f( du ), f( std::abs( dz ) ), f( d ) );
+
+		// čára měření (kousek před rovinou, aby ji body nezakryly)
+		if ( !m_measPoly )
+		{
+			auto* verts = new ccPointCloud( "measure" );
+			verts->reserve( 2 );
+			verts->addPoint( CCVector3( 0, 0, 0 ) );
+			verts->addPoint( CCVector3( 0, 0, 0 ) );
+			verts->setEnabled( false );
+			m_measPoly = new ccPolyline( verts );
+			m_measPoly->addChild( verts );
+			m_measPoly->addPointIndex( 0, 2 );
+			m_measPoly->setColor( ccColor::Rgb( 255, 220, 0 ) );
+			m_measPoly->showColors( true );
+			m_measPoly->setWidth( 3 );
+			m_measPoly->setDisplay( m_win );
+			m_win->addToOwnDB( m_measPoly );
+		}
+		auto* verts = static_cast<ccPointCloud*>( m_measPoly->getAssociatedCloud() );
+		const CCVector3d front = m_auxN * ( 2.0 * m_scale );
+		*const_cast<CCVector3*>( verts->getPointPersistentPtr( 0 ) ) = ( m_m1 + front ).toFloat();
+		*const_cast<CCVector3*>( verts->getPointPersistentPtr( 1 ) ) = ( B + front ).toFloat();
+		verts->invalidateBoundingBox();
+		m_measPoly->setEnabled( true );
+		m_measPoly->prepareDisplayForRefresh();
+	}
+	m_info->setText( txt );
+	m_win->redraw( !live || m_measStep == 0, false );
+}
+
+bool View3D::eventFilter( QObject* obj, QEvent* event )
+{
+	if ( obj != m_widget || !m_aux )
+	{
+		return QDockWidget::eventFilter( obj, event );
+	}
+	switch ( event->type() )
+	{
+	case QEvent::MouseButtonPress:
+	case QEvent::MouseButtonDblClick:
+	{
+		auto* e = static_cast<QMouseEvent*>( event );
+		if ( e->button() != Qt::LeftButton )
+		{
+			break;
+		}
+		CCVector3d P;
+		if ( auxPoint( e->pos(), P ) )
+		{
+			m_mCursor = P;
+			if ( m_measStep == 1 )
+			{
+				m_m2 = P;
+				m_measStep = 2;
+			}
+			else
+			{
+				m_m1 = P;
+				m_measStep = 1;
+			}
+			updateMeasure( false );
+		}
+		return true; // levé tlačítko neotáčí
+	}
+	case QEvent::MouseButtonRelease:
+	{
+		auto* e = static_cast<QMouseEvent*>( event );
+		if ( e->button() == Qt::LeftButton )
+		{
+			return true;
+		}
+		break;
+	}
+	case QEvent::MouseMove:
+	{
+		auto* e = static_cast<QMouseEvent*>( event );
+		CCVector3d P;
+		if ( e->buttons() == Qt::NoButton && auxPoint( e->pos(), P ) )
+		{
+			m_mCursor = P;
+			updateMeasure( true );
+		}
+		break;
+	}
+	default:
+		break;
+	}
+	return QDockWidget::eventFilter( obj, event );
 }
