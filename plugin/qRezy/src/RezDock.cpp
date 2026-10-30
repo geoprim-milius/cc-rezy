@@ -225,6 +225,23 @@ void RezDock::buildPanel()
 	moveRow->addWidget( m_upBtn );
 	lay->addLayout( moveRow );
 
+	// posuvník polohy řezu (celé mračno, po 1 cm)
+	m_posSlider = new QSlider( Qt::Horizontal );
+	m_posSlider->setToolTip( QStringLiteral( "Poloha řezu – táhněte (půdorys: výška, řez: posun roviny)" ) );
+	m_posSlider->setSingleStep( 1 );
+	m_posSlider->setPageStep( 10 );
+	m_posMin = new QLabel;
+	m_posMax = new QLabel;
+	QFont sf = m_posMin->font();
+	sf.setPointSizeF( sf.pointSizeF() * 0.85 );
+	m_posMin->setFont( sf );
+	m_posMax->setFont( sf );
+	auto* posRow = new QHBoxLayout;
+	posRow->addWidget( m_posMin );
+	posRow->addWidget( m_posSlider, 1 );
+	posRow->addWidget( m_posMax );
+	lay->addLayout( posRow );
+
 	auto* form = new QFormLayout;
 	form->setLabelAlignment( Qt::AlignRight );
 	m_enabled = new QCheckBox( QStringLiteral( "ořezat mračno" ) );
@@ -289,8 +306,10 @@ void RezDock::buildPanel()
 	lay->addWidget( m_status );
 
 	auto* help = new QLabel( QStringLiteral(
-		"<small>Levé = bod · pravé kliknutí = reset · pravé tažení = posun · kolečko = zoom · "
-		"<b>prostřední klik = 3D náhled</b> · Ctrl+kolečko = tloušťka · číslo + Enter = délka · Esc = zrušit<br>"
+		"<small>Levé = bod · pravé = reset · <b>Shift + tažení</b> nebo tažení kolečkem = posun · kolečko = zoom · "
+		"<b>prostřední klik = 3D náhled</b> · Ctrl+kolečko = tloušťka · Esc = zrušit<br>"
+		"Klávesy jako MicroStation: Q čára · 3 manipulace · 7 úpravy · 8 mazat · D měřit. "
+		"Délka: čísla na numerické klávesnici (nebo Shift + horní řada) + Enter.<br>"
 		"Trasování (F11): podržte kurzor na konci čáry → zelená pomocná čára.</small>" ) );
 	help->setWordWrap( true );
 	lay->addWidget( help );
@@ -326,6 +345,7 @@ void RezDock::buildPanel()
 		const QSignalBlocker b( m_thickSlider );
 		m_thickness->setValue( sliderToThick( v ) );
 	} );
+	connect( m_posSlider, &QSlider::valueChanged, this, &RezDock::onPosSlider );
 	connect( m_enabled, &QCheckBox::toggled, this, [this]() { applyClip(); } );
 	connect( m_height, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]()
 	{
@@ -379,13 +399,15 @@ void RezDock::buildToolbar()
 		const char* tip;
 	};
 	const ToolDef tools[] = {
-		{ DrawTool::Mode::Line, "line", "Čára (L) – body, pravé kliknutí ukončí" },
-		{ DrawTool::Mode::Move, "move", "Přesun (M) – čára, výchozí bod, cíl nebo vzdálenost" },
-		{ DrawTool::Mode::Copy, "copy", "Kopie (C) – čára, výchozí bod, cíle nebo vzdálenost" },
-		{ DrawTool::Mode::Offset, "offset", "Rovnoběžně (O) – čára, strana; vzdálenost z pole vedle nebo napsat + Enter" },
-		{ DrawTool::Mode::Extend, "extend", "Prodloužit / zkrátit (E) – klik u konce čáry, nový konec nebo celková délka" },
-		{ DrawTool::Mode::Corner, "corner", "Roh (R) – dvě čáry do průsečíku; klikejte na části, které zůstanou" },
-		{ DrawTool::Mode::Delete, "delete", "Mazat (Del) – klik na čáru" },
+		{ DrawTool::Mode::Line, "line", "Čára (Q) – body, pravé kliknutí ukončí" },
+		{ DrawTool::Mode::Move, "move", "Přesun (3 → 2) – čára, výchozí bod, cíl nebo vzdálenost" },
+		{ DrawTool::Mode::Copy, "copy", "Kopie (3 → 1) – čára, výchozí bod, cíle nebo vzdálenost" },
+		{ DrawTool::Mode::Offset, "offset", "Rovnoběžně (3 → 9) – čára, strana; vzdálenost z pole vedle nebo napsat + Enter" },
+		{ DrawTool::Mode::Break, "break", "Rozdělit (7 → 2) – 2 body na čáře, část mezi nimi se smaže; stejný bod 2× = jen rozdělit" },
+		{ DrawTool::Mode::Extend, "extend", "Prodloužit / zkrátit (7 → 3) – klik u konce čáry, nový konec nebo celková délka" },
+		{ DrawTool::Mode::Corner, "corner", "Roh (7 → 4) – dvě čáry do průsečíku; klikejte na části, které zůstanou" },
+		{ DrawTool::Mode::Trim, "trim", "Oříznout k prvku (7 → 5) – hraniční čára, pak čáry k oříznutí/prodloužení" },
+		{ DrawTool::Mode::Delete, "delete", "Mazat (8 nebo Del) – klik na čáru" },
 		{ DrawTool::Mode::Measure, "measure", "Měřit vzdálenost (D) – dva body" },
 	};
 	for ( const ToolDef& t : tools )
@@ -703,6 +725,78 @@ void RezDock::thicknessStep( int direction )
 	m_status->setText( QStringLiteral( "Tloušťka řezu %1 cm" ).arg( QString::number( next * 100.0, 'f', next < 0.1 ? 1 : 0 ).replace( '.', ',' ) ) );
 }
 
+void RezDock::onPosSlider( int cm )
+{
+	const double v = cm / 100.0;
+	if ( m_activeView == 0 )
+	{
+		if ( std::abs( m_height->value() - ( v + m_zero->value() ) ) > 0.004 )
+		{
+			m_height->setValue( v + m_zero->value() );
+		}
+		return;
+	}
+	SectionInfo si;
+	if ( sectionById( m_activeView, si ) && std::abs( si.offset - v ) > 0.004 )
+	{
+		si.offset = v;
+		saveSection( si );
+		applyClip();
+	}
+}
+
+void RezDock::syncPosSlider()
+{
+	if ( !m_posSlider )
+	{
+		return;
+	}
+	ccGenericPointCloud* c = cloud();
+	if ( !c )
+	{
+		m_posSlider->setEnabled( false );
+		return;
+	}
+	const ccBBox box = c->getOwnBB();
+	const CCVector3 mn = box.minCorner();
+	const CCVector3 mx = box.maxCorner();
+	double lo = 0.0;
+	double hi = 0.0;
+	double cur = 0.0;
+	SectionInfo si;
+	if ( m_activeView != 0 && sectionById( m_activeView, si ) )
+	{
+		// posun roviny: offset = (O·N − P·N) / měřítko
+		const DrawFrame f = frameFor( m_activeView );
+		const double sc = c->getGlobalScale();
+		lo = 1e30;
+		hi = -1e30;
+		for ( int k = 0; k < 8; ++k )
+		{
+			const CCVector3d P( ( k & 1 ) ? mx.x : mn.x, ( k & 2 ) ? mx.y : mn.y, ( k & 4 ) ? mx.z : mn.z );
+			const double o = ( f.O.dot( f.N ) - P.dot( f.N ) ) / sc;
+			lo = std::min( lo, o );
+			hi = std::max( hi, o );
+		}
+		cur = si.offset;
+	}
+	else
+	{
+		// výška nad ±0
+		lo = c->toGlobal3d( CCVector3d( 0, 0, mn.z ) ).z - m_zero->value();
+		hi = c->toGlobal3d( CCVector3d( 0, 0, mx.z ) ).z - m_zero->value();
+		cur = m_height->value() - m_zero->value();
+	}
+	lo = std::min( lo, cur );
+	hi = std::max( hi, cur );
+	const QSignalBlocker b( m_posSlider );
+	m_posSlider->setRange( static_cast<int>( std::floor( lo * 100.0 ) ), static_cast<int>( std::ceil( hi * 100.0 ) ) );
+	m_posSlider->setValue( static_cast<int>( std::lround( cur * 100.0 ) ) );
+	m_posSlider->setEnabled( true );
+	m_posMin->setText( fmt( lo ) );
+	m_posMax->setText( fmt( hi ) );
+}
+
 void RezDock::syncThicknessSlider()
 {
 	const QSignalBlocker b( m_thickSlider );
@@ -815,6 +909,7 @@ void RezDock::updateLabels()
 		m_downBtn->setToolTip( QStringLiteral( "Dolů (PgDn)" ) );
 	}
 	m_height->setEnabled( !sec );
+	syncPosSlider();
 	m_thickness->setEnabled( !sec || si.kind == 0 );
 	m_thickSlider->setEnabled( !sec || si.kind == 0 );
 	m_depth->setEnabled( sec && si.kind == 1 );

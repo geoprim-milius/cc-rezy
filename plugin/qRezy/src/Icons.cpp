@@ -100,6 +100,30 @@ namespace Icons
 				p.setPen( QPen( Accent, 2 ) );
 				p.drawEllipse( QPointF( 6, 6 ), 3, 3 );
 			}
+			else if ( n == "break" )
+			{
+				// čára s vymazanou částí uprostřed
+				p.drawLine( QPointF( 3, 22 ), QPointF( 12, 16 ) );
+				p.drawLine( QPointF( 20, 11 ), QPointF( 29, 5 ) );
+				p.setPen( QPen( Accent, 1.5, Qt::DashLine ) );
+				p.drawLine( QPointF( 12, 16 ), QPointF( 20, 11 ) );
+				p.setPen( QPen( Blue, 2 ) );
+				p.drawLine( QPointF( 12, 20 ), QPointF( 12, 26 ) );
+				p.drawLine( QPointF( 20, 15 ), QPointF( 20, 21 ) );
+			}
+			else if ( n == "trim" )
+			{
+				// hranice (svislá) a čáry oříznuté / prodloužené k ní
+				p.setPen( QPen( Blue, 2.4 ) );
+				p.drawLine( QPointF( 20, 3 ), QPointF( 20, 29 ) );
+				p.setPen( QPen( Ink, 2.2 ) );
+				p.drawLine( QPointF( 3, 10 ), QPointF( 20, 10 ) );
+				p.drawLine( QPointF( 3, 22 ), QPointF( 13, 22 ) );
+				p.setPen( QPen( Accent, 1.5, Qt::DashLine ) );
+				p.drawLine( QPointF( 20, 10 ), QPointF( 29, 10 ) );
+				p.setPen( QPen( Ink, 1.5, Qt::DashLine ) );
+				p.drawLine( QPointF( 13, 22 ), QPointF( 20, 22 ) );
+			}
 			else if ( n == "delete" )
 			{
 				p.setPen( QPen( Ink, 2.2 ) );

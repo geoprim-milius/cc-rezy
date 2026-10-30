@@ -2,6 +2,7 @@
 #include "RezLine.h"
 
 #include "ccGLWindowInterface.h"
+#include "ccGuiParameters.h"
 #include "ccMainAppInterface.h"
 
 #include <ccGenericPointCloud.h>
@@ -10,7 +11,9 @@
 #include <ccPolyline.h>
 
 #include <QApplication>
+#include <QCursor>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QTimer>
@@ -24,6 +27,7 @@ namespace
 	constexpr double SnapPixels = 10.0; //!< dosah uchopení v pixelech
 	constexpr double PickPixels = 8.0;  //!< dosah výběru čáry
 	constexpr int ClickTolerance = 4;   //!< max. posun myši, aby šlo o kliknutí
+	constexpr double CrossPixels = 45.0; //!< ramena nitkového kříže
 	constexpr double RadToDeg = 57.29577951308232;
 
 	double dist( const CCVector2d& a, const CCVector2d& b )
@@ -117,6 +121,86 @@ namespace
 	{
 		return QString::number( v, 'f', 3 ).replace( '.', ',' );
 	}
+
+	//! číslice horní řady klávesnice podle fyzické klávesy (CZ i EN rozložení), jinak -1
+	int topRowDigit( const QKeyEvent* e )
+	{
+		if ( e->modifiers() & ( Qt::KeypadModifier | Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier ) )
+		{
+			return -1;
+		}
+#ifdef Q_OS_WIN
+		const quint32 vk = e->nativeVirtualKey();
+		if ( vk >= 0x30 && vk <= 0x39 )
+		{
+			return static_cast<int>( vk - 0x30 );
+		}
+		return -1;
+#else
+		// X11: kódy kláves 10–19 = horní řada 1 … 0
+		const quint32 sc = e->nativeScanCode();
+		if ( sc >= 10 && sc <= 19 )
+		{
+			return sc == 19 ? 0 : static_cast<int>( sc - 9 );
+		}
+		const int k = e->key();
+		if ( sc == 0 && k >= Qt::Key_0 && k <= Qt::Key_9 )
+		{
+			return k - Qt::Key_0;
+		}
+		return -1;
+#endif
+	}
+
+	//! vyskakovací menu jako v MicroStationu: položky se volí klávesou horní řady (1 … 0, Q)
+	class KeyMenu : public QMenu
+	{
+	public:
+		using QMenu::QMenu;
+		std::vector<std::pair<int, QAction*>> keys; //!< číslice (0–9) nebo Qt::Key_Q → akce
+
+	protected:
+		bool event( QEvent* ev ) override
+		{
+			// klávesy menu nesmí sebrat zkratky CloudCompare
+			if ( ev->type() == QEvent::ShortcutOverride )
+			{
+				ev->accept();
+				return true;
+			}
+			return QMenu::event( ev );
+		}
+		void keyPressEvent( QKeyEvent* e ) override
+		{
+			int code = topRowDigit( e );
+			if ( code < 0 && ( e->modifiers() & Qt::KeypadModifier ) && e->key() >= Qt::Key_0 && e->key() <= Qt::Key_9 )
+			{
+				code = e->key() - Qt::Key_0;
+			}
+			if ( code < 0 && e->key() == Qt::Key_Q )
+			{
+				code = Qt::Key_Q;
+			}
+			if ( code >= 0 )
+			{
+				for ( const auto& k : keys )
+				{
+					if ( k.first == code )
+					{
+						if ( k.second->isEnabled() )
+						{
+							QAction* a = k.second;
+							close();
+							a->trigger();
+						}
+						return;
+					}
+				}
+				return;
+			}
+			QMenu::keyPressEvent( e );
+		}
+	};
 
 	CCVector3 v3( const CCVector2d& p, double z )
 	{
@@ -657,29 +741,147 @@ CCVector2d DrawTool::applyOrtho( const CCVector2d& from, const CCVector2d& to ) 
 	return ( std::abs( px ) >= std::abs( py ) ) ? from + ax * px : from + ay * py;
 }
 
-CCVector2d DrawTool::cursorPoint( const QPoint& pos, SnapType& type, const CCVector2d* orthoFrom ) const
+CCVector2d DrawTool::cursorPoint( const QPoint& pos, SnapType& type, const CCVector2d* orthoFrom, TrackLines* lines ) const
 {
 	CCVector2d P = snapPoint( pos, type );
-	if ( m_trackingOn && !m_acquired.empty() && ( type == SnapType::None || type == SnapType::OnLine ) )
+	if ( type == SnapType::End || type == SnapType::Mid || type == SnapType::Intersection )
 	{
-		CCVector2d raw;
-		CCVector2d T;
-		if ( screenToLocal( pos, raw ) && trackingPoint( raw, T, nullptr ) )
+		return P; // pevné uchopení má přednost
+	}
+	CCVector2d raw;
+	if ( !screenToLocal( pos, raw ) )
+	{
+		return P;
+	}
+	const double tol = SnapPixels * pixelSize();
+	const double ang = viewAngle();
+	const CCVector2d d0( std::cos( ang ), std::sin( ang ) );
+	const CCVector2d d1( -d0.y, d0.x );
+	const std::vector<Segment> segs = collectSegments();
+
+	// průsečík přímky (A, dir) s nakreslenou úsečkou poblíž bodu Q
+	auto lineVsSegments = [&]( const CCVector2d& A, const CCVector2d& dir, const CCVector2d& Q, CCVector2d& out ) -> bool
+	{
+		double best = tol;
+		bool found = false;
+		for ( const Segment& s : segs )
+		{
+			CCVector2d I;
+			if ( !lineIntersection( A, A + dir, s.a, s.b, I ) )
+			{
+				continue;
+			}
+			const double t = paramOn( s.a, s.b, I );
+			if ( t < -1e-9 || t > 1 + 1e-9 )
+			{
+				continue;
+			}
+			const double d = dist( I, Q );
+			if ( d < best )
+			{
+				best = d;
+				out = I;
+				found = true;
+			}
+		}
+		return found;
+	};
+
+	if ( m_ortho && orthoFrom )
+	{
+		// orto: kurzor se pohybuje po vodorovné/svislé přímce od posledního bodu;
+		// na ní se hledá průsečík s pomocnou čárou trasování nebo s nakreslenou čarou
+		const CCVector2d Pc = applyOrtho( *orthoFrom, raw );
+		CCVector2d dir = Pc - *orthoFrom;
+		if ( dir.norm() < 1e-12 )
 		{
 			type = SnapType::None;
-			return T; // pomocná čára má přednost před orto
+			return Pc;
 		}
+		dir.normalize();
+		double best = tol;
+		bool found = false;
+		CCVector2d bestI;
+		CCVector2d bestA;
+		CCVector2d bestD;
+		if ( m_trackingOn )
+		{
+			for ( const CCVector2d& A : m_acquired )
+			{
+				for ( const CCVector2d& d : { d0, d1 } )
+				{
+					if ( std::abs( d.dot( dir ) ) > 0.5 )
+					{
+						continue; // rovnoběžná s orto
+					}
+					CCVector2d I;
+					if ( lineIntersection( *orthoFrom, *orthoFrom + dir, A, A + d, I ) && dist( I, Pc ) < best )
+					{
+						best = dist( I, Pc );
+						bestI = I;
+						bestA = A;
+						bestD = d;
+						found = true;
+					}
+				}
+			}
+		}
+		if ( found )
+		{
+			type = SnapType::None;
+			if ( lines )
+			{
+				lines->push_back( { bestA, bestD } );
+				lines->push_back( { *orthoFrom, dir } );
+			}
+			return bestI;
+		}
+		CCVector2d I;
+		if ( lineVsSegments( *orthoFrom, dir, Pc, I ) )
+		{
+			type = SnapType::Intersection;
+			return I;
+		}
+		type = SnapType::None;
+		return Pc;
 	}
-	if ( m_ortho && orthoFrom && type == SnapType::None )
+
+	if ( m_trackingOn )
 	{
-		P = applyOrtho( *orthoFrom, P );
+		// zdroje pomocných čar: získané body + poslední bod (vodorovně/svisle od něj)
+		std::vector<CCVector2d> sources = m_acquired;
+		if ( orthoFrom )
+		{
+			sources.push_back( *orthoFrom );
+		}
+		CCVector2d T;
+		TrackLines tl;
+		if ( !sources.empty() && trackingPoint( raw, sources, T, &tl ) )
+		{
+			// pomocná čára × nakreslená čára
+			CCVector2d I;
+			if ( tl.size() == 1 && type == SnapType::OnLine && lineVsSegments( tl[0].first, tl[0].second, raw, I ) )
+			{
+				T = I;
+				type = SnapType::Intersection;
+			}
+			else
+			{
+				type = SnapType::None;
+			}
+			if ( lines )
+			{
+				*lines = tl;
+			}
+			return T;
+		}
 	}
 	return P;
 }
 
-bool DrawTool::trackingPoint( const CCVector2d& raw, CCVector2d& out, std::vector<std::pair<CCVector2d, CCVector2d>>* lines ) const
+bool DrawTool::trackingPoint( const CCVector2d& raw, const std::vector<CCVector2d>& sources, CCVector2d& out, TrackLines* lines ) const
 {
-	// pomocné čáry z každého získaného bodu ve směru os pohledu
+	// pomocné čáry z každého zdroje ve směru os pohledu
 	const double tol = SnapPixels * pixelSize();
 	const double ang = viewAngle();
 	const CCVector2d d0( std::cos( ang ), std::sin( ang ) );
@@ -692,7 +894,7 @@ bool DrawTool::trackingPoint( const CCVector2d& raw, CCVector2d& out, std::vecto
 		double dist;
 	};
 	std::vector<Hit> hits;
-	for ( const CCVector2d& A : m_acquired )
+	for ( const CCVector2d& A : sources )
 	{
 		for ( const CCVector2d& d : { d0, d1 } )
 		{
@@ -710,23 +912,31 @@ bool DrawTool::trackingPoint( const CCVector2d& raw, CCVector2d& out, std::vecto
 		return false;
 	}
 
-	// dvě pomocné čáry → průsečík
+	// dvě pomocné čáry → průsečík (má přednost)
+	double bestI = tol * 1.5;
+	bool foundI = false;
 	for ( size_t i = 0; i < hits.size(); ++i )
 	{
 		for ( size_t j = i + 1; j < hits.size(); ++j )
 		{
 			CCVector2d I;
-			if ( lineIntersection( hits[i].P, hits[i].P + hits[i].dir, hits[j].P, hits[j].P + hits[j].dir, I ) && ( I - raw ).norm() < tol * 1.5 )
+			if ( lineIntersection( hits[i].P, hits[i].P + hits[i].dir, hits[j].P, hits[j].P + hits[j].dir, I ) && ( I - raw ).norm() < bestI )
 			{
+				bestI = ( I - raw ).norm();
 				out = I;
+				foundI = true;
 				if ( lines )
 				{
+					lines->clear();
 					lines->push_back( { hits[i].P, hits[i].dir } );
 					lines->push_back( { hits[j].P, hits[j].dir } );
 				}
-				return true;
 			}
 		}
+	}
+	if ( foundI )
+	{
+		return true;
 	}
 
 	// jedna pomocná čára → průmět
@@ -1018,6 +1228,16 @@ bool DrawTool::previewGeometry( CCVector2d& a, CCVector2d& b ) const
 		b = sb + off;
 		return true;
 	}
+	case Mode::Break:
+	{
+		if ( m_step != 1 )
+		{
+			return false;
+		}
+		a = m_base;
+		b = closestOnSegment( sa, sb, m_cursor );
+		return true;
+	}
 	case Mode::Extend:
 	{
 		const CCVector2d fixed = ( m_selEnd == 0 ) ? sb : sa;
@@ -1303,13 +1523,137 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		}
 		break;
 	}
+	case Mode::Break:
+	{
+		// rozdělit: 2 body na čáře → část mezi nimi se smaže; dvakrát stejný bod = jen rozdělit
+		if ( m_step == 0 )
+		{
+			if ( ccPolyline* p = pickLine( pos ) )
+			{
+				CCVector2d a;
+				CCVector2d b;
+				lineEnds( p, a, b );
+				select( p );
+				m_base = closestOnSegment( a, b, cursorPoint( pos, st, nullptr ) );
+				m_step = 1;
+			}
+		}
+		else
+		{
+			CCVector2d a;
+			CCVector2d b;
+			if ( lineEnds( m_sel, a, b ) )
+			{
+				const CCVector2d P2 = closestOnSegment( a, b, cursorPoint( pos, st, nullptr ) );
+				const int cat = m_sel->getMetaData( Drawing::MetaCategory ).toInt();
+				const bool hid = m_sel->getMetaData( Drawing::MetaHidden ).toBool();
+				const double minLen = 2.0 * pixelSize();
+				ccPolyline* line = m_sel;
+				select( nullptr );
+				UndoItem u;
+				if ( dist( P2, m_base ) < minLen )
+				{
+					if ( dist( m_base, a ) > minLen && dist( m_base, b ) > minLen )
+					{
+						setLine( line, a, m_base, &u );
+						addLine( m_base, b, cat, hid, &u );
+					}
+				}
+				else
+				{
+					double t1 = paramOn( a, b, m_base );
+					double t2 = paramOn( a, b, P2 );
+					if ( t1 > t2 )
+					{
+						std::swap( t1, t2 );
+					}
+					const CCVector2d C1 = a + ( b - a ) * t1;
+					const CCVector2d C2 = a + ( b - a ) * t2;
+					const bool keep1 = dist( a, C1 ) > minLen;
+					const bool keep2 = dist( C2, b ) > minLen;
+					if ( keep1 )
+					{
+						setLine( line, a, C1, &u );
+						if ( keep2 )
+						{
+							addLine( C2, b, cat, hid, &u );
+						}
+					}
+					else if ( keep2 )
+					{
+						setLine( line, C2, b, &u );
+					}
+					else
+					{
+						removeLine( line, &u );
+					}
+				}
+				if ( !u.empty() )
+				{
+					pushUndo( std::move( u ) );
+				}
+			}
+			select( nullptr );
+			m_step = 0;
+		}
+		break;
+	}
+	case Mode::Trim:
+	{
+		// oříznout/prodloužit k prvku: 1. čára = hranice, pak libovolně čar k oříznutí
+		CCVector2d click;
+		ccPolyline* p = pickLine( pos, &click );
+		if ( !p )
+		{
+			break;
+		}
+		if ( m_step == 0 )
+		{
+			select( p );
+			m_step = 1;
+		}
+		else if ( p != m_sel )
+		{
+			CCVector2d ba;
+			CCVector2d bb;
+			CCVector2d a;
+			CCVector2d b;
+			CCVector2d I;
+			if ( lineEnds( m_sel, ba, bb ) && lineEnds( p, a, b ) && lineIntersection( a, b, ba, bb, I ) )
+			{
+				const double ti = paramOn( a, b, I );
+				const double tc = paramOn( a, b, click );
+				CCVector2d na = a;
+				CCVector2d nb = b;
+				if ( ti > 0.0 && ti < 1.0 )
+				{
+					// hranice čáru protíná → zůstane část, na kterou se kliklo
+					if ( tc < ti )
+						nb = I;
+					else
+						na = I;
+				}
+				else if ( ti >= 1.0 )
+				{
+					nb = I; // prodloužit konec b
+				}
+				else
+				{
+					na = I; // prodloužit konec a
+				}
+				if ( dist( na, nb ) > 1e-9 )
+				{
+					UndoItem u;
+					setLine( p, na, nb, &u );
+					pushUndo( std::move( u ) );
+				}
+			}
+		}
+		break;
+	}
 	}
 
 	m_typed.clear();
-	if ( m_mode != Mode::Measure )
-	{
-		m_acquired.clear();
-	}
 	redraw3D();
 	updateTip();
 	updateStatus();
@@ -1600,7 +1944,7 @@ void DrawTool::updateTip()
 	// pomocné čáry trasování (přes celé okno) a získané body
 	if ( m_trackingOn )
 	{
-		const double farLen = 4000.0 * pixelSize();
+		const double farLen = 2000.0 * pixelSize();
 		for ( const auto& tl : m_trackLines )
 		{
 			// čárkovaně: řada krátkých úseků
@@ -1683,6 +2027,35 @@ void DrawTool::updateTip()
 		addMarker( ovs, m_cursor, m_cursorSnap, ccColor::Rgb( 255, 200, 0 ) );
 	}
 
+	// nitkový kříž ±45 px (jako AutoCAD), na světlém pozadí černý
+	if ( m_hasCursor )
+	{
+		const ccColor::Rgbub& bg = ccGui::Parameters().backgroundCol;
+		const double lum = 0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b;
+		const ccColor::Rgb cc = ( lum > 140.0 ) ? ccColor::Rgb( 0, 0, 0 ) : ccColor::Rgb( 255, 255, 255 );
+		const QPointF g = m_win->toCornerGLCoordinates( m_mousePos.x(), m_mousePos.y() );
+		ccGLCameraParameters camera;
+		m_win->getGLCameraParameters( camera );
+		const CCVector2d C( g.x() - camera.viewport[2] / 2.0, g.y() - camera.viewport[3] / 2.0 );
+		const double r = CrossPixels * m_win->getDevicePixelRatio();
+		Overlay h;
+		h.pts = { C + CCVector2d( -r, 0 ), C + CCVector2d( r, 0 ) };
+		h.color = cc;
+		ovs.push_back( h );
+		Overlay v;
+		v.pts = { C + CCVector2d( 0, -r ), C + CCVector2d( 0, r ) };
+		v.color = cc;
+		ovs.push_back( v );
+		if ( pickingCursor() )
+		{
+			const double q = PickPixels * m_win->getDevicePixelRatio();
+			Overlay box;
+			box.pts = { C + CCVector2d( -q, -q ), C + CCVector2d( q, -q ), C + CCVector2d( q, q ), C + CCVector2d( -q, q ), C + CCVector2d( -q, -q ) };
+			box.color = cc;
+			ovs.push_back( box );
+		}
+	}
+
 	setOverlays( ovs );
 }
 
@@ -1704,9 +2077,109 @@ void DrawTool::redraw3D()
 
 void DrawTool::keepCrossCursor()
 {
+	// systémový kurzor skrytý, nitkový kříž kreslíme sami (updateTip)
 	if ( m_win )
 	{
-		m_win->setWindowCursor( Qt::CrossCursor );
+		m_win->setWindowCursor( Qt::BlankCursor );
+	}
+}
+
+void DrawTool::showToolMenu( int group )
+{
+	struct Item
+	{
+		int key;
+		const char* label;
+		bool enabled;
+		Mode mode;
+	};
+	std::vector<Item> items;
+	QString title;
+	if ( group == 3 )
+	{
+		title = QStringLiteral( "Manipulace" );
+		items = {
+			{ 1, "Kopie  (Copy)", true, Mode::Copy },
+			{ 2, "Přesun  (Move)", true, Mode::Move },
+			{ 3, "Měřítko  (Scale)", false, Mode::Line },
+			{ 4, "Otočit  (Rotate)", false, Mode::Line },
+			{ 5, "Zrcadlit  (Mirror)", false, Mode::Line },
+			{ 6, "Pole  (Array)", false, Mode::Line },
+			{ 7, "Zarovnat  (Align By Edge)", false, Mode::Line },
+			{ 8, "Protáhnout  (Stretch)", false, Mode::Line },
+			{ 9, "Rovnoběžně  (Move Parallel)", true, Mode::Offset },
+			{ 0, "Přisunout  (Move To Contact)", false, Mode::Line },
+		};
+	}
+	else
+	{
+		title = QStringLiteral( "Úpravy" );
+		items = {
+			{ 1, "Upravit prvek  (Modify Element)", false, Mode::Line },
+			{ 2, "Rozdělit  (Break Element)", true, Mode::Break },
+			{ 3, "Prodloužit/zkrátit  (Extend Line)", true, Mode::Extend },
+			{ 4, "Roh  (Trim To Intersection)", true, Mode::Corner },
+			{ 5, "Oříznout k prvku  (Trim To Element)", true, Mode::Trim },
+			{ 6, "Oříznout více  (Trim Multiple)", false, Mode::Line },
+			{ 7, "Vložit vrchol  (Insert Vertex)", false, Mode::Line },
+			{ 8, "Smazat vrchol  (Delete Vertex)", false, Mode::Line },
+			{ 9, "Zaoblit  (Circular Fillet)", false, Mode::Line },
+			{ 0, "Parabolické zaoblení  (Parabolic Fillet)", false, Mode::Line },
+			{ Qt::Key_Q, "Zkosit  (Chamfer)", false, Mode::Line },
+		};
+	}
+	KeyMenu menu( qobject_cast<QWidget*>( m_winObject ) );
+	menu.setTitle( title );
+	QAction* head = menu.addAction( QStringLiteral( "%1 (%2)" ).arg( title ).arg( group ) );
+	head->setEnabled( false );
+	menu.addSeparator();
+	for ( const Item& it : items )
+	{
+		const QString key = ( it.key == Qt::Key_Q ) ? QStringLiteral( "Q" ) : QString::number( it.key );
+		QAction* a = menu.addAction( QStringLiteral( "%1\t%2" ).arg( QString::fromUtf8( it.label ), key ) );
+		a->setEnabled( it.enabled );
+		const Mode m = it.mode;
+		connect( a, &QAction::triggered, this, [this, m]() { setMode( m ); } );
+		menu.keys.push_back( { it.key, a } );
+	}
+	menu.exec( QCursor::pos() );
+	keepCrossCursor();
+}
+
+void DrawTool::panBy( const QPoint& d )
+{
+	if ( !m_win || d.isNull() )
+	{
+		return;
+	}
+	const double px = m_win->computeActualPixelSize() * m_win->getDevicePixelRatio();
+	CCVector3d u( d.x() * px, -d.y() * px, 0.0 );
+	if ( m_win->getViewportParameters().objectCenteredView )
+	{
+		u = -u;
+	}
+	m_win->moveCamera( u );
+	m_win->redraw();
+}
+
+bool DrawTool::pickingCursor() const
+{
+	// čtvereček pro výběr čáry
+	switch ( m_mode )
+	{
+	case Mode::Delete:
+		return true;
+	case Mode::Move:
+	case Mode::Copy:
+	case Mode::Offset:
+	case Mode::Extend:
+	case Mode::Break:
+		return m_step == 0;
+	case Mode::Corner:
+	case Mode::Trim:
+		return m_step <= 1;
+	default:
+		return false;
 	}
 }
 
@@ -1782,6 +2255,14 @@ void DrawTool::updateStatus()
 		prompt = m_step == 0 ? QStringLiteral( "Roh: klikněte na první čáru (na část, která zůstane)" )
 		                     : QStringLiteral( "Roh: klikněte na druhou čáru" );
 		break;
+	case Mode::Break:
+		prompt = m_step == 0 ? QStringLiteral( "Rozdělit: první bod na čáře" )
+		                     : QStringLiteral( "Rozdělit: druhý bod – část mezi body se smaže (stejný bod = jen rozdělit)" );
+		break;
+	case Mode::Trim:
+		prompt = m_step == 0 ? QStringLiteral( "Oříznout k prvku: vyberte hraniční čáru" )
+		                     : QStringLiteral( "Oříznout k prvku: klikněte na čáry (na část, která zůstane); reset = nová hranice" );
+		break;
 	}
 
 	QString s = prompt;
@@ -1844,84 +2325,92 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 	switch ( event->type() )
 	{
 	case QEvent::MouseButtonPress:
+	case QEvent::MouseButtonDblClick: // rychlé druhé kliknutí = další bod, ne dvojklik
 	{
 		auto* e = static_cast<QMouseEvent*>( event );
-		if ( e->button() == Qt::LeftButton )
-		{
-			onDataPoint( e->pos() );
-			return true; // levé tlačítko neotáčí pohledem
-		}
-		if ( e->button() == Qt::RightButton )
-		{
-			m_rightPressed = true;
-			m_rightPressPos = e->pos();
-		}
-		if ( e->button() == Qt::MiddleButton )
-		{
-			m_midPressed = true;
-			m_midPressPos = e->pos();
-		}
-		break; // pravé a prostřední tlačítko necháme CloudCompare (posun, zoom)
-	}
-	case QEvent::MouseButtonDblClick:
-	{
-		auto* e = static_cast<QMouseEvent*>( event );
-		if ( e->button() == Qt::LeftButton )
+		m_mousePos = e->pos();
+		if ( m_panning )
 		{
 			return true;
 		}
-		break;
+		if ( e->button() == Qt::LeftButton && !( e->modifiers() & Qt::ShiftModifier ) )
+		{
+			onDataPoint( e->pos() );
+		}
+		else if ( e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton )
+		{
+			// Shift + levé tažení nebo tažení kolečkem = posun pohledu
+			m_panning = true;
+			m_panMoved = false;
+			m_panButton = e->button();
+			m_panPress = e->pos();
+			m_panLast = e->pos();
+		}
+		else if ( e->button() == Qt::RightButton )
+		{
+			m_rightPressed = true;
+		}
+		return true; // CloudCompare tlačítka myši nedostane (žádné otáčení ani posun omylem)
 	}
 	case QEvent::MouseButtonRelease:
 	{
 		auto* e = static_cast<QMouseEvent*>( event );
-		if ( e->button() == Qt::RightButton && m_rightPressed )
+		m_mousePos = e->pos();
+		if ( m_panning && e->button() == m_panButton )
 		{
-			m_rightPressed = false;
-			if ( ( e->pos() - m_rightPressPos ).manhattanLength() <= ClickTolerance )
+			m_panning = false;
+			if ( !m_panMoved )
 			{
-				// reset: konec čáry / zpět o krok nástroje
-				if ( m_mode == Mode::Line || m_step == 0 )
+				if ( m_panButton == Qt::MiddleButton )
 				{
-					m_chain.clear();
-					m_step = 0;
-					select( nullptr );
+					// prostřední kliknutí = ukázat místo ve 3D
+					CCVector2d P;
+					if ( screenToLocal( e->pos(), P ) )
+					{
+						const CCVector3d P3 = m_frame.to3D( P, false );
+						Q_EMIT show3DRequested( P3.x, P3.y, m_frame.viewId == 0 ? std::numeric_limits<double>::quiet_NaN() : P3.z );
+					}
 				}
 				else
 				{
-					m_step = 0;
-					select( nullptr );
-				}
-				m_typed.clear();
-				updateTip();
-				updateStatus();
-				redraw2D();
-			}
-		}
-		if ( e->button() == Qt::MiddleButton && m_midPressed )
-		{
-			m_midPressed = false;
-			if ( ( e->pos() - m_midPressPos ).manhattanLength() <= ClickTolerance )
-			{
-				CCVector2d P;
-				if ( screenToLocal( e->pos(), P ) )
-				{
-					const CCVector3d P3 = m_frame.to3D( P, false );
-					Q_EMIT show3DRequested( P3.x, P3.y, m_frame.viewId == 0 ? std::numeric_limits<double>::quiet_NaN() : P3.z );
+					onDataPoint( e->pos() ); // Shift + kliknutí = obyčejný bod
 				}
 			}
 		}
-		// CloudCompare po posunu nastaví šipku – vrátíme kříž
-		QTimer::singleShot( 0, this, [this]() { keepCrossCursor(); } );
-		if ( e->button() == Qt::LeftButton )
+		else if ( e->button() == Qt::RightButton && m_rightPressed )
 		{
-			return true;
+			// pravé tlačítko = vždy jen reset (konec čáry / zpět o krok nástroje)
+			m_rightPressed = false;
+			m_chain.clear();
+			m_step = 0;
+			select( nullptr );
+			m_typed.clear();
+			updateStatus();
 		}
-		break;
+		keepCrossCursor();
+		updateTip();
+		redraw2D();
+		return true;
 	}
 	case QEvent::MouseMove:
 	{
 		auto* e = static_cast<QMouseEvent*>( event );
+		m_mousePos = e->pos();
+		if ( m_panning )
+		{
+			if ( !m_panMoved && ( e->pos() - m_panPress ).manhattanLength() > ClickTolerance )
+			{
+				m_panMoved = true;
+			}
+			if ( m_panMoved )
+			{
+				panBy( e->pos() - m_panLast );
+				m_panLast = e->pos();
+			}
+			updateTip();
+			redraw2D();
+			return true;
+		}
 		SnapType st;
 		const CCVector2d* from = nullptr;
 		if ( m_mode == Mode::Line && !m_chain.empty() )
@@ -1936,25 +2425,20 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		{
 			from = &m_measA;
 		}
-		m_cursor = cursorPoint( e->pos(), st, from );
+		m_trackLines.clear();
+		m_cursor = cursorPoint( e->pos(), st, from, &m_trackLines );
 		m_cursorSnap = st;
 		m_hasCursor = true;
 
-		// trasování: zobrazované pomocné čáry
-		m_trackLines.clear();
+		// trasování: vzdálenost se zadává od získaného bodu (ne od posledního bodu čáry)
 		m_cursorTracked = false;
-		if ( m_trackingOn && !m_acquired.empty() && st == SnapType::None )
+		for ( const auto& tl : m_trackLines )
 		{
-			CCVector2d raw;
-			CCVector2d T;
-			if ( screenToLocal( e->pos(), raw ) && trackingPoint( raw, T, &m_trackLines ) && ( T - m_cursor ).norm() < 1e-9 )
+			if ( !from || ( tl.first - *from ).norm() > 1e-9 )
 			{
 				m_cursorTracked = true;
-				m_trackFrom = m_trackLines.front().first;
-			}
-			else
-			{
-				m_trackLines.clear();
+				m_trackFrom = tl.first;
+				break;
 			}
 		}
 		// kandidát na získání bodu (stojí-li kurzor na konci/středu/průsečíku)
@@ -1972,14 +2456,15 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			m_hoverValid = false;
 			m_hoverTimer->stop();
 		}
-		if ( e->buttons() == Qt::NoButton )
-		{
-			keepCrossCursor();
-		}
+		keepCrossCursor();
 		updateTip();
 		updateStatus();
 		redraw2D();
-		break; // necháme projít (posun pohledu pravým tlačítkem)
+		if ( e->buttons() != Qt::NoButton )
+		{
+			return true; // tažení tlačítkem nepouštět do CloudCompare
+		}
+		break;
 	}
 	case QEvent::Enter:
 		if ( QWidget* w = qobject_cast<QWidget*>( m_winObject ) )
@@ -2016,7 +2501,10 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		auto* e = static_cast<QKeyEvent*>( event );
 		const int k = e->key();
 		const bool ctrl = ( e->modifiers() & Qt::ControlModifier );
-		const bool digit = ( k >= Qt::Key_0 && k <= Qt::Key_9 ) || k == Qt::Key_Comma || k == Qt::Key_Period;
+		// horní řada bez Shiftu = menu nástrojů (jako MicroStation), čísla z numerické klávesnice nebo se Shiftem
+		const int rowDigit = topRowDigit( e );
+		const bool digit = rowDigit < 0 && ( ( k >= Qt::Key_0 && k <= Qt::Key_9 ) || k == Qt::Key_Comma || k == Qt::Key_Period );
+		const bool plain = !ctrl && !( e->modifiers() & ( Qt::AltModifier | Qt::ShiftModifier ) );
 		const bool wantsNumber = ( m_mode == Mode::Line && ( !m_chain.empty() || m_cursorTracked ) ) || ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && m_step == 2 )
 		                      || ( ( m_mode == Mode::Offset || m_mode == Mode::Extend ) && m_step == 1 );
 
@@ -2097,40 +2585,28 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			if ( event->type() == QEvent::KeyPress )
 				setMode( Mode::Delete );
 		}
-		else if ( !ctrl && !( e->modifiers() & Qt::AltModifier ) && ( k == Qt::Key_L || k == Qt::Key_M || k == Qt::Key_C || k == Qt::Key_O || k == Qt::Key_E || k == Qt::Key_R || k == Qt::Key_D || ( k == Qt::Key_S && m_frame.viewId == 0 ) ) )
+		else if ( rowDigit == 3 || rowDigit == 7 )
 		{
 			if ( event->type() == QEvent::KeyPress )
 			{
-				switch ( k )
-				{
-				case Qt::Key_L:
-					setMode( Mode::Line );
-					break;
-				case Qt::Key_M:
-					setMode( Mode::Move );
-					break;
-				case Qt::Key_C:
-					setMode( Mode::Copy );
-					break;
-				case Qt::Key_O:
-					setMode( Mode::Offset );
-					break;
-				case Qt::Key_E:
-					setMode( Mode::Extend );
-					break;
-				case Qt::Key_R:
-					setMode( Mode::Corner );
-					break;
-				case Qt::Key_S:
-					startSectionDef( 0 );
-					break;
-				case Qt::Key_D:
-					setMode( Mode::Measure );
-					break;
-				default:
-					break;
-				}
+				const int g = rowDigit;
+				QTimer::singleShot( 0, this, [this, g]() { showToolMenu( g ); } );
 			}
+		}
+		else if ( rowDigit == 8 )
+		{
+			if ( event->type() == QEvent::KeyPress )
+				setMode( Mode::Delete );
+		}
+		else if ( plain && k == Qt::Key_Q )
+		{
+			if ( event->type() == QEvent::KeyPress )
+				setMode( Mode::Line );
+		}
+		else if ( plain && k == Qt::Key_D )
+		{
+			if ( event->type() == QEvent::KeyPress )
+				setMode( Mode::Measure );
 		}
 		else
 		{

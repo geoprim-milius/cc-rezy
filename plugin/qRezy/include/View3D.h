@@ -2,7 +2,8 @@
 
 // Druhé okno: 3D náhled okolí místa, na které se klikne prostředním tlačítkem.
 // Zobrazuje zředěnou kopii mračna (originál může být jen v jednom 3D okně)
-// a kopie nakreslených čar. Ořez okolí: do stran (poloměr), shora a zdola.
+// a kopie nakreslených čar. Ořez okolí posuvníky od–do ve třech směrech
+// (jako Cross Section v CloudCompare): šířka a hloubka podle natočení pohledu, výška.
 
 #include <QDockWidget>
 
@@ -17,8 +18,8 @@ class ccGLWindowInterface;
 class ccPointCloud;
 class ccHObject;
 class QLabel;
-class QDoubleSpinBox;
 class QCheckBox;
+class RangeSlider;
 
 class View3D : public QDockWidget
 {
@@ -51,6 +52,9 @@ private:
 	void release();
 	void clearLines();
 	void applyClip();
+	void updateRanges();   //!< rozsah posuvníků podle mračna kolem bodu
+	void updateValueLabels();
+	void saveSettings() const;
 
 	ccMainAppInterface* m_app = nullptr;
 	ccGLWindowInterface* m_win = nullptr;
@@ -62,10 +66,8 @@ private:
 	QLabel* m_info = nullptr;
 
 	// ořez
-	QDoubleSpinBox* m_radius = nullptr;
-	QDoubleSpinBox* m_above = nullptr;
-	QDoubleSpinBox* m_below = nullptr;
-	QCheckBox* m_clipSides = nullptr;
+	RangeSlider* m_rs[3] = { nullptr, nullptr, nullptr }; //!< šířka (U), hloubka (V), výška (Z) – metry od bodu
+	QLabel* m_rsLabel[3] = { nullptr, nullptr, nullptr };
 	QCheckBox* m_showLines = nullptr;
 	CCVector3d m_focus;
 	double m_angle = 0.0;

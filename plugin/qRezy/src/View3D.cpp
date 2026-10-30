@@ -11,27 +11,162 @@
 #include <ReferenceCloud.h>
 
 #include <QCheckBox>
-#include <QDoubleSpinBox>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPushButton>
+#include <QWheelEvent>
 #include <QSettings>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
+#include <functional>
+
+//! posuvník se dvěma jezdci (od – do)
+class RangeSlider : public QWidget
+{
+public:
+	explicit RangeSlider( QWidget* parent = nullptr )
+		: QWidget( parent )
+	{
+		setMinimumHeight( 22 );
+		setMinimumWidth( 120 );
+		setSizePolicy( QSizePolicy::Expanding, QSizePolicy::Fixed );
+		setMouseTracking( true );
+	}
+
+	std::function<void()> onChanged;
+
+	void setRange( double mn, double mx )
+	{
+		m_min = mn;
+		m_max = std::max( mx, mn + 0.01 );
+		m_v0 = clampV( m_v0 );
+		m_v1 = clampV( m_v1 );
+		update();
+	}
+	void setValues( double v0, double v1 )
+	{
+		m_v0 = clampV( std::min( v0, v1 ) );
+		m_v1 = clampV( std::max( v0, v1 ) );
+		update();
+	}
+	double v0() const { return m_v0; }
+	double v1() const { return m_v1; }
+	double minimum() const { return m_min; }
+	double maximum() const { return m_max; }
+
+protected:
+	void paintEvent( QPaintEvent* ) override
+	{
+		QPainter p( this );
+		p.setRenderHint( QPainter::Antialiasing );
+		const QPalette& pal = palette();
+		const int cy = height() / 2;
+		const QColor dis = pal.color( QPalette::Mid );
+		p.setPen( Qt::NoPen );
+		p.setBrush( dis );
+		p.drawRoundedRect( QRectF( Margin, cy - 2, width() - 2 * Margin, 4 ), 2, 2 );
+		const double x0 = toX( m_v0 );
+		const double x1 = toX( m_v1 );
+		p.setBrush( isEnabled() ? pal.color( QPalette::Highlight ) : dis );
+		p.drawRect( QRectF( x0, cy - 3, x1 - x0, 6 ) );
+		// nula = místo kliknutí
+		if ( m_min < 0 && m_max > 0 )
+		{
+			p.setPen( QPen( pal.color( QPalette::Text ), 1 ) );
+			const double xz = toX( 0.0 );
+			p.drawLine( QPointF( xz, cy - 7 ), QPointF( xz, cy + 7 ) );
+		}
+		p.setPen( QPen( pal.color( QPalette::Dark ), 1 ) );
+		p.setBrush( pal.color( QPalette::Button ) );
+		for ( double x : { x0, x1 } )
+		{
+			p.drawRoundedRect( QRectF( x - 5, cy - 8, 10, 16 ), 3, 3 );
+		}
+	}
+	void mousePressEvent( QMouseEvent* e ) override
+	{
+		const double x = e->pos().x();
+		const double d0 = std::abs( x - toX( m_v0 ) );
+		const double d1 = std::abs( x - toX( m_v1 ) );
+		if ( std::abs( d0 - d1 ) < 1.0 )
+		{
+			m_drag = ( x < toX( m_v0 ) ) ? 0 : 1; // jezdci na sobě → podle směru
+		}
+		else
+		{
+			m_drag = ( d0 < d1 ) ? 0 : 1;
+		}
+		moveTo( x );
+	}
+	void mouseMoveEvent( QMouseEvent* e ) override
+	{
+		if ( m_drag >= 0 && ( e->buttons() & Qt::LeftButton ) )
+		{
+			moveTo( e->pos().x() );
+		}
+	}
+	void mouseReleaseEvent( QMouseEvent* ) override
+	{
+		m_drag = -1;
+	}
+	void wheelEvent( QWheelEvent* e ) override
+	{
+		e->ignore();
+	}
+
+private:
+	static constexpr int Margin = 8;
+	double clampV( double v ) const { return std::max( m_min, std::min( m_max, v ) ); }
+	double toX( double v ) const
+	{
+		return Margin + ( v - m_min ) / ( m_max - m_min ) * ( width() - 2 * Margin );
+	}
+	double toV( double x ) const
+	{
+		return m_min + ( x - Margin ) / std::max( 1, width() - 2 * Margin ) * ( m_max - m_min );
+	}
+	void moveTo( double x )
+	{
+		// krok 5 cm
+		double v = std::round( clampV( toV( x ) ) * 20.0 ) / 20.0;
+		v = clampV( v );
+		if ( m_drag == 0 )
+		{
+			m_v0 = std::min( v, m_v1 - 0.05 );
+		}
+		else
+		{
+			m_v1 = std::max( v, m_v0 + 0.05 );
+		}
+		m_v0 = clampV( m_v0 );
+		m_v1 = clampV( m_v1 );
+		update();
+		if ( onChanged )
+		{
+			onChanged();
+		}
+	}
+
+	double m_min = -10.0;
+	double m_max = 10.0;
+	double m_v0 = -1.5;
+	double m_v1 = 1.5;
+	int m_drag = -1;
+};
 
 namespace
 {
-	QDoubleSpinBox* spin( double v, const QString& tip )
+	const char* const AxisKey[3] = { "U", "V", "Z" };
+	const double AxisDefault[3][2] = { { -1.5, 1.5 }, { -1.5, 1.5 }, { -2.0, 2.0 } };
+
+	QString fmtM( double v )
 	{
-		auto* s = new QDoubleSpinBox;
-		s->setRange( 0.1, 200.0 );
-		s->setDecimals( 1 );
-		s->setSingleStep( 0.5 );
-		s->setValue( v );
-		s->setSuffix( QStringLiteral( " m" ) );
-		s->setToolTip( tip );
-		s->setKeyboardTracking( false );
-		return s;
+		return QString::number( v, 'f', 2 ).replace( '.', ',' );
 	}
 }
 
@@ -45,27 +180,53 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent )
 	auto* lay = new QVBoxLayout( w );
 	lay->setContentsMargins( 2, 2, 2, 2 );
 
-	// ovládání ořezu
+	// posuvníky ořezu (od – do, metry od místa kliknutí)
 	QSettings st;
-	auto* row = new QHBoxLayout;
-	m_radius = spin( st.value( QStringLiteral( "qRezy/3dRadius" ), 1.5 ).toDouble(), QStringLiteral( "Do stran od místa kliknutí" ) );
-	m_above = spin( st.value( QStringLiteral( "qRezy/3dAbove" ), 2.0 ).toDouble(), QStringLiteral( "Nahoru od výšky řezu (menší = uříznutá střecha)" ) );
-	m_below = spin( st.value( QStringLiteral( "qRezy/3dBelow" ), 2.0 ).toDouble(), QStringLiteral( "Dolů od výšky řezu" ) );
-	m_clipSides = new QCheckBox( QStringLiteral( "do stran" ) );
-	m_clipSides->setChecked( st.value( QStringLiteral( "qRezy/3dSides" ), true ).toBool() );
-	m_clipSides->setToolTip( QStringLiteral( "Vypnuto = celé mračno (jen ořez shora a zdola)" ) );
+	auto* grid = new QGridLayout;
+	grid->setContentsMargins( 4, 0, 4, 0 );
+	grid->setVerticalSpacing( 0 );
+	const QString names[3] = { QStringLiteral( "Šířka" ), QStringLiteral( "Hloubka" ), QStringLiteral( "Výška" ) };
+	const QString tips[3] = { QStringLiteral( "Do stran (vodorovně na obrazovce řezu/půdorysu)" ),
+	                          QStringLiteral( "Do hloubky (kolmo, ve směru pohledu)" ),
+	                          QStringLiteral( "Výška od místa kliknutí (horní jezdec doleva = uříznout střechu)" ) };
+	for ( int i = 0; i < 3; ++i )
+	{
+		m_rs[i] = new RangeSlider;
+		m_rs[i]->setToolTip( tips[i] );
+		m_rs[i]->setEnabled( false );
+		const QString k = QStringLiteral( "qRezy/3d%1" ).arg( QLatin1String( AxisKey[i] ) );
+		m_rs[i]->setRange( -50.0, 50.0 );
+		m_rs[i]->setValues( st.value( k + QStringLiteral( "0" ), AxisDefault[i][0] ).toDouble(), st.value( k + QStringLiteral( "1" ), AxisDefault[i][1] ).toDouble() );
+		m_rsLabel[i] = new QLabel;
+		m_rsLabel[i]->setMinimumWidth( 110 );
+		auto* nl = new QLabel( names[i] );
+		nl->setToolTip( tips[i] );
+		grid->addWidget( nl, i, 0 );
+		grid->addWidget( m_rs[i], i, 1 );
+		grid->addWidget( m_rsLabel[i], i, 2 );
+		m_rs[i]->onChanged = [this]()
+		{
+			updateValueLabels();
+			applyClip();
+		};
+	}
+	grid->setColumnStretch( 1, 1 );
+	auto* side = new QVBoxLayout;
 	m_showLines = new QCheckBox( QStringLiteral( "čáry" ) );
 	m_showLines->setChecked( true );
 	m_showLines->setToolTip( QStringLiteral( "Zobrazit nakreslené čáry" ) );
-	row->addWidget( m_clipSides );
-	row->addWidget( m_radius );
-	row->addWidget( new QLabel( QStringLiteral( "↑" ) ) );
-	row->addWidget( m_above );
-	row->addWidget( new QLabel( QStringLiteral( "↓" ) ) );
-	row->addWidget( m_below );
-	row->addWidget( m_showLines );
-	row->addStretch( 1 );
-	lay->addLayout( row );
+	auto* resetBtn = new QPushButton( QStringLiteral( "výchozí" ) );
+	resetBtn->setToolTip( QStringLiteral( "Šířka a hloubka ±1,5 m, výška ±2 m" ) );
+	auto* allBtn = new QPushButton( QStringLiteral( "vše" ) );
+	allBtn->setToolTip( QStringLiteral( "Celé mračno" ) );
+	side->addWidget( m_showLines );
+	side->addWidget( resetBtn );
+	side->addWidget( allBtn );
+	auto* top = new QHBoxLayout;
+	top->addLayout( grid, 1 );
+	top->addLayout( side );
+	lay->addLayout( top );
+	updateValueLabels();
 
 	m_info = new QLabel( QStringLiteral( "Prostřední klik do řezu = ukázat místo. Levé tažení = otáčení, kolečko = zoom." ) );
 	m_info->setWordWrap( true );
@@ -85,20 +246,24 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent )
 	}
 	setWidget( w );
 
-	auto changed = [this]()
+	connect( resetBtn, &QPushButton::clicked, this, [this]()
 	{
-		QSettings s;
-		s.setValue( QStringLiteral( "qRezy/3dRadius" ), m_radius->value() );
-		s.setValue( QStringLiteral( "qRezy/3dAbove" ), m_above->value() );
-		s.setValue( QStringLiteral( "qRezy/3dBelow" ), m_below->value() );
-		s.setValue( QStringLiteral( "qRezy/3dSides" ), m_clipSides->isChecked() );
+		for ( int i = 0; i < 3; ++i )
+		{
+			m_rs[i]->setValues( AxisDefault[i][0], AxisDefault[i][1] );
+		}
+		updateValueLabels();
 		applyClip();
-	};
-	for ( QDoubleSpinBox* sb : { m_radius, m_above, m_below } )
+	} );
+	connect( allBtn, &QPushButton::clicked, this, [this]()
 	{
-		connect( sb, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, changed );
-	}
-	connect( m_clipSides, &QCheckBox::toggled, this, changed );
+		for ( int i = 0; i < 3; ++i )
+		{
+			m_rs[i]->setValues( m_rs[i]->minimum(), m_rs[i]->maximum() );
+		}
+		updateValueLabels();
+		applyClip();
+	} );
 	connect( m_showLines, &QCheckBox::toggled, this, [this]( bool on )
 	{
 		if ( m_linesGroup )
@@ -110,6 +275,57 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent )
 			m_win->redraw();
 		}
 	} );
+}
+
+void View3D::saveSettings() const
+{
+	QSettings s;
+	for ( int i = 0; i < 3; ++i )
+	{
+		const QString k = QStringLiteral( "qRezy/3d%1" ).arg( QLatin1String( AxisKey[i] ) );
+		s.setValue( k + QStringLiteral( "0" ), m_rs[i]->v0() );
+		s.setValue( k + QStringLiteral( "1" ), m_rs[i]->v1() );
+	}
+}
+
+void View3D::updateValueLabels()
+{
+	for ( int i = 0; i < 3; ++i )
+	{
+		m_rsLabel[i]->setText( QStringLiteral( "%1 … %2 m" ).arg( fmtM( m_rs[i]->v0() ), fmtM( m_rs[i]->v1() ) ) );
+	}
+}
+
+void View3D::updateRanges()
+{
+	if ( !m_clone || !m_hasFocus )
+	{
+		return;
+	}
+	// rozsah = celé mračno v osách pohledu, relativně k bodu (metry)
+	const ccBBox box = m_clone->getOwnBB();
+	const CCVector3 mn = box.minCorner();
+	const CCVector3 mx = box.maxCorner();
+	const double c = std::cos( m_angle );
+	const double s = std::sin( m_angle );
+	const CCVector3d axes[3] = { CCVector3d( c, s, 0 ), CCVector3d( -s, c, 0 ), CCVector3d( 0, 0, 1 ) };
+	for ( int i = 0; i < 3; ++i )
+	{
+		double lo = 1e30;
+		double hi = -1e30;
+		for ( int k = 0; k < 8; ++k )
+		{
+			const CCVector3d P( ( k & 1 ) ? mx.x : mn.x, ( k & 2 ) ? mx.y : mn.y, ( k & 4 ) ? mx.z : mn.z );
+			const double v = ( P - m_focus ).dot( axes[i] ) / m_scale;
+			lo = std::min( lo, v );
+			hi = std::max( hi, v );
+		}
+		lo = std::floor( std::min( lo, -0.5 ) * 10.0 ) / 10.0;
+		hi = std::ceil( std::max( hi, 0.5 ) * 10.0 ) / 10.0;
+		m_rs[i]->setRange( lo, hi );
+		m_rs[i]->setEnabled( true );
+	}
+	updateValueLabels();
 }
 
 View3D::~View3D()
@@ -245,36 +461,27 @@ void View3D::applyClip()
 	{
 		return;
 	}
+	saveSettings();
 	const CCVector3d& P = m_focus;
-	const double r = m_radius->value() * m_scale;
-	const double zLo = P.z - m_below->value() * m_scale;
-	const double zHi = P.z + m_above->value() * m_scale;
+	const double c = std::cos( m_angle );
+	const double s = std::sin( m_angle );
+	const CCVector3d axes[3] = { CCVector3d( c, s, 0 ), CCVector3d( -s, c, 0 ), CCVector3d( 0, 0, 1 ) };
 
 	m_clone->removeAllClipPlanes();
 	m_clipSet.clear();
-	if ( m_clipSides->isChecked() )
+	for ( int i = 0; i < 3; ++i )
 	{
-		// hranol kolem bodu, natočený podle pohledu
-		const double c = std::cos( m_angle );
-		const double s = std::sin( m_angle );
-		const CCVector3d axes[2] = { CCVector3d( c, s, 0 ), CCVector3d( -s, c, 0 ) };
-		for ( const CCVector3d& N : axes )
-		{
-			const double d = N.dot( P );
-			ccClipPlane pos;
-			pos.equation = Tuple4Tpl<double>( N.x, N.y, N.z, -( d - r ) );
-			ccClipPlane neg;
-			neg.equation = Tuple4Tpl<double>( -N.x, -N.y, -N.z, d + r );
-			m_clipSet.push_back( pos );
-			m_clipSet.push_back( neg );
-		}
+		const CCVector3d& N = axes[i];
+		const double d = N.dot( P );
+		const double lo = d + m_rs[i]->v0() * m_scale;
+		const double hi = d + m_rs[i]->v1() * m_scale;
+		ccClipPlane pos;
+		pos.equation = Tuple4Tpl<double>( N.x, N.y, N.z, -lo );
+		ccClipPlane neg;
+		neg.equation = Tuple4Tpl<double>( -N.x, -N.y, -N.z, hi );
+		m_clipSet.push_back( pos );
+		m_clipSet.push_back( neg );
 	}
-	ccClipPlane lo;
-	lo.equation = Tuple4Tpl<double>( 0, 0, 1, -zLo );
-	ccClipPlane hi;
-	hi.equation = Tuple4Tpl<double>( 0, 0, -1, zHi );
-	m_clipSet.push_back( lo );
-	m_clipSet.push_back( hi );
 	for ( const ccClipPlane& cp : m_clipSet )
 	{
 		m_clone->addClipPlanes( cp );
@@ -305,12 +512,13 @@ void View3D::focusOn( const CCVector3d& P, double viewAngle )
 	m_focus = P;
 	m_angle = viewAngle;
 	m_hasFocus = true;
+	updateRanges();
 	applyClip();
 
 	// pohled šikmo shora, ve směru natočení pohledu
-	const double r = m_radius->value() * m_scale;
-	const double zLo = P.z - m_below->value() * m_scale;
-	const double zHi = P.z + m_above->value() * m_scale;
+	const double r = std::max( { std::abs( m_rs[0]->v0() ), std::abs( m_rs[0]->v1() ), std::abs( m_rs[1]->v0() ), std::abs( m_rs[1]->v1() ) } ) * m_scale;
+	const double zLo = P.z + m_rs[2]->v0() * m_scale;
+	const double zHi = P.z + m_rs[2]->v1() * m_scale;
 	CCVector3 mn( static_cast<PointCoordinateType>( P.x - r ), static_cast<PointCoordinateType>( P.y - r ), static_cast<PointCoordinateType>( zLo ) );
 	CCVector3 mx( static_cast<PointCoordinateType>( P.x + r ), static_cast<PointCoordinateType>( P.y + r ), static_cast<PointCoordinateType>( zHi ) );
 	ccBBox box( mn, mx, true );

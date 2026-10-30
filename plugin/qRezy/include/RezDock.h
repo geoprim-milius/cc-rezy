@@ -84,6 +84,8 @@ private:
 	void setThickness( double t );
 	void thicknessStep( int direction );
 	void syncThicknessSlider();
+	void syncPosSlider();
+	void onPosSlider( int cm );
 
 	std::vector<SectionInfo> loadSections() const;
 	bool sectionById( int id, SectionInfo& s ) const;
@@ -108,6 +110,9 @@ private:
 	QDoubleSpinBox* m_height = nullptr;
 	QDoubleSpinBox* m_thickness = nullptr;
 	QSlider* m_thickSlider = nullptr;
+	QSlider* m_posSlider = nullptr; //!< poloha řezu (výška / posun) po 1 cm
+	QLabel* m_posMin = nullptr;
+	QLabel* m_posMax = nullptr;
 	QDoubleSpinBox* m_step = nullptr;
 	QDoubleSpinBox* m_zero = nullptr;
 	QWidget* m_depthRow = nullptr;

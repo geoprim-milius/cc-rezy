@@ -1,7 +1,7 @@
 #pragma once
 
 // Kreslení a úpravy 2D čar nad řezem s ovládáním jako v MicroStationu:
-// levé tlačítko = datový bod, pravé kliknutí = reset, pravé tažení = posun pohledu,
+// levé tlačítko = datový bod, pravé = reset, Shift + levé tažení nebo tažení kolečkem = posun,
 // kolečko = zoom, prostřední kliknutí = ukázat místo ve 3D.
 // Uchopení na konce, středy, průsečíky a na čáru.
 
@@ -64,7 +64,9 @@ public:
 		Corner,     //!< dvě čáry do průsečíku (roh)
 		RotateView, //!< natočit pohled: 2 body (směr 1. → 2. bod bude vodorovně doprava)
 		SectionDef, //!< nový svislý řez / pohled: 2 body roviny + strana pohledu
-		Measure     //!< měření vzdálenosti
+		Measure,    //!< měření vzdálenosti
+		Break,      //!< rozdělit čáru / smazat část mezi 2 body
+		Trim        //!< oříznout / prodloužit k hraniční čáře
 	};
 
 	enum class SnapType
@@ -180,7 +182,8 @@ private:
 	bool lineExists( ccPolyline* poly ) const;
 	CCVector2d snapPoint( const QPoint& pos, SnapType& type ) const;
 	CCVector2d applyOrtho( const CCVector2d& from, const CCVector2d& to ) const;
-	CCVector2d cursorPoint( const QPoint& pos, SnapType& type, const CCVector2d* orthoFrom ) const;
+	using TrackLines = std::vector<std::pair<CCVector2d, CCVector2d>>; //!< (bod, směr) pomocných čar
+	CCVector2d cursorPoint( const QPoint& pos, SnapType& type, const CCVector2d* orthoFrom, TrackLines* lines = nullptr ) const;
 
 	// úpravy
 	ccPolyline* addLine( const CCVector2d& a, const CCVector2d& b, int cat, bool hidden, UndoItem* undo );
@@ -207,7 +210,7 @@ private:
 	void addArrow( std::vector<Overlay>& ovs, const CCVector2d& from, const CCVector2d& dir, double lenPx, const ccColor::Rgb& col ) const;
 
 	// trasování (jako AutoCAD): získané body a pomocné čáry
-	bool trackingPoint( const CCVector2d& raw, CCVector2d& out, std::vector<std::pair<CCVector2d, CCVector2d>>* lines ) const;
+	bool trackingPoint( const CCVector2d& raw, const std::vector<CCVector2d>& sources, CCVector2d& out, TrackLines* lines ) const;
 	void onHoverTimeout();
 
 	void updateTip();
@@ -215,6 +218,9 @@ private:
 	void redraw2D();
 	void redraw3D();
 	void keepCrossCursor();
+	void panBy( const QPoint& d );
+	void showToolMenu( int group ); //!< 3 = Manipulace, 7 = Úpravy
+	bool pickingCursor() const;
 
 	ccMainAppInterface* m_app = nullptr;
 	ccGLWindowInterface* m_win = nullptr;
@@ -263,10 +269,13 @@ private:
 	bool m_hasCursor = false;
 	QString m_typed; //!< hodnota zadávaná z klávesnice
 
-	QPoint m_rightPressPos;
 	bool m_rightPressed = false;
-	QPoint m_midPressPos;
-	bool m_midPressed = false;
+	QPoint m_mousePos;           //!< poloha myši (kreslený kříž)
+	bool m_panning = false;      //!< posun pohledu (Shift + levé / kolečko tažením)
+	bool m_panMoved = false;
+	Qt::MouseButton m_panButton = Qt::NoButton;
+	QPoint m_panPress;
+	QPoint m_panLast;
 
 	// náhledy (2D prvky v okně) – zásobník znovu používaných čar
 	std::vector<ccPolyline*> m_overlayPool;
