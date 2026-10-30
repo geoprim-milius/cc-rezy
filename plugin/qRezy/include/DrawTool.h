@@ -121,6 +121,9 @@ public:
 	//! všechny nakreslené prvky jako prvky V7
 	std::vector<DgnV7::Element> exportElements( const Drawing::SymbologyTable& table, const ExportMap& map ) const;
 
+	//! střed okna v rovině kreslení (lokálně 3D)
+	bool viewCenter( CCVector3d& out ) const;
+
 	//! natočení pohledu (rad) – směr osy X obrazovky ve světě
 	double viewAngle() const;
 

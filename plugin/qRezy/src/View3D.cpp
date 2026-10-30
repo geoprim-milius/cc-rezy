@@ -414,7 +414,7 @@ bool View3D::setSource( ccPointCloud* cloud, unsigned maxPoints )
 	m_hasFocus = false;
 	m_win->zoomGlobal();
 	m_win->redraw();
-	m_info->setText( QStringLiteral( "%1 bodů v náhledu. Prostřední klik do řezu = ukázat místo." ).arg( m_clone->size() ) );
+	m_info->setText( QStringLiteral( "%1 bodů v náhledu. Prostřední klik do řezu = ukázat místo (posuvníky ořezu se zapnou)." ).arg( m_clone->size() ) );
 	return true;
 }
 

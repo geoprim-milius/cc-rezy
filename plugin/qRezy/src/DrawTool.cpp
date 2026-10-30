@@ -2146,6 +2146,18 @@ void DrawTool::showToolMenu( int group )
 	keepCrossCursor();
 }
 
+bool DrawTool::viewCenter( CCVector3d& out ) const
+{
+	const QWidget* w = qobject_cast<const QWidget*>( m_winObject );
+	CCVector2d P;
+	if ( !w || !screenToLocal( QPoint( w->width() / 2, w->height() / 2 ), P ) )
+	{
+		return false;
+	}
+	out = m_frame.to3D( P, false );
+	return true;
+}
+
 void DrawTool::panBy( const QPoint& d )
 {
 	if ( !m_win || d.isNull() )
@@ -2398,7 +2410,8 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		m_mousePos = e->pos();
 		if ( m_panning )
 		{
-			if ( !m_panMoved && ( e->pos() - m_panPress ).manhattanLength() > ClickTolerance )
+			const int tol = ( m_panButton == Qt::MiddleButton ) ? 3 * ClickTolerance : ClickTolerance;
+			if ( !m_panMoved && ( e->pos() - m_panPress ).manhattanLength() > tol )
 			{
 				m_panMoved = true;
 			}

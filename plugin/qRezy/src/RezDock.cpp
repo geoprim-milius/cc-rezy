@@ -11,6 +11,8 @@
 #include "ccMainAppInterface.h"
 
 #include <ccGenericPointCloud.h>
+
+#include <limits>
 #include <ccHObjectCaster.h>
 #include <ccPointCloud.h>
 #include <ccPolyline.h>
@@ -51,6 +53,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace
@@ -509,7 +512,20 @@ void RezDock::buildToolbar()
 	m_toolbar->addSeparator();
 
 	QAction* v3 = m_toolbar->addAction( Icons::get( QStringLiteral( "3d" ) ), QStringLiteral( "3D náhled (prostřední klik do řezu ukáže místo)" ) );
-	connect( v3, &QAction::triggered, this, [this]() { ensure3D(); } );
+	connect( v3, &QAction::triggered, this, [this]()
+	{
+		// 3D náhled kolem středu okna (nebo středu mračna)
+		CCVector3d P;
+		if ( m_draw->isActive() && m_draw->viewCenter( P ) )
+		{
+			show3DAt( P.x, P.y, m_activeView == 0 ? std::numeric_limits<double>::quiet_NaN() : P.z );
+		}
+		else if ( ccGenericPointCloud* c = cloud() )
+		{
+			const CCVector3 C = c->getOwnBB().getCenter();
+			show3DAt( C.x, C.y, std::numeric_limits<double>::quiet_NaN() );
+		}
+	} );
 	QAction* save = m_toolbar->addAction( Icons::get( QStringLiteral( "save" ) ), QStringLiteral( "Uložit výkres V7 a nastavení výstupu" ) );
 	connect( save, &QAction::triggered, this, &RezDock::openSaveDialog );
 }
