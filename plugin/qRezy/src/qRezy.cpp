@@ -2,6 +2,7 @@
 #include "RezDock.h"
 
 #include <QMainWindow>
+#include <QToolBar>
 
 qRezy::qRezy( QObject* parent )
 	: QObject( parent )
@@ -40,9 +41,12 @@ void qRezy::showDock()
 	{
 		m_dock = new RezDock( m_app, m_app->getMainWindow() );
 		m_app->getMainWindow()->addDockWidget( Qt::RightDockWidgetArea, m_dock );
+		m_app->getMainWindow()->addToolBarBreak( Qt::TopToolBarArea );
+		m_app->getMainWindow()->addToolBar( Qt::TopToolBarArea, m_dock->toolBar() );
 	}
 
 	m_dock->show();
 	m_dock->raise();
+	m_dock->toolBar()->show();
 	m_dock->onSelectionChanged( m_app->getSelectedEntities() );
 }

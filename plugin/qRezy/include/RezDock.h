@@ -2,8 +2,8 @@
 
 #include <QDockWidget>
 
-#include "ccHObject.h"
 #include "DrawTool.h"
+#include "ccHObject.h"
 
 #include <vector>
 
@@ -13,12 +13,17 @@ class QLabel;
 class QDoubleSpinBox;
 class QCheckBox;
 class QPushButton;
+class QToolButton;
 class QShortcut;
 class QComboBox;
+class QSlider;
+class QToolBar;
+class QAction;
+class QActionGroup;
 class View3D;
-class QButtonGroup;
 
-//! Panel „Řezy“: vodorovný řez mračnem s posunem nahoru/dolů
+//! Panel „Řezy“: pohled (půdorys / řezy / pohledy), výška a tloušťka řezu.
+//! Kreslicí nástroje jsou v liště s ikonami, ukládání v samostatném okně.
 class RezDock : public QDockWidget
 {
 	Q_OBJECT
@@ -28,12 +33,32 @@ public:
 	~RezDock() override;
 
 	void onSelectionChanged( const ccHObject::Container& selected );
+	QToolBar* toolBar() const { return m_toolbar; }
 
 protected:
 	void closeEvent( QCloseEvent* event ) override;
+	void showEvent( QShowEvent* event ) override;
 	bool eventFilter( QObject* obj, QEvent* event ) override;
 
 private:
+	// svislé řezy a pohledy
+	struct SectionInfo
+	{
+		int id = 0;
+		int kind = 0;         //!< 0 = řez, 1 = pohled (fasáda)
+		QString name;
+		CCVector2d A, B;      //!< konce čáry (lokálně, půdorys)
+		CCVector2d N;         //!< normála k pozorovateli (půdorys)
+		double offset = 0.0;  //!< posun roviny ve směru pohledu (m)
+		double depth = 15.0;  //!< pohled: hloubka za rovinou (m)
+		double insX = 0.0;    //!< umístění počátku ve výkresu (globálně)
+		double insY = 0.0;
+		ccPolyline* poly = nullptr;
+	};
+
+	void buildPanel();
+	void buildToolbar();
+
 	ccGenericPointCloud* cloud() const;
 	void setCloud( ccGenericPointCloud* cloud );
 	void useSelected();
@@ -44,71 +69,69 @@ private:
 	void topView();
 	void zeroFromFloor();
 	double estimateFloor( ccGenericPointCloud* cloud ) const;
-	void toggleDrawing( bool on );
+	void setDrawing( bool on );
 	void exportV7();
-	void chooseSeed();
+	void openSaveDialog();
+	bool chooseSeed( QWidget* parent );
 	void editSymbology();
 	void focusView();
 	bool ensure3D();
 	void show3DAt( double x, double y, double z );
+	void refresh3DLines();
+	double planZLocal() const;
 
-	// svislé řezy
-	struct SectionInfo
-	{
-		int id = 0;
-		QString name;
-		CCVector2d A, B;  //!< konce čáry řezu (lokálně, půdorys)
-		CCVector2d N;     //!< normála k pozorovateli (půdorys)
-		double offset = 0.0; //!< posun roviny řezu ve směru pohledu (m)
-		double insX = 0.0;   //!< umístění počátku řezu ve výkresu (globálně)
-		double insY = 0.0;
-		ccPolyline* poly = nullptr;
-	};
+	// tloušťka
+	void setThickness( double t );
+	void thicknessStep( int direction );
+	void syncThicknessSlider();
+
 	std::vector<SectionInfo> loadSections() const;
 	bool sectionById( int id, SectionInfo& s ) const;
 	void saveSection( const SectionInfo& s );
-	void createSection( double ax, double ay, double bx, double by, double cx, double cy );
+	void createSection( int kind, double ax, double ay, double bx, double by, double cx, double cy );
 	void deleteActiveSection();
 	DrawFrame frameFor( int viewId ) const;
 	void activateView( int viewId );
 	void refreshViewCombo();
 	void sectionCamera( const SectionInfo& s );
-	void updateSectionWidgets();
+	void onStatus( const QString& text );
 
 	ccMainAppInterface* m_app = nullptr;
 	unsigned m_cloudID = 0;
 	ccHObject::Container m_lastSelection;
 
+	// panel
 	QLabel* m_cloudLabel = nullptr;
-	QPushButton* m_useSelectedBtn = nullptr;
+	QComboBox* m_viewCombo = nullptr;
 	QCheckBox* m_enabled = nullptr;
+	QWidget* m_heightRow = nullptr;
 	QDoubleSpinBox* m_height = nullptr;
 	QDoubleSpinBox* m_thickness = nullptr;
+	QSlider* m_thickSlider = nullptr;
 	QDoubleSpinBox* m_step = nullptr;
 	QDoubleSpinBox* m_zero = nullptr;
+	QWidget* m_depthRow = nullptr;
+	QDoubleSpinBox* m_depth = nullptr;
 	QLabel* m_relLabel = nullptr;
+	QToolButton* m_upBtn = nullptr;
+	QToolButton* m_downBtn = nullptr;
+	QLabel* m_status = nullptr;
 	QShortcut* m_up = nullptr;
 	QShortcut* m_down = nullptr;
 
-	// kreslení
-	DrawTool* m_draw = nullptr;
-	QPushButton* m_drawBtn = nullptr;
+	// lišta nástrojů
+	QToolBar* m_toolbar = nullptr;
+	QAction* m_drawAct = nullptr;
+	QActionGroup* m_toolGroup = nullptr;
+	QAction* m_orthoAct = nullptr;
+	QAction* m_trackAct = nullptr;
+	QAction* m_hiddenAct = nullptr;
 	QComboBox* m_catCombo = nullptr;
-	QCheckBox* m_hiddenChk = nullptr;
-	QCheckBox* m_orthoChk = nullptr;
-	QButtonGroup* m_toolGroup = nullptr;
 	QDoubleSpinBox* m_offsetSpin = nullptr;
-	QDoubleSpinBox* m_radius3D = nullptr;
-	double m_viewAngle = 0.0; //!< natočení půdorysného pohledu (rad)
-	View3D* m_view3D = nullptr;
 
-	int m_activeView = 0; //!< 0 = půdorys, jinak id řezu
-	QComboBox* m_viewCombo = nullptr;
-	QDoubleSpinBox* m_insX = nullptr;
-	QDoubleSpinBox* m_insY = nullptr;
-	QCheckBox* m_absHeights = nullptr;
-	QWidget* m_secWidgets = nullptr;
-	QDoubleSpinBox* m_textHeight = nullptr;
-	QLabel* m_status = nullptr;
-	QLabel* m_seedLabel = nullptr;
+	DrawTool* m_draw = nullptr;
+	View3D* m_view3D = nullptr;
+	double m_viewAngle = 0.0; //!< natočení půdorysného pohledu (rad)
+	int m_activeView = 0;     //!< 0 = půdorys, jinak id řezu/pohledu
+	QString m_lastPrompt;
 };

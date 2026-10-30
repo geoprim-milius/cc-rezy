@@ -7,9 +7,11 @@ target_sources( ${PROJECT_NAME}
 		${CMAKE_CURRENT_LIST_DIR}/DgnV7.h
 		${CMAKE_CURRENT_LIST_DIR}/RezLine.h
 		${CMAKE_CURRENT_LIST_DIR}/View3D.h
+		${CMAKE_CURRENT_LIST_DIR}/Icons.h
 )
 
 target_include_directories( ${PROJECT_NAME}
 	PRIVATE
 		${CMAKE_CURRENT_SOURCE_DIR}
+		${CMAKE_CURRENT_LIST_DIR}/Icons.h
 )

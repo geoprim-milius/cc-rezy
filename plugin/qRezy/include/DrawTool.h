@@ -13,6 +13,8 @@
 
 #include <CCGeom.h>
 
+#include <ccColorTypes.h>
+
 #include <functional>
 #include <vector>
 
@@ -33,6 +35,7 @@ struct DrawFrame
 	CCVector3d V = CCVector3d( 0, 1, 0 );
 	CCVector3d N = CCVector3d( 0, 0, 1 ); //!< k pozorovateli
 	double front = 0.0;                    //!< posun čar k pozorovateli (aby je body nezakryly)
+	double back = 0.0;                     //!< skutečná poloha čáry = vrchol − N·back (pro 3D náhled)
 
 	CCVector3d to3D( const CCVector2d& uv, bool withFront = true ) const
 	{
@@ -59,8 +62,9 @@ public:
 		Offset,     //!< rovnoběžná kopie
 		Extend,     //!< prodloužit / zkrátit
 		Corner,     //!< dvě čáry do průsečíku (roh)
-		RotateView, //!< natočit pohled podle čáry
-		SectionDef  //!< nový svislý řez: 2 body čáry řezu + strana pohledu
+		RotateView, //!< natočit pohled: 2 body (směr 1. → 2. bod bude vodorovně doprava)
+		SectionDef, //!< nový svislý řez / pohled: 2 body roviny + strana pohledu
+		Measure     //!< měření vzdálenosti
 	};
 
 	enum class SnapType
@@ -91,6 +95,10 @@ public:
 	void setOrtho( bool on );
 	bool ortho() const { return m_ortho; }
 	void setOffsetDistance( double d ) { m_offsetDist = d; }
+	void setTracking( bool on );
+	bool tracking() const { return m_trackingOn; }
+	//! druh nové roviny pro SectionDef: 0 = řez, 1 = pohled (fasáda)
+	void startSectionDef( int kind );
 
 	void resetTool();
 	void undo();
@@ -100,6 +108,8 @@ public:
 
 	//! rovina kreslení (půdorys / řez)
 	void setFrame( const DrawFrame& f );
+	//! výška půdorysného řezu (lokálně) – kvůli umístění čar ve 3D, nic neresetuje
+	void setPlanHeight( double zLocal );
 	const DrawFrame& frame() const { return m_frame; }
 	//! zobrazí jen čáry aktuálního pohledu
 	void updateLineVisibility();
@@ -125,7 +135,12 @@ Q_SIGNALS:
 	//! prostřední klik: místo v lokálních 3D souřadnicích (v půdorysu je z = NaN)
 	void show3DRequested( double x, double y, double z );
 	//! nový řez: body A, B (lokálně v půdorysu) a bod na straně, kam se díváme
-	void sectionDefined( double ax, double ay, double bx, double by, double cx, double cy );
+	void sectionDefined( int kind, double ax, double ay, double bx, double by, double cx, double cy );
+	void trackingChanged( bool on );
+	//! Ctrl + kolečko: změna tloušťky řezu (+1 / -1)
+	void thicknessWheel( int direction );
+	//! výkres se změnil (přidání, úprava, smazání)
+	void drawingChanged();
 
 protected:
 	bool eventFilter( QObject* obj, QEvent* event ) override;
@@ -179,6 +194,22 @@ private:
 	void onTypedValue( double v );
 	bool previewGeometry( CCVector2d& a, CCVector2d& b ) const; //!< náhled upravované čáry
 
+	// náhledy v okně (2D čáry v pixelech, v popředí)
+	struct Overlay
+	{
+		std::vector<CCVector2d> pts; //!< lokální souřadnice v rovině kreslení
+		ccColor::Rgb color;
+		float width = 1.0f;
+	};
+	void setOverlays( const std::vector<Overlay>& ovs );
+	void clearOverlayPool();
+	void addMarker( std::vector<Overlay>& ovs, const CCVector2d& P, SnapType t, const ccColor::Rgb& col ) const;
+	void addArrow( std::vector<Overlay>& ovs, const CCVector2d& from, const CCVector2d& dir, double lenPx, const ccColor::Rgb& col ) const;
+
+	// trasování (jako AutoCAD): získané body a pomocné čáry
+	bool trackingPoint( const CCVector2d& raw, CCVector2d& out, std::vector<std::pair<CCVector2d, CCVector2d>>* lines ) const;
+	void onHoverTimeout();
+
 	void updateTip();
 	void updateStatus();
 	void redraw2D();
@@ -211,6 +242,21 @@ private:
 	CCVector2d m_base;               //!< výchozí bod přesunu/kopie
 	int m_selEnd = 0;                //!< upravovaný konec (prodloužení)
 	CCVector2d m_secB;               //!< druhý bod čáry řezu
+	int m_defKind = 0;               //!< SectionDef: 0 = řez, 1 = pohled
+	CCVector2d m_measA;              //!< měření
+	CCVector2d m_measB;
+	bool m_measDone = false;
+	Mode m_prevMode = Mode::Line;    //!< návrat po natočení pohledu / definici řezu
+
+	// trasování
+	bool m_trackingOn = true;
+	std::vector<CCVector2d> m_acquired;   //!< získané body
+	CCVector2d m_hoverCand;               //!< bod pod kurzorem (kandidát na získání)
+	bool m_hoverValid = false;
+	class QTimer* m_hoverTimer = nullptr;
+	bool m_cursorTracked = false;         //!< kurzor je na pomocné čáře
+	CCVector2d m_trackFrom;               //!< bod, od kterého vede pomocná čára
+	std::vector<std::pair<CCVector2d, CCVector2d>> m_trackLines; //!< (bod, směr) zobrazené pomocné čáry
 
 	CCVector2d m_cursor;
 	SnapType m_cursorSnap = SnapType::None;
@@ -222,13 +268,8 @@ private:
 	QPoint m_midPressPos;
 	bool m_midPressed = false;
 
-	// náhled (2D prvky v okně)
-	ccPolyline* m_tip = nullptr;
-	ccPointCloud* m_tipVerts = nullptr;
-	ccPolyline* m_ghost = nullptr;
-	ccPointCloud* m_ghostVerts = nullptr;
-	ccPolyline* m_marker = nullptr;
-	ccPointCloud* m_markerVerts = nullptr;
+	// náhledy (2D prvky v okně) – zásobník znovu používaných čar
+	std::vector<ccPolyline*> m_overlayPool;
 
 	std::vector<UndoItem> m_undo;
 };
