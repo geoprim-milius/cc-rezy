@@ -13,6 +13,7 @@
 
 #include <CCGeom.h>
 
+#include <functional>
 #include <vector>
 
 class ccMainAppInterface;
@@ -21,6 +22,28 @@ class ccHObject;
 class ccPolyline;
 class ccPointCloud;
 class ccGenericPointCloud;
+
+//! Rovina kreslení: půdorys (id 0) nebo svislý řez (id ≥ 1).
+//! 2D souřadnice (u, v) v rovině; 3D bod = O + U·u + V·v (+ N·front pro zobrazení)
+struct DrawFrame
+{
+	int viewId = 0;
+	CCVector3d O = CCVector3d( 0, 0, 0 );
+	CCVector3d U = CCVector3d( 1, 0, 0 );
+	CCVector3d V = CCVector3d( 0, 1, 0 );
+	CCVector3d N = CCVector3d( 0, 0, 1 ); //!< k pozorovateli
+	double front = 0.0;                    //!< posun čar k pozorovateli (aby je body nezakryly)
+
+	CCVector3d to3D( const CCVector2d& uv, bool withFront = true ) const
+	{
+		return O + U * uv.x + V * uv.y + ( withFront ? N * front : CCVector3d( 0, 0, 0 ) );
+	}
+	CCVector2d toUV( const CCVector3d& P ) const
+	{
+		const CCVector3d d = P - O;
+		return CCVector2d( d.dot( U ), d.dot( V ) );
+	}
+};
 
 class DrawTool : public QObject
 {
@@ -36,7 +59,8 @@ public:
 		Offset,     //!< rovnoběžná kopie
 		Extend,     //!< prodloužit / zkrátit
 		Corner,     //!< dvě čáry do průsečíku (roh)
-		RotateView  //!< natočit pohled podle čáry
+		RotateView, //!< natočit pohled podle čáry
+		SectionDef  //!< nový svislý řez: 2 body čáry řezu + strana pohledu
 	};
 
 	enum class SnapType
@@ -51,6 +75,8 @@ public:
 	DrawTool( ccMainAppInterface* app, QObject* parent = nullptr );
 	~DrawTool() override;
 
+	//! mračno, ke kterému výkres patří (posun souřadnic, skupina výkresu)
+	void setCloud( ccGenericPointCloud* cloud );
 	//! zapne kreslení v aktivním 3D okně nad daným mračnem
 	bool start( ccGenericPointCloud* cloud );
 	void stop();
@@ -72,8 +98,16 @@ public:
 	//! skupina s nakreslenými čarami (vytvoří ji, pokud neexistuje)
 	ccHObject* drawingGroup( bool create );
 
-	//! všechny nakreslené prvky jako prvky V7 v globálních souřadnicích
-	std::vector<DgnV7::Element> exportElements( const Drawing::SymbologyTable& table ) const;
+	//! rovina kreslení (půdorys / řez)
+	void setFrame( const DrawFrame& f );
+	const DrawFrame& frame() const { return m_frame; }
+	//! zobrazí jen čáry aktuálního pohledu
+	void updateLineVisibility();
+
+	//! převod 3D bodu čáry na 2D bod výkresu (globálně), vrací false = vynechat
+	using ExportMap = std::function<bool( int viewId, const CCVector3d& local3D, DgnV7::Point2& out )>;
+	//! všechny nakreslené prvky jako prvky V7
+	std::vector<DgnV7::Element> exportElements( const Drawing::SymbologyTable& table, const ExportMap& map ) const;
 
 	//! natočení pohledu (rad) – směr osy X obrazovky ve světě
 	double viewAngle() const;
@@ -88,7 +122,10 @@ Q_SIGNALS:
 	void orthoChanged( bool on );
 	void modeChanged( Mode m );
 	void rotateViewRequested( double angleRad );
-	void show3DRequested( double localX, double localY );
+	//! prostřední klik: místo v lokálních 3D souřadnicích (v půdorysu je z = NaN)
+	void show3DRequested( double x, double y, double z );
+	//! nový řez: body A, B (lokálně v půdorysu) a bod na straně, kam se díváme
+	void sectionDefined( double ax, double ay, double bx, double by, double cx, double cy );
 
 protected:
 	bool eventFilter( QObject* obj, QEvent* event ) override;
@@ -156,7 +193,8 @@ private:
 	unsigned m_cloudID = 0;
 	CCVector3d m_shift;
 	double m_scale = 1.0;
-	double m_drawZ = 0.0; //!< výška (lokální), ve které se čáry zobrazují
+	double m_planFront = 0.0; //!< výška čar půdorysu (nad mračnem)
+	DrawFrame m_frame;
 
 	int m_category = Drawing::Walls;
 	bool m_hidden = false;
@@ -172,6 +210,7 @@ private:
 	CCVector2d m_selClick;           //!< kde byla čára vybrána
 	CCVector2d m_base;               //!< výchozí bod přesunu/kopie
 	int m_selEnd = 0;                //!< upravovaný konec (prodloužení)
+	CCVector2d m_secB;               //!< druhý bod čáry řezu
 
 	CCVector2d m_cursor;
 	SnapType m_cursorSnap = SnapType::None;

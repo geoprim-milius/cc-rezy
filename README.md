@@ -45,6 +45,16 @@ zůstávají v S-JTSK, natočí se jen zobrazení a ortogonalita). **Sever nahor
 Uchopení: konec (čtverec), průsečík (křížek), střed (trojúhelník), na čáře (kosočtverec).
 Zakryté čáry se zobrazují čárkovaně.
 
+### Svislé řezy
+1. **Nový svislý řez (S)** – v půdorysu klikněte 2 body čáry řezu (lze šikmo k osám, funguje uchopení i orto)
+   a potom stranu, **kam se díváte**. Řez se pojmenuje A-A', B-B', …
+2. Pohled se přepne do řezu (seznam *Pohled* nahoře v panelu přepíná Půdorys / řezy).
+   **PgUp / PgDn** posouvá rovinu řezu dál / blíž, tloušťka platí stejná jako u půdorysu.
+3. Kreslí se stejně jako v půdorysu, všechny nástroje fungují. Prostřední klik ukáže místo ve 3D.
+4. Ve výkresu V7 je řez 2D: vodorovně vzdálenost od levého konce řezu, svisle výška nad ±0,000
+   (nebo absolutně Bpv – volba *Výšky absolutně*). Umístění ve výkresu = pole *Ve výkresu X / Y*
+   (výchozí: pod mračnem, řezy pod sebou). K řezu se připíše název a „±0,000 = … m n. m. Bpv“ (hladina 14).
+
 5. **Uložit výkres V7** – hlavička (jednotky, hladiny) se vezme ze *seed* výkresu,
    hladiny / barvy / styly čar se nastaví v **Hladiny a barvy…**.
 

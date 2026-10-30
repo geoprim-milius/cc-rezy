@@ -30,7 +30,14 @@ namespace DgnV7
 	struct Element
 	{
 		Symbology sym;
-		std::vector<Point2> pts; //!< 2 body = úsečka, více = lomená čára
+		std::vector<Point2> pts; //!< 2 body = úsečka, více = lomená čára; u textu 1 bod = počátek
+
+		// text (typ 17)
+		bool isText = false;
+		std::string text;        //!< jednobajtové kódování (cp1250)
+		double textHeight = 0.2; //!< výška písma v hlavních jednotkách
+		int font = 0;
+		int justification = 0;   //!< 0 = vlevo dole
 	};
 
 	class Writer
@@ -54,6 +61,7 @@ namespace DgnV7
 	private:
 		bool toUOR( double v, int axis, int32_t& out ) const;
 		bool appendElement( std::vector<uint8_t>& out, const Element& e, std::string& error ) const;
+		bool appendText( std::vector<uint8_t>& out, const Element& e, std::string& error ) const;
 
 		std::vector<uint8_t> m_header; //!< negrafické prvky ze seedu
 		bool m_is3D = false;

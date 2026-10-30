@@ -169,6 +169,23 @@ DrawTool::~DrawTool()
 	}
 }
 
+void DrawTool::setCloud( ccGenericPointCloud* cloud )
+{
+	if ( !cloud )
+	{
+		return;
+	}
+	m_cloudID = cloud->getUniqueID();
+	m_shift = cloud->getGlobalShift();
+	m_scale = cloud->getGlobalScale();
+	m_planFront = cloud->getOwnBB().maxCorner().z + 1.0;
+	if ( m_frame.viewId == 0 )
+	{
+		m_frame = DrawFrame();
+		m_frame.front = m_planFront;
+	}
+}
+
 bool DrawTool::start( ccGenericPointCloud* cloud )
 {
 	if ( !m_app || !cloud )
@@ -187,11 +204,8 @@ bool DrawTool::start( ccGenericPointCloud* cloud )
 
 	m_win = win;
 	m_winObject = win->asQObject();
-	m_cloudID = cloud->getUniqueID();
-	m_shift = cloud->getGlobalShift();
-	m_scale = cloud->getGlobalScale();
-	// čáry kreslíme nad mračnem, aby je v pohledu shora nic nezakrylo
-	m_drawZ = cloud->getOwnBB().maxCorner().z + 1.0;
+	// čáry půdorysu kreslíme nad mračnem, aby je v pohledu shora nic nezakrylo
+	setCloud( cloud );
 
 	m_savedInteraction = static_cast<int>( win->getInteractionMode() );
 	win->setPickingMode( ccGLWindowInterface::NO_PICKING );
@@ -218,8 +232,47 @@ bool DrawTool::start( ccGenericPointCloud* cloud )
 	}
 
 	drawingGroup( true );
+	updateLineVisibility();
 	resetTool();
 	return true;
+}
+
+void DrawTool::setFrame( const DrawFrame& f )
+{
+	m_frame = f;
+	if ( m_frame.viewId == 0 )
+	{
+		m_frame.front = m_planFront;
+	}
+	if ( m_mode == Mode::RotateView && m_frame.viewId != 0 )
+	{
+		m_mode = Mode::Line;
+		Q_EMIT modeChanged( m_mode );
+	}
+	updateLineVisibility();
+	resetTool();
+	redraw3D();
+}
+
+void DrawTool::updateLineVisibility()
+{
+	ccHObject* group = drawingGroup( false );
+	if ( !group )
+	{
+		return;
+	}
+	for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+	{
+		ccHObject* ch = group->getChild( i );
+		if ( !ch->isA( CC_TYPES::POLY_LINE ) )
+		{
+			continue;
+		}
+		const int view = ch->hasMetaData( Drawing::MetaView ) ? ch->getMetaData( Drawing::MetaView ).toInt() : 0;
+		// -1 = čára definice řezu (vidět jen v půdorysu)
+		const bool on = ( view == m_frame.viewId ) || ( view == -1 && m_frame.viewId == 0 );
+		ch->setEnabled( on );
+	}
 }
 
 void DrawTool::stop()
@@ -303,9 +356,10 @@ double DrawTool::viewAngle() const
 	{
 		return 0.0;
 	}
-	// 1. řádek matice pohledu = směr osy X obrazovky ve světě
+	// 1. řádek matice pohledu = směr osy X obrazovky ve světě, vyjádřený v rovině kreslení
 	const double* m = m_win->getBaseViewMat().data();
-	return std::atan2( m[4], m[0] );
+	const CCVector3d sx( m[0], m[4], m[8] );
+	return std::atan2( sx.dot( m_frame.V ), sx.dot( m_frame.U ) );
 }
 
 CCVector3d DrawTool::toGlobal( const CCVector2d& local ) const
@@ -332,7 +386,7 @@ bool DrawTool::screenToLocal( const QPoint& pos, CCVector2d& out ) const
 	{
 		return false;
 	}
-	out = CCVector2d( P3.x, P3.y );
+	out = m_frame.toUV( P3 );
 	return true;
 }
 
@@ -345,7 +399,7 @@ bool DrawTool::localToScreen( const CCVector2d& P, CCVector2d& centered ) const
 	ccGLCameraParameters camera;
 	m_win->getGLCameraParameters( camera );
 	CCVector3d S;
-	if ( !camera.project( CCVector3d( P.x, P.y, m_drawZ ), S ) )
+	if ( !camera.project( m_frame.to3D( P ), S ) )
 	{
 		return false;
 	}
@@ -394,7 +448,12 @@ std::vector<DrawTool::Segment> DrawTool::collectSegments() const
 	for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
 	{
 		ccHObject* ch = group->getChild( i );
-		if ( !ch->isA( CC_TYPES::POLY_LINE ) || !ch->isEnabled() )
+		if ( !ch->isA( CC_TYPES::POLY_LINE ) )
+		{
+			continue;
+		}
+		const int view = ch->hasMetaData( Drawing::MetaView ) ? ch->getMetaData( Drawing::MetaView ).toInt() : 0;
+		if ( view != m_frame.viewId )
 		{
 			continue;
 		}
@@ -404,7 +463,7 @@ std::vector<DrawTool::Segment> DrawTool::collectSegments() const
 		{
 			const CCVector3* A = poly->getPoint( k );
 			const CCVector3* B = poly->getPoint( k + 1 );
-			segs.push_back( { CCVector2d( A->x, A->y ), CCVector2d( B->x, B->y ), poly } );
+			segs.push_back( { m_frame.toUV( CCVector3d::fromArray( A->u ) ), m_frame.toUV( CCVector3d::fromArray( B->u ) ), poly } );
 		}
 	}
 	return segs;
@@ -424,8 +483,8 @@ bool DrawTool::lineEnds( ccPolyline* poly, CCVector2d& a, CCVector2d& b ) const
 	}
 	const CCVector3* A = poly->getPoint( 0 );
 	const CCVector3* B = poly->getPoint( poly->size() - 1 );
-	a = CCVector2d( A->x, A->y );
-	b = CCVector2d( B->x, B->y );
+	a = m_frame.toUV( CCVector3d::fromArray( A->u ) );
+	b = m_frame.toUV( CCVector3d::fromArray( B->u ) );
 	return true;
 }
 
@@ -593,8 +652,8 @@ ccPolyline* DrawTool::addLine( const CCVector2d& a, const CCVector2d& b, int cat
 
 	auto* verts = new ccPointCloud( "vertices" );
 	verts->reserve( 2 );
-	verts->addPoint( v3( a, m_drawZ ) );
-	verts->addPoint( v3( b, m_drawZ ) );
+	verts->addPoint( m_frame.to3D( a ).toFloat() );
+	verts->addPoint( m_frame.to3D( b ).toFloat() );
 	verts->setEnabled( false );
 	verts->setGlobalShift( m_shift );
 	verts->setGlobalScale( m_scale );
@@ -612,7 +671,7 @@ ccPolyline* DrawTool::addLine( const CCVector2d& a, const CCVector2d& b, int cat
 	poly->setName( Drawing::categoryName( cat ) + ( hidden ? QStringLiteral( " (zakrytá)" ) : QString() ) );
 	poly->setMetaData( Drawing::MetaCategory, cat );
 	poly->setMetaData( Drawing::MetaHidden, hidden );
-	poly->setMetaData( Drawing::MetaView, 0 );
+	poly->setMetaData( Drawing::MetaView, m_frame.viewId );
 
 	group->addChild( poly );
 	m_app->addToDB( poly, false, false, false, false );
@@ -648,8 +707,8 @@ void DrawTool::setLine( ccPolyline* poly, const CCVector2d& a, const CCVector2d&
 		act.b = ob;
 		undo->push_back( act );
 	}
-	setVertex( verts, 0, v3( a, m_drawZ ) );
-	setVertex( verts, verts->size() - 1, v3( b, m_drawZ ) );
+	setVertex( verts, 0, m_frame.to3D( a ).toFloat() );
+	setVertex( verts, verts->size() - 1, m_frame.to3D( b ).toFloat() );
 	verts->invalidateBoundingBox();
 	poly->prepareDisplayForRefresh();
 }
@@ -771,6 +830,16 @@ void DrawTool::undo()
 
 bool DrawTool::previewGeometry( CCVector2d& a, CCVector2d& b ) const
 {
+	if ( m_mode == Mode::SectionDef )
+	{
+		if ( m_step != 2 )
+		{
+			return false;
+		}
+		a = m_base;
+		b = m_secB;
+		return true;
+	}
 	CCVector2d sa;
 	CCVector2d sb;
 	if ( !m_hasCursor || !lineEnds( m_sel, sa, sb ) )
@@ -884,6 +953,38 @@ void DrawTool::onDataPoint( const QPoint& pos )
 				resetTool();
 				return;
 			}
+		}
+		break;
+	}
+	case Mode::SectionDef:
+	{
+		if ( m_step == 0 )
+		{
+			m_base = cursorPoint( pos, st, nullptr );
+			m_step = 1;
+		}
+		else if ( m_step == 1 )
+		{
+			m_secB = cursorPoint( pos, st, &m_base );
+			if ( dist( m_secB, m_base ) > 1e-3 )
+			{
+				m_step = 2;
+			}
+		}
+		else
+		{
+			CCVector2d C;
+			if ( screenToLocal( pos, C ) )
+			{
+				const CCVector3d A3 = m_frame.to3D( m_base, false );
+				const CCVector3d B3 = m_frame.to3D( m_secB, false );
+				const CCVector3d C3 = m_frame.to3D( C, false );
+				Q_EMIT sectionDefined( A3.x, A3.y, B3.x, B3.y, C3.x, C3.y );
+			}
+			m_mode = Mode::Line;
+			Q_EMIT modeChanged( m_mode );
+			resetTool();
+			return;
 		}
 		break;
 	}
@@ -1189,6 +1290,10 @@ void DrawTool::updateTip()
 	{
 		from = &m_base;
 	}
+	else if ( m_mode == Mode::SectionDef && m_step == 1 )
+	{
+		from = &m_base;
+	}
 	if ( from && m_hasCursor )
 	{
 		CCVector2d A2;
@@ -1309,6 +1414,11 @@ void DrawTool::updateStatus()
 		break;
 	case Mode::RotateView:
 		prompt = QStringLiteral( "Natočení pohledu: klikněte na čáru, která má být vodorovně" );
+		break;
+	case Mode::SectionDef:
+		prompt = m_step == 0 ? QStringLiteral( "Nový řez: první bod čáry řezu" )
+		       : m_step == 1 ? QStringLiteral( "Nový řez: druhý bod čáry řezu" )
+		                     : QStringLiteral( "Nový řez: klikněte na stranu, KAM se díváte" );
 		break;
 	case Mode::Move:
 	case Mode::Copy:
@@ -1459,7 +1569,8 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 				CCVector2d P;
 				if ( screenToLocal( e->pos(), P ) )
 				{
-					Q_EMIT show3DRequested( P.x, P.y );
+					const CCVector3d P3 = m_frame.to3D( P, false );
+					Q_EMIT show3DRequested( P3.x, P3.y, m_frame.viewId == 0 ? std::numeric_limits<double>::quiet_NaN() : P3.z );
 				}
 			}
 		}
@@ -1480,7 +1591,7 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		{
 			from = &m_chain.back();
 		}
-		else if ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && m_step == 2 )
+		else if ( ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && m_step == 2 ) || ( m_mode == Mode::SectionDef && m_step == 1 ) )
 		{
 			from = &m_base;
 		}
@@ -1594,7 +1705,7 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			if ( event->type() == QEvent::KeyPress )
 				setMode( Mode::Delete );
 		}
-		else if ( !ctrl && !( e->modifiers() & Qt::AltModifier ) && ( k == Qt::Key_L || k == Qt::Key_M || k == Qt::Key_C || k == Qt::Key_O || k == Qt::Key_E || k == Qt::Key_R ) )
+		else if ( !ctrl && !( e->modifiers() & Qt::AltModifier ) && ( k == Qt::Key_L || k == Qt::Key_M || k == Qt::Key_C || k == Qt::Key_O || k == Qt::Key_E || k == Qt::Key_R || ( k == Qt::Key_S && m_frame.viewId == 0 ) ) )
 		{
 			if ( event->type() == QEvent::KeyPress )
 			{
@@ -1617,6 +1728,9 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 					break;
 				case Qt::Key_R:
 					setMode( Mode::Corner );
+					break;
+				case Qt::Key_S:
+					setMode( Mode::SectionDef );
 					break;
 				default:
 					break;
@@ -1641,7 +1755,7 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 	return QObject::eventFilter( obj, event );
 }
 
-std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTable& table ) const
+std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTable& table, const ExportMap& map ) const
 {
 	std::vector<DgnV7::Element> out;
 	ccHObject* group = const_cast<DrawTool*>( this )->drawingGroup( false );
@@ -1657,17 +1771,27 @@ std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTa
 			continue;
 		}
 		auto* poly = static_cast<ccPolyline*>( ch );
+		const int view = poly->hasMetaData( Drawing::MetaView ) ? poly->getMetaData( Drawing::MetaView ).toInt() : 0;
+		if ( view < 0 || !poly->hasMetaData( Drawing::MetaCategory ) )
+		{
+			continue; // definice řezu apod.
+		}
 		const int cat = poly->getMetaData( Drawing::MetaCategory ).toInt();
 		const bool hid = poly->getMetaData( Drawing::MetaHidden ).toBool();
 
 		DgnV7::Element e;
 		e.sym = table.get( std::max( 0, std::min( Drawing::CategoryCount - 1, cat ) ), hid );
-		for ( unsigned k = 0; k < poly->size(); ++k )
+		bool ok = true;
+		for ( unsigned k = 0; k < poly->size() && ok; ++k )
 		{
-			const CCVector3d G = poly->toGlobal3d( *poly->getPoint( k ) );
-			e.pts.push_back( { G.x, G.y } );
+			DgnV7::Point2 P;
+			ok = map( view, CCVector3d::fromArray( poly->getPoint( k )->u ), P );
+			e.pts.push_back( P );
 		}
-		out.push_back( e );
+		if ( ok )
+		{
+			out.push_back( e );
+		}
 	}
 	return out;
 }

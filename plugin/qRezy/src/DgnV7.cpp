@@ -197,8 +197,68 @@ namespace DgnV7
 		return true;
 	}
 
+	bool Writer::appendText( std::vector<uint8_t>& out, const Element& e, std::string& error ) const
+	{
+		if ( e.pts.empty() || e.text.empty() || m_is3D )
+		{
+			return true; // text do 3D výkresu zatím nepíšeme
+		}
+		const std::string txt = e.text.substr( 0, 255 );
+		int32_t x = 0;
+		int32_t y = 0;
+		if ( !toUOR( e.pts[0].x, 0, x ) || !toUOR( e.pts[0].y, 1, y ) )
+		{
+			error = "Souřadnice textu jsou mimo rozsah výkresu V7.";
+			return false;
+		}
+		const double h = e.textHeight * m_uorPerMaster;
+		const int32_t w = static_cast<int32_t>( h * 0.8 * txt.size() );
+		const int32_t hi = static_cast<int32_t>( h );
+
+		const size_t start = out.size();
+		out.push_back( static_cast<uint8_t>( clampi( e.sym.level, 1, 63 ) ) );
+		out.push_back( 17 );
+		putU16( out, 0 );
+		putRange( out, x );
+		putRange( out, y );
+		putRange( out, 0 );
+		putRange( out, x + w );
+		putRange( out, y + hi );
+		putRange( out, 0 );
+		putU16( out, 0 ); // grafická skupina
+		const size_t attIndexPos = out.size();
+		putU16( out, 0 );
+		putU16( out, 0x0200 );
+		out.push_back( static_cast<uint8_t>( ( clampi( e.sym.weight, 0, 31 ) << 3 ) | clampi( e.sym.style, 0, 7 ) ) );
+		out.push_back( static_cast<uint8_t>( clampi( e.sym.color, 0, 255 ) ) );
+
+		out.push_back( static_cast<uint8_t>( clampi( e.font, 0, 255 ) ) );
+		out.push_back( static_cast<uint8_t>( clampi( e.justification, 0, 255 ) ) );
+		// násobky délky a výšky písma (jednotky UOR * 1000 / 6)
+		const int32_t mult = static_cast<int32_t>( h * 1000.0 / 6.0 + 0.5 );
+		putI32( out, mult );
+		putI32( out, mult );
+		putI32( out, 0 ); // natočení
+		putI32( out, x );
+		putI32( out, y );
+		out.push_back( static_cast<uint8_t>( txt.size() ) );
+		out.push_back( 0 ); // editovatelná pole
+		out.insert( out.end(), txt.begin(), txt.end() );
+		if ( ( out.size() - start ) % 2 )
+		{
+			out.push_back( 0 );
+		}
+		setU16( out, attIndexPos, static_cast<uint16_t>( ( out.size() - start - 32 ) / 2 ) );
+		setU16( out, start + 2, static_cast<uint16_t>( ( out.size() - start - 4 ) / 2 ) );
+		return true;
+	}
+
 	bool Writer::appendElement( std::vector<uint8_t>& out, const Element& e, std::string& error ) const
 	{
+		if ( e.isText )
+		{
+			return appendText( out, e, error );
+		}
 		if ( e.pts.size() < 2 )
 		{
 			return true; // nic ke kreslení

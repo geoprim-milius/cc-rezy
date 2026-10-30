@@ -3,6 +3,7 @@
 #include "DrawTool.h"
 #include "Drawing.h"
 #include "View3D.h"
+#include "RezLine.h"
 
 #include "ccMainAppInterface.h"
 #include "ccGLWindowInterface.h"
@@ -26,9 +27,12 @@
 #include <QHeaderView>
 #include <QMessageBox>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSpinBox>
+#include <QAbstractSpinBox>
 #include <QTableWidget>
+#include <QTextCodec>
 #include <QCloseEvent>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -85,8 +89,34 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 	lay->addWidget( m_cloudLabel );
 	lay->addWidget( m_useSelectedBtn );
 
+	// pohled: půdorys / svislé řezy
+	auto* viewBox = new QGroupBox( QStringLiteral( "Pohled" ) );
+	auto* vl = new QVBoxLayout( viewBox );
+	m_viewCombo = new QComboBox;
+	m_viewCombo->addItem( QStringLiteral( "Půdorys" ), 0 );
+	vl->addWidget( m_viewCombo );
+	auto* secRow = new QHBoxLayout;
+	auto* newSecBtn = new QPushButton( QStringLiteral( "Nový svislý řez (S)" ) );
+	newSecBtn->setToolTip( QStringLiteral( "V půdorysu klikněte 2 body čáry řezu a pak stranu, kam se díváte" ) );
+	auto* delSecBtn = new QPushButton( QStringLiteral( "Smazat řez" ) );
+	secRow->addWidget( newSecBtn );
+	secRow->addWidget( delSecBtn );
+	vl->addLayout( secRow );
+	m_secWidgets = new QWidget;
+	auto* sf = new QFormLayout( m_secWidgets );
+	sf->setContentsMargins( 0, 0, 0, 0 );
+	m_insX = makeSpin( -1.0e8, 1.0e8, 0.0, 1.0, 3, QStringLiteral( " m" ) );
+	m_insY = makeSpin( -1.0e8, 1.0e8, 0.0, 1.0, 3, QStringLiteral( " m" ) );
+	sf->addRow( QStringLiteral( "Ve výkresu X:" ), m_insX );
+	sf->addRow( QStringLiteral( "Ve výkresu Y:" ), m_insY );
+	m_absHeights = new QCheckBox( QStringLiteral( "Výšky absolutně (Bpv)" ) );
+	m_absHeights->setToolTip( QStringLiteral( "Jinak relativně k ±0,000 (do výkresu se připíše ±0,000 = … Bpv)" ) );
+	sf->addRow( m_absHeights );
+	vl->addWidget( m_secWidgets );
+	lay->addWidget( viewBox );
+
 	// řez
-	m_enabled = new QCheckBox( QStringLiteral( "Vodorovný řez zapnutý" ) );
+	m_enabled = new QCheckBox( QStringLiteral( "Řez zapnutý (ořez mračna)" ) );
 	m_enabled->setChecked( true );
 	lay->addWidget( m_enabled );
 
@@ -112,6 +142,8 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 	auto* row = new QHBoxLayout;
 	auto* upBtn = new QPushButton( QStringLiteral( "▲ Nahoru (PgUp)" ) );
 	auto* downBtn = new QPushButton( QStringLiteral( "▼ Dolů (PgDn)" ) );
+	upBtn->setObjectName( QStringLiteral( "qRezyUp" ) );
+	downBtn->setObjectName( QStringLiteral( "qRezyDown" ) );
 	row->addWidget( upBtn );
 	row->addWidget( downBtn );
 	lay->addLayout( row );
@@ -226,6 +258,10 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 	orow->addWidget( seedBtn );
 	orow->addWidget( symBtn );
 	ol->addLayout( orow );
+	auto* tf = new QFormLayout;
+	m_textHeight = makeSpin( 0.01, 10.0, 0.25, 0.05, 2, QStringLiteral( " m" ) );
+	tf->addRow( QStringLiteral( "Výška textu (popisy řezů):" ), m_textHeight );
+	ol->addLayout( tf );
 	auto* exportBtn = new QPushButton( QStringLiteral( "Uložit výkres V7 (.dgn)…" ) );
 	ol->addWidget( exportBtn );
 	lay->addWidget( outBox );
@@ -269,6 +305,42 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 	connect( northBtn, &QPushButton::clicked, this, [this]() { m_viewAngle = 0.0; topView(); focusView(); } );
 	connect( m_draw, &DrawTool::rotateViewRequested, this, [this]( double a ) { m_viewAngle = a; topView(); focusView(); } );
 	connect( m_draw, &DrawTool::show3DRequested, this, &RezDock::show3DAt );
+	connect( m_draw, &DrawTool::sectionDefined, this, &RezDock::createSection );
+	connect( newSecBtn, &QPushButton::clicked, this, [this]()
+	{
+		if ( m_activeView != 0 )
+		{
+			activateView( 0 );
+		}
+		if ( !m_draw->isActive() )
+		{
+			m_drawBtn->setChecked( true );
+		}
+		m_draw->setMode( DrawTool::Mode::SectionDef );
+		focusView();
+	} );
+	connect( delSecBtn, &QPushButton::clicked, this, &RezDock::deleteActiveSection );
+	connect( m_viewCombo, qOverload<int>( &QComboBox::activated ), this, [this]( int i ) { activateView( m_viewCombo->itemData( i ).toInt() ); focusView(); } );
+	auto saveIns = [this]()
+	{
+		SectionInfo si;
+		if ( sectionById( m_activeView, si ) )
+		{
+			si.insX = m_insX->value();
+			si.insY = m_insY->value();
+			saveSection( si );
+		}
+	};
+	connect( m_insX, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, saveIns );
+	connect( m_insY, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, saveIns );
+	connect( m_absHeights, &QCheckBox::toggled, this, []( bool b ) { QSettings().setValue( QStringLiteral( "qRezy/absHeights" ), b ); } );
+	connect( m_textHeight, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, []( double v ) { QSettings().setValue( QStringLiteral( "qRezy/textHeight" ), v ); } );
+	{
+		QSettings st;
+		m_absHeights->setChecked( st.value( QStringLiteral( "qRezy/absHeights" ), false ).toBool() );
+		m_textHeight->setValue( st.value( QStringLiteral( "qRezy/textHeight" ), 0.25 ).toDouble() );
+	}
+	updateSectionWidgets();
 	connect( open3DBtn, &QPushButton::clicked, this, [this]() { ensure3D(); } );
 	connect( m_draw, &DrawTool::statusChanged, m_status, &QLabel::setText );
 	connect( m_draw, &DrawTool::categoryChanged, this, [this]( int c ) { const QSignalBlocker b( m_catCombo ); m_catCombo->setCurrentIndex( c ); } );
@@ -293,6 +365,16 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 	scroll->setWidget( w );
 	setWidget( scroll );
 
+	// kolečko myši nad poli nemá měnit hodnoty, když se jen posouvá panel
+	for ( QWidget* ch : w->findChildren<QWidget*>() )
+	{
+		if ( qobject_cast<QAbstractSpinBox*>( ch ) || qobject_cast<QComboBox*>( ch ) )
+		{
+			ch->setFocusPolicy( Qt::StrongFocus );
+			ch->installEventFilter( this );
+		}
+	}
+
 	// klávesy fungují v celém okně CloudCompare
 	m_up = new QShortcut( QKeySequence( Qt::Key_PageUp ), parent );
 	m_down = new QShortcut( QKeySequence( Qt::Key_PageDown ), parent );
@@ -309,7 +391,14 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 	connect( m_enabled, &QCheckBox::toggled, this, [this]() { applyClip(); } );
 	connect( m_height, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]() { applyClip(); } );
 	connect( m_thickness, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]() { applyClip(); } );
-	connect( m_zero, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]() { updateLabels(); } );
+	connect( m_zero, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]()
+	{
+		updateLabels();
+		if ( m_activeView != 0 )
+		{
+			m_draw->setFrame( frameFor( m_activeView ) );
+		}
+	} );
 
 	updateLabels();
 }
@@ -390,6 +479,10 @@ void RezDock::setCloud( ccGenericPointCloud* c )
 
 	clearClip();
 	m_cloudID = c->getUniqueID();
+	m_draw->setCloud( c );
+	m_activeView = 0;
+	m_draw->setFrame( frameFor( 0 ) );
+	refreshViewCombo();
 
 	const double floorZ = estimateFloor( c );
 
@@ -450,7 +543,19 @@ void RezDock::step( int direction )
 	{
 		return;
 	}
-	m_height->setValue( m_height->value() + direction * m_step->value() );
+	if ( m_activeView == 0 )
+	{
+		m_height->setValue( m_height->value() + direction * m_step->value() );
+		return;
+	}
+	// svislý řez: PgUp = dál ve směru pohledu, PgDn = zpět
+	SectionInfo si;
+	if ( sectionById( m_activeView, si ) )
+	{
+		si.offset += direction * m_step->value();
+		saveSection( si );
+		applyClip();
+	}
 }
 
 void RezDock::applyClip()
@@ -464,7 +569,35 @@ void RezDock::applyClip()
 
 	c->removeAllClipPlanes();
 
-	if ( m_enabled->isChecked() )
+	SectionInfo si;
+	if ( m_activeView != 0 && sectionById( m_activeView, si ) )
+	{
+		if ( m_enabled->isChecked() )
+		{
+			const double sc = c->getGlobalScale();
+			const DrawFrame f = frameFor( m_activeView );
+			const double half = m_thickness->value() * sc / 2.0;
+			// rovina řezu: O − N·offset (posun ve směru pohledu)
+			const double d = f.O.dot( f.N ) - si.offset * sc;
+			ccClipPlane p1;
+			p1.equation = Tuple4Tpl<double>( f.N.x, f.N.y, f.N.z, -( d - half ) );
+			ccClipPlane p2;
+			p2.equation = Tuple4Tpl<double>( -f.N.x, -f.N.y, -f.N.z, d + half );
+			c->addClipPlanes( p1 );
+			c->addClipPlanes( p2 );
+			// do stran jen v délce čáry řezu (+ 20 cm)
+			const double u0 = f.O.dot( f.U );
+			const double len = ( si.B - si.A ).norm();
+			const double m = 0.2 * sc;
+			ccClipPlane p3;
+			p3.equation = Tuple4Tpl<double>( f.U.x, f.U.y, f.U.z, -( u0 - m ) );
+			ccClipPlane p4;
+			p4.equation = Tuple4Tpl<double>( -f.U.x, -f.U.y, -f.U.z, u0 + len + m );
+			c->addClipPlanes( p3 );
+			c->addClipPlanes( p4 );
+		}
+	}
+	else if ( m_enabled->isChecked() )
 	{
 		const double half = m_thickness->value() / 2.0;
 		// hranice řezu v souřadnicích uložených v mračnu (s globálním posunem)
@@ -501,7 +634,25 @@ void RezDock::updateLabels()
 	ccGenericPointCloud* c = cloud();
 	m_cloudLabel->setText( c ? QStringLiteral( "Mračno: %1 (%2 bodů)" ).arg( c->getName() ).arg( c->size() )
 	                         : QStringLiteral( "Mračno: (žádné – vyberte mračno v seznamu)" ) );
-	m_relLabel->setText( QStringLiteral( "Řez %1" ).arg( fmt( m_height->value() - m_zero->value() ) ) );
+	SectionInfo si;
+	const bool sec = m_activeView != 0 && sectionById( m_activeView, si );
+	if ( sec )
+	{
+		m_relLabel->setText( QStringLiteral( "%1  posun %2" ).arg( si.name, fmt( si.offset ) ) );
+	}
+	else
+	{
+		m_relLabel->setText( QStringLiteral( "Řez %1" ).arg( fmt( m_height->value() - m_zero->value() ) ) );
+	}
+	if ( auto* up = findChild<QPushButton*>( QStringLiteral( "qRezyUp" ) ) )
+	{
+		up->setText( sec ? QStringLiteral( "▲ Dál (PgUp)" ) : QStringLiteral( "▲ Nahoru (PgUp)" ) );
+	}
+	if ( auto* down = findChild<QPushButton*>( QStringLiteral( "qRezyDown" ) ) )
+	{
+		down->setText( sec ? QStringLiteral( "▼ Blíž (PgDn)" ) : QStringLiteral( "▼ Dolů (PgDn)" ) );
+	}
+	m_height->setEnabled( !sec );
 }
 
 void RezDock::topView()
@@ -509,6 +660,12 @@ void RezDock::topView()
 	ccGLWindowInterface* win = m_app ? m_app->getActiveGLWindow() : nullptr;
 	if ( !win )
 	{
+		return;
+	}
+	SectionInfo si;
+	if ( m_activeView != 0 && sectionById( m_activeView, si ) )
+	{
+		sectionCamera( si );
 		return;
 	}
 	win->setPerspectiveState( false, true ); // pravoúhlé zobrazení
@@ -548,15 +705,22 @@ bool RezDock::ensure3D()
 	return ok;
 }
 
-void RezDock::show3DAt( double x, double y )
+void RezDock::show3DAt( double x, double y, double z )
 {
 	if ( !ensure3D() )
 	{
 		return;
 	}
 	ccGenericPointCloud* c = cloud();
-	const double zLocal = c ? c->toLocal3d( CCVector3d( 0, 0, m_height->value() ) ).z : 0.0;
-	m_view3D->focusOn( CCVector3d( x, y, zLocal ), m_radius3D->value() * ( c ? c->getGlobalScale() : 1.0 ), m_viewAngle );
+	const double zLocal = std::isnan( z ) ? ( c ? c->toLocal3d( CCVector3d( 0, 0, m_height->value() ) ).z : 0.0 ) : z;
+	double ang = m_viewAngle;
+	SectionInfo si;
+	if ( m_activeView != 0 && sectionById( m_activeView, si ) )
+	{
+		// pohled z místa pozorovatele řezu
+		ang = std::atan2( -si.N.x, si.N.y );
+	}
+	m_view3D->focusOn( CCVector3d( x, y, zLocal ), m_radius3D->value() * ( c ? c->getGlobalScale() : 1.0 ), ang );
 }
 
 void RezDock::zeroFromFloor()
@@ -640,7 +804,77 @@ void RezDock::chooseSeed()
 void RezDock::exportV7()
 {
 	const Drawing::SymbologyTable table = Drawing::SymbologyTable::load();
-	const std::vector<DgnV7::Element> elements = m_draw->exportElements( table );
+	ccGenericPointCloud* c = cloud();
+	if ( !c )
+	{
+		return;
+	}
+	const CCVector3d shift = c->getGlobalShift();
+	const double sc = c->getGlobalScale();
+	const bool absH = m_absHeights->isChecked();
+	const double zeroG = m_zero->value();
+	const std::vector<SectionInfo> sections = loadSections();
+	std::vector<int> usedViews;
+
+	auto map = [&]( int view, const CCVector3d& P, DgnV7::Point2& out ) -> bool
+	{
+		if ( view == 0 )
+		{
+			out.x = P.x / sc - shift.x;
+			out.y = P.y / sc - shift.y;
+			return true;
+		}
+		for ( const SectionInfo& si : sections )
+		{
+			if ( si.id == view )
+			{
+				const DrawFrame f = frameFor( view );
+				const CCVector2d uv = f.toUV( P );
+				out.x = si.insX + uv.x / sc;
+				out.y = absH ? ( uv.y / sc + zeroG ) : ( si.insY + uv.y / sc );
+				if ( std::find( usedViews.begin(), usedViews.end(), view ) == usedViews.end() )
+				{
+					usedViews.push_back( view );
+				}
+				return true;
+			}
+		}
+		return false; // řez byl smazán
+	};
+	std::vector<DgnV7::Element> elements = m_draw->exportElements( table, map );
+
+	// popisy řezů
+	QTextCodec* codec = QTextCodec::codecForName( "Windows-1250" );
+	for ( const SectionInfo& si : sections )
+	{
+		if ( std::find( usedViews.begin(), usedViews.end(), si.id ) == usedViews.end() )
+		{
+			continue;
+		}
+		const double th = m_textHeight->value();
+		const double y0 = absH ? zeroG : si.insY;
+		QStringList lines;
+		lines << QStringLiteral( "Řez %1" ).arg( si.name );
+		if ( !absH )
+		{
+			lines << QStringLiteral( "±0,000 = %1 m n. m. Bpv" ).arg( QString::number( zeroG, 'f', 3 ).replace( '.', ',' ) );
+		}
+		for ( int i = 0; i < lines.size(); ++i )
+		{
+			DgnV7::Element t;
+			t.isText = true;
+			t.sym = table.get( 0, false );
+			t.sym.level = 14;
+			t.sym.color = 0;
+			t.sym.weight = 0;
+			t.sym.hasLineStyle = false;
+			t.textHeight = th;
+			t.pts.push_back( { si.insX, y0 - ( i + 2 ) * th * 1.6 } );
+			const QByteArray bytes = codec ? codec->fromUnicode( lines[i] ) : lines[i].toLatin1();
+			t.text = std::string( bytes.constData(), static_cast<size_t>( bytes.size() ) );
+			elements.push_back( t );
+		}
+	}
 	if ( elements.empty() )
 	{
 		QMessageBox::information( this, QStringLiteral( "Řezy" ), QStringLiteral( "Zatím není nic nakreslené (u vybraného mračna)." ) );
@@ -791,4 +1025,317 @@ void RezDock::editSymbology()
 		}
 	}
 	table.save();
+}
+
+// ---------------------------------------------------------------- svislé řezy
+
+namespace
+{
+	const char* KSecId = "qRezy.secId";
+
+	QString sectionName( int id )
+	{
+		// A–A', B–B', … po Z pak čísla
+		if ( id >= 1 && id <= 26 )
+		{
+			const QChar ch( 'A' + id - 1 );
+			return QStringLiteral( "%1-%1'" ).arg( ch );
+		}
+		return QStringLiteral( "%1-%1'" ).arg( id );
+	}
+}
+
+std::vector<RezDock::SectionInfo> RezDock::loadSections() const
+{
+	std::vector<SectionInfo> out;
+	ccHObject* group = m_draw ? m_draw->drawingGroup( false ) : nullptr;
+	if ( !group )
+	{
+		return out;
+	}
+	for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+	{
+		ccHObject* ch = group->getChild( i );
+		if ( !ch->isA( CC_TYPES::POLY_LINE ) || !ch->hasMetaData( KSecId ) )
+		{
+			continue;
+		}
+		SectionInfo si;
+		si.id = ch->getMetaData( KSecId ).toInt();
+		si.name = sectionName( si.id );
+		si.A = CCVector2d( ch->getMetaData( "qRezy.secAx" ).toDouble(), ch->getMetaData( "qRezy.secAy" ).toDouble() );
+		si.B = CCVector2d( ch->getMetaData( "qRezy.secBx" ).toDouble(), ch->getMetaData( "qRezy.secBy" ).toDouble() );
+		si.N = CCVector2d( ch->getMetaData( "qRezy.secNx" ).toDouble(), ch->getMetaData( "qRezy.secNy" ).toDouble() );
+		si.offset = ch->getMetaData( "qRezy.secOffset" ).toDouble();
+		si.insX = ch->getMetaData( "qRezy.secInsX" ).toDouble();
+		si.insY = ch->getMetaData( "qRezy.secInsY" ).toDouble();
+		si.poly = static_cast<ccPolyline*>( ch );
+		out.push_back( si );
+	}
+	std::sort( out.begin(), out.end(), []( const SectionInfo& a, const SectionInfo& b ) { return a.id < b.id; } );
+	return out;
+}
+
+bool RezDock::sectionById( int id, SectionInfo& s ) const
+{
+	if ( id <= 0 )
+	{
+		return false;
+	}
+	for ( const SectionInfo& si : loadSections() )
+	{
+		if ( si.id == id )
+		{
+			s = si;
+			return true;
+		}
+	}
+	return false;
+}
+
+void RezDock::saveSection( const SectionInfo& s )
+{
+	if ( !s.poly )
+	{
+		return;
+	}
+	s.poly->setMetaData( KSecId, s.id );
+	s.poly->setMetaData( "qRezy.secAx", s.A.x );
+	s.poly->setMetaData( "qRezy.secAy", s.A.y );
+	s.poly->setMetaData( "qRezy.secBx", s.B.x );
+	s.poly->setMetaData( "qRezy.secBy", s.B.y );
+	s.poly->setMetaData( "qRezy.secNx", s.N.x );
+	s.poly->setMetaData( "qRezy.secNy", s.N.y );
+	s.poly->setMetaData( "qRezy.secOffset", s.offset );
+	s.poly->setMetaData( "qRezy.secInsX", s.insX );
+	s.poly->setMetaData( "qRezy.secInsY", s.insY );
+	updateLabels();
+}
+
+void RezDock::createSection( double ax, double ay, double bx, double by, double cx, double cy )
+{
+	ccGenericPointCloud* c = cloud();
+	ccHObject* group = m_draw->drawingGroup( true );
+	if ( !c || !group )
+	{
+		return;
+	}
+	const CCVector2d A( ax, ay );
+	const CCVector2d B( bx, by );
+	CCVector2d d = B - A;
+	if ( d.norm() < 1e-6 )
+	{
+		return;
+	}
+	d.normalize();
+	const CCVector2d p( -d.y, d.x );
+	const double side = ( CCVector2d( cx, cy ) - A ).dot( p );
+	// pozorovatel stojí na opačné straně, než kam se dívá
+	const CCVector2d N = ( side >= 0 ) ? p * -1.0 : p;
+
+	int id = 1;
+	for ( const SectionInfo& si : loadSections() )
+	{
+		id = std::max( id, si.id + 1 );
+	}
+
+	// čára řezu v půdorysu
+	const ccBBox bb = c->getOwnBB();
+	const double z = bb.maxCorner().z + 1.0;
+	auto* verts = new ccPointCloud( "vertices" );
+	verts->reserve( 2 );
+	verts->addPoint( CCVector3( static_cast<PointCoordinateType>( ax ), static_cast<PointCoordinateType>( ay ), static_cast<PointCoordinateType>( z ) ) );
+	verts->addPoint( CCVector3( static_cast<PointCoordinateType>( bx ), static_cast<PointCoordinateType>( by ), static_cast<PointCoordinateType>( z ) ) );
+	verts->setEnabled( false );
+	verts->setGlobalShift( c->getGlobalShift() );
+	verts->setGlobalScale( c->getGlobalScale() );
+	auto* poly = new RezLine( verts );
+	poly->addChild( verts );
+	poly->addPointIndex( 0, 2 );
+	poly->setGlobalShift( c->getGlobalShift() );
+	poly->setGlobalScale( c->getGlobalScale() );
+	poly->setDashed( true );
+	poly->setColor( ccColor::Rgb( 0, 230, 230 ) );
+	poly->showColors( true );
+	poly->setWidth( 2 );
+	poly->setName( QStringLiteral( "Řez %1" ).arg( sectionName( id ) ) );
+	poly->setMetaData( Drawing::MetaView, -1 );
+	group->addChild( poly );
+	m_app->addToDB( poly, false, false, false, false );
+
+	SectionInfo si;
+	si.id = id;
+	si.name = sectionName( id );
+	si.A = A;
+	si.B = B;
+	si.N = N;
+	si.poly = poly;
+	// výchozí umístění ve výkresu: pod mračnem, řezy pod sebou
+	const CCVector3d gmin = c->toGlobal3d( bb.minCorner() );
+	const CCVector3d gmax = c->toGlobal3d( bb.maxCorner() );
+	const double zRange = std::min( 30.0, gmax.z - gmin.z );
+	si.insX = gmin.x;
+	si.insY = gmin.y - 5.0 - ( id - 1 ) * ( zRange + 5.0 );
+	saveSection( si );
+
+	refreshViewCombo();
+	activateView( id );
+}
+
+void RezDock::deleteActiveSection()
+{
+	SectionInfo si;
+	if ( !sectionById( m_activeView, si ) )
+	{
+		QMessageBox::information( this, QStringLiteral( "Řezy" ), QStringLiteral( "Vyberte nahoře v seznamu řez, který chcete smazat." ) );
+		return;
+	}
+	if ( QMessageBox::question( this, QStringLiteral( "Řezy" ), QStringLiteral( "Smazat řez %1 i se vším, co je v něm nakreslené?" ).arg( si.name ) ) != QMessageBox::Yes )
+	{
+		return;
+	}
+	ccHObject* group = m_draw->drawingGroup( false );
+	activateView( 0 );
+	if ( group )
+	{
+		std::vector<ccHObject*> toRemove;
+		for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+		{
+			ccHObject* ch = group->getChild( i );
+			if ( ch->isA( CC_TYPES::POLY_LINE ) && ch->hasMetaData( Drawing::MetaView ) && ch->getMetaData( Drawing::MetaView ).toInt() == si.id )
+			{
+				toRemove.push_back( ch );
+			}
+		}
+		toRemove.push_back( si.poly );
+		for ( ccHObject* o : toRemove )
+		{
+			m_app->removeFromDB( o, true );
+		}
+	}
+	refreshViewCombo();
+	m_app->refreshAll();
+}
+
+DrawFrame RezDock::frameFor( int viewId ) const
+{
+	DrawFrame f;
+	SectionInfo si;
+	ccGenericPointCloud* c = cloud();
+	if ( viewId == 0 || !c || !sectionById( viewId, si ) )
+	{
+		return f; // půdorys
+	}
+	f.viewId = viewId;
+	f.N = CCVector3d( si.N.x, si.N.y, 0.0 );
+	f.V = CCVector3d( 0.0, 0.0, 1.0 );
+	f.U = f.V.cross( f.N ); // vpravo při pohledu proti N
+	// počátek: levý konec čáry řezu ve výšce ±0,000
+	const double uA = CCVector3d( si.A.x, si.A.y, 0 ).dot( f.U );
+	const double uB = CCVector3d( si.B.x, si.B.y, 0 ).dot( f.U );
+	const CCVector2d left = ( uA <= uB ) ? si.A : si.B;
+	const double zeroLocal = c->toLocal3d( CCVector3d( 0, 0, m_zero->value() ) ).z;
+	f.O = CCVector3d( left.x, left.y, zeroLocal );
+	// čáry před rovinou řezu (k pozorovateli), aby je body nezakryly
+	f.front = 20.0 * c->getGlobalScale() - si.offset * c->getGlobalScale();
+	return f;
+}
+
+void RezDock::refreshViewCombo()
+{
+	const QSignalBlocker b( m_viewCombo );
+	m_viewCombo->clear();
+	m_viewCombo->addItem( QStringLiteral( "Půdorys" ), 0 );
+	for ( const SectionInfo& si : loadSections() )
+	{
+		m_viewCombo->addItem( QStringLiteral( "Řez %1" ).arg( si.name ), si.id );
+	}
+	const int idx = m_viewCombo->findData( m_activeView );
+	m_viewCombo->setCurrentIndex( idx >= 0 ? idx : 0 );
+}
+
+void RezDock::sectionCamera( const SectionInfo& si )
+{
+	ccGLWindowInterface* win = m_app ? m_app->getActiveGLWindow() : nullptr;
+	ccGenericPointCloud* c = cloud();
+	if ( !win || !c )
+	{
+		return;
+	}
+	const DrawFrame f = frameFor( si.id );
+	// matice pohledu: řádky = osy kamery (U vpravo, V nahoru, N k pozorovateli)
+	ccGLMatrixd view;
+	view.toIdentity();
+	double* m = view.data();
+	m[0] = f.U.x; m[4] = f.U.y; m[8] = f.U.z;
+	m[1] = f.V.x; m[5] = f.V.y; m[9] = f.V.z;
+	m[2] = f.N.x; m[6] = f.N.y; m[10] = f.N.z;
+	win->setPerspectiveState( false, true );
+	win->setBaseViewMat( view );
+
+	// přiblížit na oblast řezu
+	const ccBBox bb = c->getOwnBB();
+	const double len = ( si.B - si.A ).norm();
+	const CCVector3d P0 = f.O;
+	const CCVector3d P1 = f.O + f.U * len;
+	CCVector3 mn( static_cast<PointCoordinateType>( std::min( P0.x, P1.x ) ), static_cast<PointCoordinateType>( std::min( P0.y, P1.y ) ), bb.minCorner().z );
+	CCVector3 mx( static_cast<PointCoordinateType>( std::max( P0.x, P1.x ) ), static_cast<PointCoordinateType>( std::max( P0.y, P1.y ) ), bb.maxCorner().z );
+	ccBBox box( mn, mx, true );
+	win->updateConstellationCenterAndZoom( &box );
+	win->redraw();
+}
+
+void RezDock::activateView( int viewId )
+{
+	SectionInfo si;
+	if ( viewId != 0 && !sectionById( viewId, si ) )
+	{
+		viewId = 0;
+	}
+	m_activeView = viewId;
+	m_draw->setFrame( frameFor( viewId ) );
+	refreshViewCombo();
+	updateSectionWidgets();
+	applyClip();
+	if ( viewId == 0 )
+	{
+		topView();
+	}
+	else
+	{
+		sectionCamera( si );
+	}
+}
+
+void RezDock::updateSectionWidgets()
+{
+	SectionInfo si;
+	const bool sec = sectionById( m_activeView, si );
+	m_secWidgets->setVisible( sec );
+	if ( sec )
+	{
+		const QSignalBlocker b1( m_insX );
+		const QSignalBlocker b2( m_insY );
+		m_insX->setValue( si.insX );
+		m_insY->setValue( si.insY );
+	}
+	updateLabels();
+}
+
+bool RezDock::eventFilter( QObject* obj, QEvent* event )
+{
+	if ( event->type() == QEvent::Wheel )
+	{
+		QWidget* wdg = qobject_cast<QWidget*>( obj );
+		if ( wdg && !wdg->hasFocus() )
+		{
+			// předat posuvníku panelu
+			if ( auto* sa = qobject_cast<QScrollArea*>( widget() ) )
+			{
+				QCoreApplication::sendEvent( sa->verticalScrollBar(), event );
+			}
+			return true;
+		}
+	}
+	return QDockWidget::eventFilter( obj, event );
 }
