@@ -63,7 +63,8 @@ Uchopení: konec (čtverec), průsečík (křížek), střed (trojúhelník), na
 Okno se zředěnou kopií mračna a nakreslenými čarami. Nahoře posuvníky **od – do**
 (jako Cross Section v CloudCompare): **Šířka**, **Hloubka** (podle natočení pohledu) a **Výška**
 v metrech od místa kliknutí; horní jezdec výšky doleva = uříznutá střecha.
-*výchozí* = ±1,5 m / ±2 m, *vše* = celé mračno, *čáry* = zobrazení nakreslených čar.
+*výchozí* = ±1,5 m / ±2 m, *vše* = celé mračno, *čáry* = zobrazení nakreslených čar,
+posuvník *průhlednost* = mračno průhledně („rentgen“), čáry zůstanou plné.
 Levé tažení = otáčení, kolečko = zoom.
 
 ## Změřené body
@@ -73,9 +74,9 @@ a v pohledu (do hloubky pohledu) samy sklopí do roviny. Body se do DGN neuklád
 Jednotlivé soubory jdou vypnout zaškrtnutím v seznamu objektů (skupina *Výkres (Řezy)*).
 
 ## Pomocný řez
-Natáhněte čáru v půdorysu a klikněte na stranu pohledu. Okno 3D náhledu ukáže pravoúhlý řez
-(tloušťka = posuvník Hloubka). Levé kliknutí 2 body = vodorovně / svisle / šikmo, u kurzoru výška
-nad ±0,000 a v Bpv. Pravé tažení = posun, kolečko = zoom, tlačítko **3D** = zpět.
+Natáhněte čáru v půdorysu a klikněte na stranu pohledu. Otevře se samostatné okno (3D náhled zůstane)
+s pravoúhlým řezem (tloušťka = posuvník Hloubka). Levé kliknutí 2 body = vodorovně / svisle / šikmo,
+u kurzoru výška nad ±0,000 a v Bpv. Pravé tažení = posun, kolečko = zoom.
 
 ## Výstup V7
 Ikona diskety: **seed** (existující výkres – převezmou se jednotky a nastavení, nemění se),

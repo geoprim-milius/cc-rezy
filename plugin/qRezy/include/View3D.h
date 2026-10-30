@@ -33,7 +33,7 @@ public:
 		bool dashed = false;
 	};
 
-	View3D( ccMainAppInterface* app, QWidget* parent = nullptr );
+	View3D( ccMainAppInterface* app, QWidget* parent = nullptr, bool auxOnly = false );
 	~View3D() override;
 
 	//! připraví kopii mračna (pokud ještě není pro toto mračno)
@@ -85,7 +85,16 @@ private:
 	bool m_hasFocus = false;
 	ccClipPlaneSet m_clipSet;
 
+	// průhlednost mračna
+	class BlendGroup* m_blend = nullptr;
+	class QSlider* m_alpha = nullptr;
+
+	// nitkový kříž (pomocný řez)
+	void updateCross( const QPoint& pos, bool show );
+	class ccPolyline* m_cross[2] = { nullptr, nullptr };
+
 	// pomocný řez
+	bool m_auxOnly = false; //!< samostatné okno jen pro pomocný řez
 	bool m_aux = false;
 	CCVector3d m_auxA;
 	CCVector3d m_auxU;

@@ -75,7 +75,7 @@ private:
 	bool chooseSeed( QWidget* parent );
 	void editSymbology();
 	void focusView();
-	bool ensure3D();
+	bool ensure3D( bool aux = false ); //!< aux = samostatné okno pomocného řezu
 	void show3DAt( double x, double y, double z );
 	void refresh3DLines();
 	double planZLocal() const;
@@ -136,6 +136,7 @@ private:
 
 	DrawTool* m_draw = nullptr;
 	View3D* m_view3D = nullptr;
+	View3D* m_viewAux = nullptr; //!< pomocný řez (vlastní okno, neruší 3D náhled)
 	double m_viewAngle = 0.0; //!< natočení půdorysného pohledu (rad)
 	int m_activeView = 0;     //!< 0 = půdorys, jinak id řezu/pohledu
 	QString m_lastPrompt;

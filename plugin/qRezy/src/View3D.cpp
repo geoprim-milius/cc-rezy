@@ -4,6 +4,7 @@
 #include "ccGLUtils.h"
 #include "ccGLWindowInterface.h"
 #include "ccMainAppInterface.h"
+#include "ccGuiParameters.h"
 
 #include <ccPointCloud.h>
 #include <ccPolyline.h>
@@ -18,6 +19,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QSlider>
+#include <QOpenGLFunctions_2_1>
 #include <QWheelEvent>
 #include <QSettings>
 #include <QVBoxLayout>
@@ -25,6 +28,38 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+
+//! skupina, jejíž potomci (mračno) se kreslí průhledně
+class BlendGroup : public ccHObject
+{
+public:
+	BlendGroup()
+		: ccHObject( "blend" )
+	{
+		setVisible( true );
+		setEnabled( true );
+	}
+	float alpha = 1.0f;
+
+	void draw( CC_DRAW_CONTEXT& context ) override
+	{
+		QOpenGLFunctions_2_1* gl = context.glFunctions<QOpenGLFunctions_2_1>();
+		const bool blend = gl && MACRO_Draw3D( context ) && alpha < 0.999f;
+		if ( blend )
+		{
+			gl->glPushAttrib( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+			gl->glEnable( GL_BLEND );
+			gl->glBlendColor( 0.0f, 0.0f, 0.0f, alpha );
+			gl->glBlendFunc( GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA );
+			gl->glDepthMask( GL_FALSE ); // body se navzájem nezakrývají („rentgen“)
+		}
+		ccHObject::draw( context );
+		if ( blend )
+		{
+			gl->glPopAttrib();
+		}
+	}
+};
 
 //! posuvník se dvěma jezdci (od – do)
 class RangeSlider : public QWidget
@@ -171,11 +206,12 @@ namespace
 	}
 }
 
-View3D::View3D( ccMainAppInterface* app, QWidget* parent )
-	: QDockWidget( QStringLiteral( "Řezy – 3D náhled" ), parent )
+View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
+	: QDockWidget( auxOnly ? QStringLiteral( "Řezy – pomocný řez (měření)" ) : QStringLiteral( "Řezy – 3D náhled" ), parent )
 	, m_app( app )
+	, m_auxOnly( auxOnly )
 {
-	setObjectName( QStringLiteral( "qRezy3DView" ) );
+	setObjectName( auxOnly ? QStringLiteral( "qRezyAuxView" ) : QStringLiteral( "qRezy3DView" ) );
 
 	auto* w = new QWidget;
 	auto* lay = new QVBoxLayout( w );
@@ -223,6 +259,13 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent )
 	side->addWidget( m_showLines );
 	side->addWidget( resetBtn );
 	side->addWidget( allBtn );
+	m_alpha = new QSlider( Qt::Horizontal );
+	m_alpha->setRange( 5, 100 );
+	m_alpha->setValue( st.value( auxOnly ? QStringLiteral( "qRezy/auxAlpha" ) : QStringLiteral( "qRezy/3dAlpha" ), 100 ).toInt() );
+	m_alpha->setToolTip( QStringLiteral( "Neprůhlednost mračna (vlevo = průhledné, čáry zůstanou plné)" ) );
+	m_alpha->setMaximumWidth( 90 );
+	side->addWidget( new QLabel( QStringLiteral( "průhlednost" ) ) );
+	side->addWidget( m_alpha );
 	m_backBtn = new QPushButton( QStringLiteral( "3D" ) );
 	m_backBtn->setToolTip( QStringLiteral( "Zpět z pomocného řezu do 3D náhledu" ) );
 	m_backBtn->setVisible( false );
@@ -252,6 +295,18 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent )
 	setWidget( w );
 
 	connect( m_backBtn, &QPushButton::clicked, this, [this]() { leaveAux( true ); } );
+	connect( m_alpha, &QSlider::valueChanged, this, [this]( int v )
+	{
+		QSettings().setValue( m_auxOnly ? QStringLiteral( "qRezy/auxAlpha" ) : QStringLiteral( "qRezy/3dAlpha" ), v );
+		if ( m_blend )
+		{
+			m_blend->alpha = v / 100.0f;
+		}
+		if ( m_win )
+		{
+			m_win->redraw();
+		}
+	} );
 	if ( m_widget )
 	{
 		m_widget->installEventFilter( this );
@@ -340,6 +395,18 @@ void View3D::updateRanges()
 
 View3D::~View3D()
 {
+	for ( ccPolyline*& c : m_cross )
+	{
+		if ( c )
+		{
+			if ( m_win )
+			{
+				m_win->removeFromOwnDB( c );
+			}
+			delete c;
+			c = nullptr;
+		}
+	}
 	if ( m_measPoly )
 	{
 		if ( m_win )
@@ -351,6 +418,15 @@ View3D::~View3D()
 	}
 	clearLines();
 	release();
+	if ( m_blend )
+	{
+		if ( m_win )
+		{
+			m_win->removeFromOwnDB( m_blend );
+		}
+		delete m_blend;
+		m_blend = nullptr;
+	}
 	if ( m_win )
 	{
 		m_app->destroyGLWindow( m_win );
@@ -360,9 +436,9 @@ View3D::~View3D()
 
 void View3D::release()
 {
-	if ( m_clone && m_win )
+	if ( m_clone && m_blend )
 	{
-		m_win->removeFromOwnDB( m_clone );
+		m_blend->detachChild( m_clone );
 	}
 	delete m_clone;
 	m_clone = nullptr;
@@ -428,7 +504,14 @@ bool View3D::setSource( ccPointCloud* cloud, unsigned maxPoints )
 	m_clone->setEnabled( true );
 	m_clone->setVisible( true );
 	m_clone->setDisplay( m_win );
-	m_win->addToOwnDB( m_clone );
+	if ( !m_blend )
+	{
+		m_blend = new BlendGroup;
+		m_blend->setDisplay( m_win );
+		m_win->addToOwnDB( m_blend );
+	}
+	m_blend->alpha = m_alpha->value() / 100.0f;
+	m_blend->addChild( m_clone, ccHObject::DP_NONE );
 	m_sourceID = cloud->getUniqueID();
 	m_hasFocus = false;
 	m_win->zoomGlobal();
@@ -619,7 +702,7 @@ void View3D::auxSection( const CCVector3d& A, const CCVector3d& B, const CCVecto
 	m_win->setBaseViewMat( view );
 	m_win->setInteractionMode( ccGLWindowInterface::MODE_PAN_ONLY );
 	m_win->setPivotVisibility( ccGLWindowInterface::PIVOT_HIDE );
-	m_win->setWindowCursor( Qt::CrossCursor );
+	m_win->setWindowCursor( Qt::BlankCursor ); // nitkový kříž kreslíme sami
 	const ccBBox bb = m_clone->getOwnBB();
 	const CCVector3d P0 = m_auxA;
 	const CCVector3d P1 = m_auxA + U * len;
@@ -631,10 +714,10 @@ void View3D::auxSection( const CCVector3d& A, const CCVector3d& B, const CCVecto
 	{
 		m_measPoly->setEnabled( false );
 	}
-	m_backBtn->setVisible( true );
+	m_backBtn->setVisible( !m_auxOnly );
 	setWindowTitle( QStringLiteral( "Řezy – pomocný řez (měření)" ) );
 	m_info->setText( QStringLiteral( "<b>Pomocný řez</b> – klikněte 2 body = vzdálenost a převýšení; u kurzoru výška nad ±0,000 a v Bpv. "
-	                                 "Pravé tažení = posun, kolečko = zoom, tlačítko 3D = zpět." ) );
+	                                 "Pravé tažení = posun, kolečko = zoom." ) );
 	m_win->redraw();
 	if ( !isVisible() )
 	{
@@ -651,6 +734,7 @@ void View3D::leaveAux( bool refocus )
 	}
 	m_aux = false;
 	m_measStep = 0;
+	updateCross( QPoint(), false );
 	if ( m_measPoly )
 	{
 		m_measPoly->setEnabled( false );
@@ -800,15 +884,79 @@ bool View3D::eventFilter( QObject* obj, QEvent* event )
 	{
 		auto* e = static_cast<QMouseEvent*>( event );
 		CCVector3d P;
+		updateCross( e->pos(), true );
+		m_win->setWindowCursor( Qt::BlankCursor );
 		if ( e->buttons() == Qt::NoButton && auxPoint( e->pos(), P ) )
 		{
 			m_mCursor = P;
 			updateMeasure( true );
 		}
+		else
+		{
+			m_win->redraw( true, false );
+		}
 		break;
 	}
+	case QEvent::Leave:
+		updateCross( QPoint(), false );
+		m_win->redraw( true, false );
+		break;
 	default:
 		break;
 	}
 	return QDockWidget::eventFilter( obj, event );
+}
+
+void View3D::updateCross( const QPoint& pos, bool show )
+{
+	if ( !m_win )
+	{
+		return;
+	}
+	if ( !m_cross[0] )
+	{
+		for ( ccPolyline*& c : m_cross )
+		{
+			auto* verts = new ccPointCloud( "cross" );
+			verts->reserve( 2 );
+			verts->addPoint( CCVector3( 0, 0, 0 ) );
+			verts->addPoint( CCVector3( 0, 0, 0 ) );
+			verts->setEnabled( false );
+			c = new ccPolyline( verts );
+			c->addChild( verts );
+			c->addPointIndex( 0, 2 );
+			c->set2DMode( true );
+			c->setForeground( true );
+			c->showColors( true );
+			c->setWidth( 1 );
+			c->setDisplay( m_win );
+			m_win->addToOwnDB( c );
+		}
+	}
+	if ( !show )
+	{
+		m_cross[0]->setEnabled( false );
+		m_cross[1]->setEnabled( false );
+		return;
+	}
+	// ±45 px jako v kreslení; na světlém pozadí černý
+	const ccColor::Rgbub& bg = ccGui::Parameters().backgroundCol;
+	const double lum = 0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b;
+	const ccColor::Rgb col = ( lum > 140.0 ) ? ccColor::Rgb( 0, 0, 0 ) : ccColor::Rgb( 255, 255, 255 );
+	ccGLCameraParameters cam;
+	m_win->getGLCameraParameters( cam );
+	const QPointF g = m_win->toCornerGLCoordinates( pos.x(), pos.y() );
+	const double cx = g.x() - cam.viewport[2] / 2.0;
+	const double cy = g.y() - cam.viewport[3] / 2.0;
+	const double r = 45.0 * m_win->getDevicePixelRatio();
+	const CCVector3 ends[2][2] = { { CCVector3( static_cast<PointCoordinateType>( cx - r ), static_cast<PointCoordinateType>( cy ), 0 ), CCVector3( static_cast<PointCoordinateType>( cx + r ), static_cast<PointCoordinateType>( cy ), 0 ) },
+	                               { CCVector3( static_cast<PointCoordinateType>( cx ), static_cast<PointCoordinateType>( cy - r ), 0 ), CCVector3( static_cast<PointCoordinateType>( cx ), static_cast<PointCoordinateType>( cy + r ), 0 ) } };
+	for ( int i = 0; i < 2; ++i )
+	{
+		auto* verts = static_cast<ccPointCloud*>( m_cross[i]->getAssociatedCloud() );
+		*const_cast<CCVector3*>( verts->getPointPersistentPtr( 0 ) ) = ends[i][0];
+		*const_cast<CCVector3*>( verts->getPointPersistentPtr( 1 ) ) = ends[i][1];
+		m_cross[i]->setColor( col );
+		m_cross[i]->setEnabled( true );
+	}
 }

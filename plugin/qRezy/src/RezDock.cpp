@@ -1084,7 +1084,7 @@ void RezDock::setDrawing( bool on )
 
 // ================================================================ 3D náhled
 
-bool RezDock::ensure3D()
+bool RezDock::ensure3D( bool aux )
 {
 	ccGenericPointCloud* g = cloud();
 	ccPointCloud* pc = g ? ccHObjectCaster::ToPointCloud( g ) : nullptr;
@@ -1093,17 +1093,22 @@ bool RezDock::ensure3D()
 		m_app->dispToConsole( QStringLiteral( "[Řezy] Nejdřív vyberte mračno." ), ccMainAppInterface::WRN_CONSOLE_MESSAGE );
 		return false;
 	}
-	if ( !m_view3D )
+	View3D*& v = aux ? m_viewAux : m_view3D;
+	if ( !v )
 	{
-		m_view3D = new View3D( m_app, m_app->getMainWindow() );
-		m_app->getMainWindow()->addDockWidget( Qt::RightDockWidgetArea, m_view3D );
-		m_view3D->setFloating( true );
-		m_view3D->resize( 760, 600 );
+		v = new View3D( m_app, m_app->getMainWindow(), aux );
+		m_app->getMainWindow()->addDockWidget( Qt::RightDockWidgetArea, v );
+		v->setFloating( true );
+		v->resize( 760, 600 );
+		if ( aux )
+		{
+			v->move( v->pos() + QPoint( 60, 60 ) );
+		}
 	}
-	m_view3D->show();
-	m_view3D->raise();
+	v->show();
+	v->raise();
 	QApplication::setOverrideCursor( Qt::WaitCursor );
-	const bool ok = m_view3D->setSource( pc, 20000000 );
+	const bool ok = v->setSource( pc, 20000000 );
 	QApplication::restoreOverrideCursor();
 	if ( ok )
 	{
@@ -1114,7 +1119,9 @@ bool RezDock::ensure3D()
 
 void RezDock::refresh3DLines()
 {
-	if ( !m_view3D || !m_view3D->isVisible() )
+	const bool v3 = m_view3D && m_view3D->isVisible();
+	const bool va = m_viewAux && m_viewAux->isVisible();
+	if ( !v3 && !va )
 	{
 		return;
 	}
@@ -1145,7 +1152,14 @@ void RezDock::refresh3DLines()
 			lines.push_back( l );
 		}
 	}
-	m_view3D->setLines( lines );
+	if ( v3 )
+	{
+		m_view3D->setLines( lines );
+	}
+	if ( va )
+	{
+		m_viewAux->setLines( lines );
+	}
 }
 
 void RezDock::show3DAt( double x, double y, double z )
@@ -1529,9 +1543,9 @@ void RezDock::createSection( int kind, double ax, double ay, double bx, double b
 	if ( kind == 2 )
 	{
 		// pomocný řez: jen okno pro měření, nic se neukládá
-		if ( ensure3D() )
+		if ( ensure3D( true ) )
 		{
-			m_view3D->auxSection( CCVector3d( ax, ay, 0 ), CCVector3d( bx, by, 0 ), CCVector3d( N.x, N.y, 0 ), planZLocal(), m_zero->value(), m_thickness->value() );
+			m_viewAux->auxSection( CCVector3d( ax, ay, 0 ), CCVector3d( bx, by, 0 ), CCVector3d( N.x, N.y, 0 ), planZLocal(), m_zero->value(), m_thickness->value() );
 		}
 		return;
 	}
