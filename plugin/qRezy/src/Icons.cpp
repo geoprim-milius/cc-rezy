@@ -209,6 +209,17 @@ namespace Icons
 				p.drawLine( QPointF( 24, 6 ), QPointF( 18, 1 ) );
 				arrowHead( p, QPointF( 17, 0 ), QPointF( 24, 6 ), 6 );
 			}
+			else if ( n == "newfloor" )
+			{
+				// dvě patra nad sebou + plus
+				p.setPen( QPen( Ink, 1.6 ) );
+				p.drawRect( QRectF( 3, 17, 18, 11 ) );
+				p.setPen( QPen( Blue, 1.8 ) );
+				p.drawRect( QRectF( 3, 5, 18, 11 ) );
+				p.setPen( QPen( QColor( 40, 160, 60 ), 2.4 ) );
+				p.drawLine( QPointF( 26, 3 ), QPointF( 26, 13 ) );
+				p.drawLine( QPointF( 21, 8 ), QPointF( 31, 8 ) );
+			}
 			else if ( n == "auxsec" )
 			{
 				// tenká čára řezu + metr (jen měření)

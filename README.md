@@ -13,12 +13,14 @@ Rozbalte zip do nové složky a spusťte `CloudCompare.exe`.
 3. Řez se nastaví 1 m nad odhadnutou podlahu. **Posuvník** pod údajem nebo **PgUp / PgDn** posouvá řez, **Ctrl + kolečko** mění tloušťku.
 
 ## Panel Řezy
-- seznam **Pohled**: Půdorys / svislé řezy / pohledy (koš = smazat)
+- seznam **Pohled**: půdorysy pater / svislé řezy / pohledy (koš = smazat)
 - šipky a velký údaj: výška řezu nad ±0,000 (v řezu posun roviny)
 - posuvník polohy řezu přes celé mračno (po 1 cm)
 - **Tloušťka**: posuvník, − / +, předvolby 2 / 5 / 10 / 20 / 50 cm
 - **Hloubka** (jen u pohledu): jak daleko za rovinou je mračno vidět
-- ±0,000 = výška podlahy (ikona = odhad z mračna)
+- ±0,000 = výška podlahy 1. patra (ikona = odhad z mračna)
+- **Podlaha patra** (jen vyšší patra): výšky v patře se počítají od ní, ve 3D na ní leží kresba
+- **Reference**: jiné patro šedě pod kresbou (kontrola, zda jsou zdi nad sebou), *uchopit* = uchopovat i na jeho čáry
 
 ## Lišta nástrojů
 | Ikona | Nástroj | Klávesa | Postup |
@@ -42,6 +44,7 @@ Rozbalte zip do nové složky a spusťte `CloudCompare.exe`.
 | hladina | Zdi / Překlady / Trámy / Drobné prvky | F1–F4 | |
 | otočení | Natočit pohled | | 2 body: směr 1. → 2. bod bude vodorovně doprava |
 | S se šipkou | Sever nahoru | | |
+| dvě patra + | Nové patro | | samostatný půdorys; podlaha se odhadne z mračna, předchozí patro se zapne jako reference |
 | značka řezu | Nový svislý řez | | 2 body v půdorysu, pak klik na stranu, kam se díváte (šipky) |
 | pravítko | Pomocný řez | | 2 body v půdorysu a strana → okno 3D náhledu se přepne do řezu jen pro měření (nic se neukládá) |
 | křížky 1 2 | Změřené body | | načíst seznam (číslo Y X [Z] [kód], S-JTSK), zobrazit/skrýt body (i uchopování), kódy |
@@ -53,7 +56,7 @@ Rozbalte zip do nové složky a spusťte `CloudCompare.exe`.
 v menu se volí opět číslem horní řady. Funguje podle polohy klávesy, na české klávesnici tedy
 + ě š č ř ž ý á í é. **Vzdálenost** se píše na numerické klávesnici (nebo Shift + horní řada) a Enter.
 
-Myš: **levé** = bod, **pravé** = reset, **Shift + tažení** nebo **tažení kolečkem** = posun, **kolečko** = zoom,
+Myš: **levé** = bod, **pravé** = reset, **Shift + tažení** nebo **tažení kolečkem** = posun, **kolečko** = zoom k myši,
 **prostřední kliknutí** = ukázat místo ve 3D náhledu. Esc = zrušit (2× = zpět na čáru).
 Kurzor je nitkový kříž (na výběr čáry se čtverečkem).
 
@@ -65,6 +68,9 @@ Okno se zředěnou kopií mračna a nakreslenými čarami. Nahoře posuvníky **
 v metrech od místa kliknutí; horní jezdec výšky doleva = uříznutá střecha.
 *výchozí* = ±1,5 m / ±2 m, *vše* = celé mračno, *čáry* = zobrazení nakreslených čar,
 posuvník *průhlednost* = mračno průhledně („rentgen“), čáry zůstanou plné.
+**Posun kresby**: kresba patra leží ve 3D na podlaze patra – posuvníkem ji posunete nahoru/dolů
+(např. na překlady). Kresba řezu je v rovině řezu, kresba pohledu na líci objektu (odhad z mračna) –
+posuvník ji posouvá do hloubky. Na výkres nemá vliv. Kolečko zoomuje k místu pod myší.
 Levé tažení = otáčení, kolečko = zoom.
 
 ## Změřené body
@@ -72,6 +78,7 @@ Soubor „číslo Y X [Z] [kód]“ v S-JTSK (mezery, tabulátory nebo střední
 se značkou, číslem a kódem a dá se na ně uchopit. Body s výškou se v řezu (±1 m od roviny)
 a v pohledu (do hloubky pohledu) samy sklopí do roviny. Body se do DGN neukládají.
 Jednotlivé soubory jdou vypnout zaškrtnutím v seznamu objektů (skupina *Výkres (Řezy)*).
+Barvy značky, čísla a kódu a tmavý podklad pod textem: menu bodů → *Barvy bodů…*
 
 ## Pomocný řez
 Natáhněte čáru v půdorysu a klikněte na stranu pohledu. Otevře se samostatné okno (3D náhled zůstane)
@@ -79,6 +86,10 @@ s pravoúhlým řezem (tloušťka = posuvník Hloubka). Levé kliknutí 2 body =
 u kurzoru výška nad ±0,000 a v Bpv. Pravé tažení = posun, kolečko = zoom.
 
 ## Výstup V7
+V okně Uložit zaškrtnete soubory: **každé patro zvlášť** (název_1NP.dgn, název_2NP.dgn …) a **řezy
+s pohledy společně** (název_rezy.dgn – řezy v řadě, pohledy pod nimi, umístění jde upravit v tabulce).
+Pokud je jen jeden půdorys bez řezů, uloží se jeden soubor pod zadaným názvem.
+
 Ikona diskety: **seed** (existující výkres – převezmou se jednotky a nastavení, nemění se),
 **Hladiny a barvy**, umístění řezů/pohledů ve výkresu (X/Y = levý konec, ±0,000),
 výšky relativně nebo absolutně (Bpv), výška popisů. Řezy a pohledy jsou ve výkresu 2D

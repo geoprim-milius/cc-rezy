@@ -12,6 +12,7 @@
 #include <ccPolyline.h>
 
 #include <QApplication>
+#include <QColor>
 #include <QCursor>
 #include <QFile>
 #include <QFileInfo>
@@ -277,10 +278,12 @@ void DrawTool::setCloud( ccGenericPointCloud* cloud )
 	m_shift = cloud->getGlobalShift();
 	m_scale = cloud->getGlobalScale();
 	m_planFront = cloud->getOwnBB().maxCorner().z + 1.0;
-	if ( m_frame.viewId == 0 )
+	if ( m_frame.plan )
 	{
 		const double z = m_frame.O.z;
+		const int id = m_frame.viewId;
 		m_frame = DrawFrame();
+		m_frame.viewId = id;
 		m_frame.O.z = z;
 		m_frame.front = m_planFront - z;
 		m_frame.back = m_frame.front;
@@ -335,12 +338,12 @@ bool DrawTool::start( ccGenericPointCloud* cloud )
 void DrawTool::setFrame( const DrawFrame& f )
 {
 	m_frame = f;
-	if ( m_frame.viewId == 0 )
+	if ( m_frame.plan )
 	{
 		m_frame.front = m_planFront - m_frame.O.z;
 		m_frame.back = m_frame.front;
 	}
-	if ( m_mode == Mode::RotateView && m_frame.viewId != 0 )
+	if ( m_mode == Mode::RotateView && !m_frame.plan )
 	{
 		m_mode = Mode::Line;
 		Q_EMIT modeChanged( m_mode );
@@ -352,7 +355,7 @@ void DrawTool::setFrame( const DrawFrame& f )
 
 void DrawTool::setPlanHeight( double zLocal )
 {
-	if ( m_frame.viewId != 0 )
+	if ( !m_frame.plan )
 	{
 		return;
 	}
@@ -377,8 +380,19 @@ void DrawTool::updateLineVisibility()
 		}
 		const int view = ch->hasMetaData( Drawing::MetaView ) ? ch->getMetaData( Drawing::MetaView ).toInt() : 0;
 		// -1 = čára definice řezu (vidět jen v půdorysu)
-		const bool on = ( view == m_frame.viewId ) || ( view == -1 && m_frame.viewId == 0 );
-		ch->setEnabled( on );
+		const bool isRef = m_frame.plan && m_refView >= 0 && view == m_refView && view != m_frame.viewId;
+		const bool on = ( view == m_frame.viewId ) || ( view == -1 && m_frame.plan ) || isRef;
+		ch->setEnabled( on && !( isRef && isText( ch ) ) );
+		// referenční patro šedě
+		auto* poly = static_cast<ccPolyline*>( ch );
+		if ( isRef )
+		{
+			poly->setTempColor( ccColor::Rgb( 125, 125, 125 ), true );
+		}
+		else if ( poly->isColorOverridden() )
+		{
+			poly->enableTempColor( false );
+		}
 	}
 }
 
@@ -581,7 +595,8 @@ std::vector<DrawTool::Segment> DrawTool::collectSegments() const
 			continue;
 		}
 		const int view = ch->hasMetaData( Drawing::MetaView ) ? ch->getMetaData( Drawing::MetaView ).toInt() : 0;
-		if ( view != m_frame.viewId )
+		const bool ref = m_frame.plan && m_refSnap && m_refView >= 0 && view == m_refView && view != m_frame.viewId && !isText( ch );
+		if ( view != m_frame.viewId && !ref )
 		{
 			continue;
 		}
@@ -591,7 +606,7 @@ std::vector<DrawTool::Segment> DrawTool::collectSegments() const
 		{
 			const CCVector3* A = poly->getPoint( k );
 			const CCVector3* B = poly->getPoint( k + 1 );
-			segs.push_back( { m_frame.toUV( CCVector3d::fromArray( A->u ) ), m_frame.toUV( CCVector3d::fromArray( B->u ) ), poly } );
+			segs.push_back( { m_frame.toUV( CCVector3d::fromArray( A->u ) ), m_frame.toUV( CCVector3d::fromArray( B->u ) ), poly, ref } );
 		}
 	}
 	return segs;
@@ -628,6 +643,10 @@ ccPolyline* DrawTool::pickLine( const QPoint& pos, CCVector2d* clicked ) const
 	double bestD = tol;
 	for ( const Segment& s : collectSegments() )
 	{
+		if ( s.ref )
+		{
+			continue; // referenční patro nejde upravovat
+		}
 		const double d = dist( closestOnSegment( s.a, s.b, P ), P );
 		if ( d < bestD )
 		{
@@ -2261,7 +2280,7 @@ void DrawTool::updateStatus()
 		{
 			const CCVector2d B = m_measDone ? m_measB : m_cursor;
 			const CCVector2d d = B - m_measA;
-			const bool plan = ( m_frame.viewId == 0 );
+			const bool plan = m_frame.plan;
 			const double ang = std::atan2( d.y, d.x ) * RadToDeg;
 			prompt = QStringLiteral( "Měření: %1 m   (%2 %3 m, %4 %5 m, úhel %6°)" )
 			             .arg( num( d.norm() / m_scale ) )
@@ -2428,7 +2447,7 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 					if ( screenToLocal( e->pos(), P ) )
 					{
 						const CCVector3d P3 = m_frame.to3D( P, false );
-						Q_EMIT show3DRequested( P3.x, P3.y, m_frame.viewId == 0 ? std::numeric_limits<double>::quiet_NaN() : P3.z );
+						Q_EMIT show3DRequested( P3.x, P3.y, m_frame.plan ? std::numeric_limits<double>::quiet_NaN() : P3.z );
 					}
 				}
 				else
@@ -2552,7 +2571,15 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			}
 			return true;
 		}
-		// po zoomu přepočítat náhled
+		// zoom k místu pod kurzorem
+		const int d = e->angleDelta().y();
+		if ( d != 0 && !( e->modifiers() & ( Qt::ShiftModifier | Qt::AltModifier ) ) )
+		{
+			zoomAtCursor( m_win, e->pos(), d / 8.0f );
+			updateTip();
+			redraw2D();
+			return true;
+		}
 		QTimer::singleShot( 0, this, [this]() { updateTip(); redraw2D(); } );
 		break;
 	}
@@ -2735,6 +2762,57 @@ ccPolyline* DrawTool::addText( const CCVector2d& P, const QString& text, UndoIte
 	return poly;
 }
 
+void DrawTool::setReference( int viewId, bool snap )
+{
+	m_refView = viewId;
+	m_refSnap = snap;
+	updateLineVisibility();
+	redraw3D();
+}
+
+void zoomAtCursor( ccGLWindowInterface* win, const QPoint& pos, float wheelDeltaDeg )
+{
+	if ( !win )
+	{
+		return;
+	}
+	ccGLCameraParameters cam;
+	win->getGLCameraParameters( cam );
+	const QPointF g = win->toCornerGLCoordinates( pos.x(), pos.y() );
+	// hloubka středu otáčení (v pravoúhlém pohledu na ní nezáleží)
+	double depth = 0.5;
+	CCVector3d Sp;
+	if ( cam.project( win->getViewportParameters().getPivotPoint(), Sp ) && Sp.z > 0.0 && Sp.z < 1.0 )
+	{
+		depth = Sp.z;
+	}
+	CCVector3d P;
+	const bool ok = cam.unproject( CCVector3d( g.x(), g.y(), depth ), P );
+	win->onWheelEvent( wheelDeltaDeg );
+	if ( !ok )
+	{
+		return;
+	}
+	win->getGLCameraParameters( cam );
+	CCVector3d S;
+	if ( !cam.project( P, S ) )
+	{
+		return;
+	}
+	// posun, aby bod P byl zase pod kurzorem
+	const double dpr = win->getDevicePixelRatio();
+	const double dx = ( g.x() - S.x ) / dpr;
+	const double dy = -( g.y() - S.y ) / dpr;
+	const double px = win->computeActualPixelSize() * dpr;
+	CCVector3d u( dx * px, -dy * px, 0.0 );
+	if ( win->getViewportParameters().objectCenteredView )
+	{
+		u = -u;
+	}
+	win->moveCamera( u );
+	win->redraw();
+}
+
 void DrawTool::setShowPoints( bool on )
 {
 	m_showPoints = on;
@@ -2774,7 +2852,7 @@ std::vector<DrawTool::VisPoint> DrawTool::visiblePoints() const
 		{
 			const CCVector3d P = CCVector3d::fromArray( pc->getPoint( k )->u );
 			const bool z = ( static_cast<int>( k ) < hasZ.size() ) && hasZ[static_cast<int>( k )] == QChar( '1' );
-			if ( m_frame.viewId != 0 )
+			if ( !m_frame.plan )
 			{
 				// řez / pohled: jen body s výškou v dosahu roviny (sklopí se do ní)
 				if ( !z )
@@ -2806,23 +2884,31 @@ void DrawTool::refreshLayer()
 	m_layer->items.clear();
 	// směr „nahoru“ na obrazovce (půdorys může být natočený)
 	CCVector3d up = m_frame.V;
-	if ( m_frame.viewId == 0 )
+	if ( m_frame.plan )
 	{
 		const double a = viewAngle();
 		up = CCVector3d( -std::sin( a ), std::cos( a ), 0.0 );
 	}
+	QSettings st;
+	const QColor cm = st.value( QStringLiteral( "qRezy/ptColMarker" ), QColor( 255, 90, 255 ) ).value<QColor>();
+	const QColor cn = st.value( QStringLiteral( "qRezy/ptColName" ), QColor( 255, 235, 0 ) ).value<QColor>();
+	const QColor cc = st.value( QStringLiteral( "qRezy/ptColCode" ), QColor( 0, 230, 255 ) ).value<QColor>();
+	const bool bkg = st.value( QStringLiteral( "qRezy/ptBkg" ), true ).toBool();
 	for ( const VisPoint& vp : visiblePoints() )
 	{
 		RezLayer::Item it;
 		it.P = m_frame.to3D( vp.uv );
 		it.up = up;
 		it.marker = true;
-		it.color = ccColor::Rgb( 255, 120, 255 );
+		it.markerColor = toRgb( cm );
+		it.color = toRgb( cn );
 		it.text = vp.name;
 		if ( m_showCodes && !vp.code.isEmpty() )
 		{
-			it.text += QStringLiteral( "  " ) + vp.code;
+			it.text2 = vp.code;
+			it.color2 = toRgb( cc );
 		}
+		it.background = bkg;
 		m_layer->items.push_back( it );
 	}
 	// texty aktuálního pohledu

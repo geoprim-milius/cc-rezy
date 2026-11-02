@@ -30,6 +30,7 @@ class ccGenericPointCloud;
 struct DrawFrame
 {
 	int viewId = 0;
+	bool plan = true;                      //!< půdorys (patro) – jinak svislý řez / pohled
 	CCVector3d O = CCVector3d( 0, 0, 0 );
 	CCVector3d U = CCVector3d( 1, 0, 0 );
 	CCVector3d V = CCVector3d( 0, 1, 0 );
@@ -49,6 +50,9 @@ struct DrawFrame
 		return CCVector2d( d.dot( U ), d.dot( V ) );
 	}
 };
+
+//! zoom kolečkem k místu pod kurzorem (bod pod myší zůstane na místě)
+void zoomAtCursor( ccGLWindowInterface* win, const QPoint& pos, float wheelDeltaDeg );
 
 class DrawTool : public QObject
 {
@@ -129,6 +133,10 @@ public:
 	void setShowPoints( bool on );
 	bool showPoints() const { return m_showPoints; }
 	void setShowCodes( bool on );
+	//! referenční výkres (jiné patro) – šedě, volitelně s uchopením; -1 = žádný
+	void setReference( int viewId, bool snap );
+	//! překreslí popisky (po změně barev apod.)
+	void refreshDisplay() { redraw2D(); }
 	bool showCodes() const { return m_showCodes; }
 
 	//! střed okna v rovině kreslení (lokálně 3D)
@@ -166,6 +174,7 @@ private:
 		CCVector2d a;
 		CCVector2d b;
 		ccPolyline* poly;
+		bool ref = false; //!< čára referenčního výkresu (jen uchopení)
 	};
 
 	struct Action
@@ -305,6 +314,8 @@ private:
 	class RezLayer* m_layer = nullptr; //!< popisky bodů a texty
 	bool m_showPoints = true;
 	bool m_showCodes = true;
+	int m_refView = -1;
+	bool m_refSnap = false;
 	QString m_lastText;
 
 	// náhledy (2D prvky v okně) – zásobník znovu používaných čar

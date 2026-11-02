@@ -1,5 +1,6 @@
 #include "View3D.h"
 #include "RezLine.h"
+#include "DrawTool.h"
 
 #include "ccGLUtils.h"
 #include "ccGLWindowInterface.h"
@@ -274,6 +275,39 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 	top->addLayout( grid, 1 );
 	top->addLayout( side );
 	lay->addLayout( top );
+
+	// posun kresby (půdorys nahoru/dolů – na překlad, k oknu…; řez/pohled do hloubky – na líc)
+	auto* shRow = new QHBoxLayout;
+	shRow->setContentsMargins( 4, 0, 4, 0 );
+	auto* shName = new QLabel( QStringLiteral( "Posun kresby" ) );
+	shName->setToolTip( QStringLiteral( "Půdorys: nahoru/dolů (např. na překlady). Řez/pohled: do hloubky (např. na líc fasády). Na výkres nemá vliv." ) );
+	m_shift = new QSlider( Qt::Horizontal );
+	m_shift->setRange( -600, 600 );
+	m_shift->setValue( 0 );
+	m_shift->setToolTip( shName->toolTip() );
+	m_shiftLabel = new QLabel( QStringLiteral( "0,00 m" ) );
+	m_shiftLabel->setMinimumWidth( 110 );
+	auto* shZero = new QPushButton( QStringLiteral( "0" ) );
+	shZero->setMaximumWidth( 30 );
+	shZero->setToolTip( QStringLiteral( "Kresba zpět do své roviny" ) );
+	shRow->addWidget( shName );
+	shRow->addWidget( m_shift, 1 );
+	shRow->addWidget( m_shiftLabel );
+	shRow->addWidget( shZero );
+	lay->addLayout( shRow );
+	connect( m_shift, &QSlider::valueChanged, this, [this]( int v )
+	{
+		m_shiftLabel->setText( QStringLiteral( "%1 m" ).arg( QString::number( v / 100.0, 'f', 2 ).replace( '.', ',' ) ) );
+		buildLines();
+	} );
+	connect( shZero, &QPushButton::clicked, this, [this]() { m_shift->setValue( 0 ); } );
+	if ( auxOnly )
+	{
+		shName->setVisible( false );
+		m_shift->setVisible( false );
+		m_shiftLabel->setVisible( false );
+		shZero->setVisible( false );
+	}
 	updateValueLabels();
 
 	m_info = new QLabel( QStringLiteral( "Prostřední klik do řezu = ukázat místo. Levé tažení = otáčení, kolečko = zoom." ) );
@@ -522,23 +556,31 @@ bool View3D::setSource( ccPointCloud* cloud, unsigned maxPoints )
 
 void View3D::setLines( const std::vector<Line>& lines )
 {
+	m_lines = lines;
+	buildLines();
+}
+
+void View3D::buildLines()
+{
 	if ( !m_win )
 	{
 		return;
 	}
 	clearLines();
+	const double sh = m_shift ? m_shift->value() / 100.0 : 0.0;
 	m_linesGroup = new ccHObject( "lines" );
-	for ( const Line& l : lines )
+	for ( const Line& l : m_lines )
 	{
 		if ( l.pts.size() < 2 )
 		{
 			continue;
 		}
+		const CCVector3d d = l.shiftDir * sh;
 		auto* verts = new ccPointCloud( "v" );
 		verts->reserve( static_cast<unsigned>( l.pts.size() ) );
 		for ( const CCVector3d& P : l.pts )
 		{
-			verts->addPoint( P.toFloat() );
+			verts->addPoint( ( P + d ).toFloat() );
 		}
 		verts->setEnabled( false );
 		auto* poly = new RezLine( verts );
@@ -839,6 +881,21 @@ void View3D::updateMeasure( bool live )
 
 bool View3D::eventFilter( QObject* obj, QEvent* event )
 {
+	if ( obj == m_widget && event->type() == QEvent::Wheel )
+	{
+		// zoom k místu pod kurzorem
+		auto* e = static_cast<QWheelEvent*>( event );
+		const int d = e->angleDelta().y();
+		if ( d != 0 && !( e->modifiers() & ( Qt::ControlModifier | Qt::ShiftModifier | Qt::AltModifier ) ) )
+		{
+			zoomAtCursor( m_win, e->pos(), d / 8.0f );
+			if ( m_aux )
+			{
+				updateCross( e->pos(), true );
+			}
+			return true;
+		}
+	}
 	if ( obj != m_widget || !m_aux )
 	{
 		return QDockWidget::eventFilter( obj, event );

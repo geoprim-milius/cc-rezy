@@ -20,6 +20,10 @@ public:
 		double height = 0.0; //!< výška textu v lokálních jednotkách (0 = pevné písmo)
 		bool marker = false; //!< značka bodu (křížek)
 		ccColor::Rgb color = ccColor::Rgb( 255, 255, 255 );
+		ccColor::Rgb markerColor = ccColor::Rgb( 255, 90, 255 );
+		QString text2;       //!< druhý text za prvním (kód bodu)
+		ccColor::Rgb color2 = ccColor::Rgb( 0, 230, 255 );
+		bool background = false; //!< tmavý podklad pod textem
 	};
 
 	RezLayer()

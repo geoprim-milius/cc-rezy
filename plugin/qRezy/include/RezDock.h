@@ -53,8 +53,29 @@ private:
 		double depth = 15.0;  //!< pohled: hloubka za rovinou (m)
 		double insX = 0.0;    //!< umístění počátku ve výkresu (globálně)
 		double insY = 0.0;
+		double face = -1.0;   //!< pohled: líc objektu za rovinou (m), -1 = neznámo
 		ccPolyline* poly = nullptr;
 	};
+
+	// patra (půdorysy): id 0 = 1. patro, další id >= FloorBase
+	struct FloorInfo
+	{
+		int id = 0;
+		QString name;
+		double cut = 0.0;   //!< výška řezu (globálně)
+		double level = 0.0; //!< podlaha patra (globálně) – rovina kresby ve 3D
+	};
+	static constexpr int FloorBase = 1000;
+	static bool isPlanView( int id ) { return id == 0 || id >= FloorBase; }
+	std::vector<FloorInfo> loadFloors() const;
+	void saveFloors( const std::vector<FloorInfo>& floors );
+	bool floorById( int id, FloorInfo& f ) const;
+	void storeActiveFloor();
+	double currentLevel() const;
+	void newFloor();
+	void refreshRefCombo();
+	double estimateFloorRange( ccGenericPointCloud* cloud, double zMin, double zMax, bool& ok ) const;
+	double estimateFace( const SectionInfo& si ) const;
 
 	void buildPanel();
 	void buildToolbar();
@@ -70,7 +91,7 @@ private:
 	void zeroFromFloor();
 	double estimateFloor( ccGenericPointCloud* cloud ) const;
 	void setDrawing( bool on );
-	void exportV7();
+	void exportV7( const std::vector<int>& floorIds, bool sections );
 	void openSaveDialog();
 	bool chooseSeed( QWidget* parent );
 	void editSymbology();
@@ -122,6 +143,12 @@ private:
 	QToolButton* m_downBtn = nullptr;
 	QLabel* m_status = nullptr;
 	QShortcut* m_up = nullptr;
+	QWidget* m_floorRow = nullptr;
+	QDoubleSpinBox* m_floorLevel = nullptr;
+	QComboBox* m_refCombo = nullptr;
+	QCheckBox* m_refSnap = nullptr;
+	QWidget* m_refRow = nullptr;
+	int m_lastPlan = 0;
 	QShortcut* m_down = nullptr;
 
 	// lišta nástrojů

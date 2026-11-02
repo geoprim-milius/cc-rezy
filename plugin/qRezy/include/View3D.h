@@ -31,6 +31,7 @@ public:
 		std::vector<CCVector3d> pts; //!< lokální souřadnice mračna
 		ccColor::Rgb color;
 		bool dashed = false;
+		CCVector3d shiftDir; //!< směr posunu kresby posuvníkem (lokálně, na 1 m)
 	};
 
 	View3D( ccMainAppInterface* app, QWidget* parent = nullptr, bool auxOnly = false );
@@ -59,6 +60,7 @@ private:
 	void release();
 	void clearLines();
 	void applyClip();
+	void buildLines();
 	void updateRanges();   //!< rozsah posuvníků podle mračna kolem bodu
 	void updateValueLabels();
 	void saveSettings() const;
@@ -80,6 +82,9 @@ private:
 	RangeSlider* m_rs[3] = { nullptr, nullptr, nullptr }; //!< šířka (U), hloubka (V), výška (Z) – metry od bodu
 	QLabel* m_rsLabel[3] = { nullptr, nullptr, nullptr };
 	QCheckBox* m_showLines = nullptr;
+	std::vector<Line> m_lines;            //!< čáry bez posunu
+	class QSlider* m_shift = nullptr;     //!< posun kresby (cm)
+	QLabel* m_shiftLabel = nullptr;
 	CCVector3d m_focus;
 	double m_angle = 0.0;
 	bool m_hasFocus = false;

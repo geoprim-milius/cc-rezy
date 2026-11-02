@@ -3,6 +3,7 @@
 #include <ccGenericGLDisplay.h>
 
 #include <QFont>
+#include <QFontMetrics>
 #include <QOpenGLFunctions_2_1>
 
 #include <algorithm>
@@ -43,7 +44,7 @@ void RezLayer::drawMeOnly( CC_DRAW_CONTEXT& context )
 			const double x = S.x - cx;
 			const double y = S.y - cy;
 			const double r = 4.0;
-			gl->glColor3ub( it.color.r, it.color.g, it.color.b );
+			gl->glColor3ub( it.markerColor.r, it.markerColor.g, it.markerColor.b );
 			gl->glLineWidth( 1.5f );
 			gl->glBegin( GL_LINES );
 			gl->glVertex2d( x - r, y - r );
@@ -73,8 +74,22 @@ void RezLayer::drawMeOnly( CC_DRAW_CONTEXT& context )
 		}
 		else
 		{
-			f.setPointSize( std::max( 7, f.pointSize() - 1 ) );
-			context.display->displayText( it.text, static_cast<int>( S.x ) + 6, static_cast<int>( S.y ) + 4, ccGenericGLDisplay::ALIGN_HLEFT | ccGenericGLDisplay::ALIGN_VBOTTOM, 0.0f, &col, &f );
+			// číslo bodu a za ním kód (každý svou barvou), případně s tmavým podkladem
+			f.setPointSize( std::max( 7, f.pointSize() ) );
+			f.setBold( true );
+			const float bk = it.background ? 0.55f : 0.0f;
+			const int x = static_cast<int>( S.x ) + 7;
+			const int y = static_cast<int>( S.y ) + 4;
+			context.display->displayText( it.text, x, y, ccGenericGLDisplay::ALIGN_HLEFT | ccGenericGLDisplay::ALIGN_VBOTTOM, bk, &col, &f );
+			if ( !it.text2.isEmpty() )
+			{
+				QFontMetrics fm( f );
+				const int w = fm.horizontalAdvance( it.text + QStringLiteral( "  " ) );
+				const ccColor::Rgba col2( it.color2.r, it.color2.g, it.color2.b, 255 );
+				QFont f2 = f;
+				f2.setBold( false );
+				context.display->displayText( it.text2, x + w, y, ccGenericGLDisplay::ALIGN_HLEFT | ccGenericGLDisplay::ALIGN_VBOTTOM, bk, &col2, &f2 );
+			}
 		}
 	}
 }

@@ -29,6 +29,8 @@
 #include <QDoubleSpinBox>
 #include <QFile>
 #include <QFileDialog>
+#include <QColorDialog>
+#include <QInputDialog>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QGridLayout>
@@ -300,6 +302,22 @@ void RezDock::buildPanel()
 	zl->addWidget( m_zero, 1 );
 	zl->addWidget( floorBtn );
 	form->addRow( QStringLiteral( "±0,000 =" ), zeroRow );
+
+	// patro: podlaha (rovina kresby ve 3D) a reference
+	m_floorLevel = makeSpin( -1.0e6, 1.0e6, 0.0, 0.01, 3, QStringLiteral( " m" ) );
+	m_floorLevel->setToolTip( QStringLiteral( "Podlaha patra (Bpv) – výšky v patře se počítají od ní, ve 3D na ní leží kresba" ) );
+	m_floorRow = m_floorLevel;
+	form->addRow( QStringLiteral( "Podlaha patra:" ), m_floorLevel );
+	m_refRow = new QWidget;
+	auto* rl = new QHBoxLayout( m_refRow );
+	rl->setContentsMargins( 0, 0, 0, 0 );
+	m_refCombo = new QComboBox;
+	m_refCombo->setToolTip( QStringLiteral( "Jiné patro šedě pod kresbou – kontrola, zda jsou zdi nad sebou" ) );
+	m_refSnap = new QCheckBox( QStringLiteral( "uchopit" ) );
+	m_refSnap->setToolTip( QStringLiteral( "Uchopovat i na čáry referenčního patra" ) );
+	rl->addWidget( m_refCombo, 1 );
+	rl->addWidget( m_refSnap );
+	form->addRow( QStringLiteral( "Reference:" ), m_refRow );
 	lay->addLayout( form );
 
 	m_status = new QLabel;
@@ -371,13 +389,27 @@ void RezDock::buildPanel()
 			applyClip();
 		}
 	} );
+	connect( m_floorLevel, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]()
+	{
+		storeActiveFloor();
+		updateLabels();
+		refresh3DLines();
+	} );
+	auto refChanged = [this]()
+	{
+		m_draw->setReference( m_refCombo->currentData().toInt(), m_refSnap->isChecked() );
+		focusView();
+	};
+	connect( m_refCombo, qOverload<int>( &QComboBox::activated ), this, refChanged );
+	connect( m_refSnap, &QCheckBox::toggled, this, refChanged );
 	connect( m_zero, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]()
 	{
 		updateLabels();
-		if ( m_activeView != 0 )
+		if ( !isPlanView( m_activeView ) )
 		{
 			m_draw->setFrame( frameFor( m_activeView ) );
 		}
+		refresh3DLines();
 	} );
 	syncThicknessSlider();
 }
@@ -472,9 +504,9 @@ void RezDock::buildToolbar()
 	QAction* rot = m_toolbar->addAction( Icons::get( QStringLiteral( "rotate" ) ), QStringLiteral( "Natočit pohled – 2 body (směr 1. → 2. bod bude vodorovně doprava)" ) );
 	connect( rot, &QAction::triggered, this, [this]()
 	{
-		if ( m_activeView != 0 )
+		if ( !isPlanView( m_activeView ) )
 		{
-			activateView( 0 );
+			activateView( m_lastPlan );
 		}
 		if ( !m_draw->isActive() )
 		{
@@ -487,20 +519,22 @@ void RezDock::buildToolbar()
 	connect( north, &QAction::triggered, this, [this]()
 	{
 		m_viewAngle = 0.0;
-		if ( m_activeView == 0 )
+		if ( isPlanView( m_activeView ) )
 		{
 			topView();
 		}
 		focusView();
 	} );
 
+	QAction* nf = m_toolbar->addAction( Icons::get( QStringLiteral( "newfloor" ) ), QStringLiteral( "Nové patro – samostatný půdorys (předchozí patro se nabídne jako reference)" ) );
+	connect( nf, &QAction::triggered, this, [this]() { newFloor(); focusView(); } );
 	QAction* sec = m_toolbar->addAction( Icons::get( QStringLiteral( "section" ) ), QStringLiteral( "Nový svislý řez (S) – 2 body v půdorysu, pak strana pohledu" ) );
 	QAction* fac = m_toolbar->addAction( Icons::get( QStringLiteral( "facade" ) ), QStringLiteral( "Nový pohled (fasáda) – rovina před objektem: 2 body, pak strana pohledu" ) );
 	auto startDef = [this]( int kind )
 	{
-		if ( m_activeView != 0 )
+		if ( !isPlanView( m_activeView ) )
 		{
-			activateView( 0 );
+			activateView( m_lastPlan );
 		}
 		if ( !m_draw->isActive() )
 		{
@@ -528,7 +562,64 @@ void RezDock::buildToolbar()
 	QAction* ptCodes = ptMenu->addAction( QStringLiteral( "Zobrazit kódy" ) );
 	ptCodes->setCheckable( true );
 	ptCodes->setChecked( true );
+	ptMenu->addSeparator();
+	QAction* ptColors = ptMenu->addAction( QStringLiteral( "Barvy bodů…" ) );
 	ptBtn->setMenu( ptMenu );
+	connect( ptColors, &QAction::triggered, this, [this]()
+	{
+		QSettings st;
+		QDialog dlg( this );
+		dlg.setWindowTitle( QStringLiteral( "Barvy bodů" ) );
+		auto* fl = new QFormLayout( &dlg );
+		struct Entry
+		{
+			const char* key;
+			const char* label;
+			QColor def;
+		};
+		const Entry entries[] = { { "qRezy/ptColMarker", "Značka (křížek):", QColor( 255, 90, 255 ) },
+		                          { "qRezy/ptColName", "Číslo bodu:", QColor( 255, 235, 0 ) },
+		                          { "qRezy/ptColCode", "Kód:", QColor( 0, 230, 255 ) } };
+		std::vector<std::pair<QString, QColor>> values;
+		for ( const Entry& e : entries )
+		{
+			values.push_back( { QString::fromLatin1( e.key ), st.value( QString::fromLatin1( e.key ), e.def ).value<QColor>() } );
+		}
+		for ( size_t i = 0; i < values.size(); ++i )
+		{
+			auto* b = new QPushButton;
+			b->setIcon( Icons::colorSwatch( values[i].second, false ) );
+			b->setText( values[i].second.name() );
+			fl->addRow( QString::fromUtf8( entries[i].label ), b );
+			connect( b, &QPushButton::clicked, &dlg, [&values, i, b, &dlg]()
+			{
+				const QColor c = QColorDialog::getColor( values[i].second, &dlg );
+				if ( c.isValid() )
+				{
+					values[i].second = c;
+					b->setIcon( Icons::colorSwatch( c, false ) );
+					b->setText( c.name() );
+				}
+			} );
+		}
+		auto* bkg = new QCheckBox( QStringLiteral( "tmavý podklad pod textem" ) );
+		bkg->setChecked( st.value( QStringLiteral( "qRezy/ptBkg" ), true ).toBool() );
+		fl->addRow( QString(), bkg );
+		auto* bb = new QDialogButtonBox( QDialogButtonBox::Ok | QDialogButtonBox::Cancel );
+		fl->addRow( bb );
+		connect( bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept );
+		connect( bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject );
+		if ( dlg.exec() == QDialog::Accepted )
+		{
+			for ( const auto& v : values )
+			{
+				st.setValue( v.first, v.second );
+			}
+			st.setValue( QStringLiteral( "qRezy/ptBkg" ), bkg->isChecked() );
+			m_draw->refreshDisplay();
+		}
+		focusView();
+	} );
 	m_toolbar->addWidget( ptBtn );
 	connect( ptLoad, &QAction::triggered, this, [this, ptShow]()
 	{
@@ -571,7 +662,7 @@ void RezDock::buildToolbar()
 		CCVector3d P;
 		if ( m_draw->isActive() && m_draw->viewCenter( P ) )
 		{
-			show3DAt( P.x, P.y, m_activeView == 0 ? std::numeric_limits<double>::quiet_NaN() : P.z );
+			show3DAt( P.x, P.y, isPlanView( m_activeView ) ? std::numeric_limits<double>::quiet_NaN() : P.z );
 		}
 		else if ( ccGenericPointCloud* c = cloud() )
 		{
@@ -581,6 +672,259 @@ void RezDock::buildToolbar()
 	} );
 	QAction* save = m_toolbar->addAction( Icons::get( QStringLiteral( "save" ) ), QStringLiteral( "Uložit výkres V7 a nastavení výstupu" ) );
 	connect( save, &QAction::triggered, this, &RezDock::openSaveDialog );
+}
+
+// ================================================================ patra
+
+std::vector<RezDock::FloorInfo> RezDock::loadFloors() const
+{
+	std::vector<FloorInfo> out;
+	ccHObject* group = m_draw ? m_draw->drawingGroup( false ) : nullptr;
+	if ( group && group->hasMetaData( "qRezy.floors" ) )
+	{
+		for ( const QString& rec : group->getMetaData( "qRezy.floors" ).toStringList() )
+		{
+			const QStringList p = rec.split( '|' );
+			if ( p.size() < 4 )
+			{
+				continue;
+			}
+			FloorInfo f;
+			f.id = p[0].toInt();
+			f.name = p[1];
+			f.cut = p[2].toDouble();
+			f.level = p[3].toDouble();
+			out.push_back( f );
+		}
+	}
+	if ( std::none_of( out.begin(), out.end(), []( const FloorInfo& f ) { return f.id == 0; } ) )
+	{
+		FloorInfo f0;
+		f0.id = 0;
+		f0.name = QStringLiteral( "1NP" );
+		f0.cut = m_height->value();
+		out.insert( out.begin(), f0 );
+	}
+	for ( FloorInfo& f : out )
+	{
+		if ( f.id == 0 )
+		{
+			f.level = m_zero->value(); // 1. patro = ±0,000
+		}
+		if ( f.id == m_activeView )
+		{
+			f.cut = m_height->value();
+			if ( f.id != 0 )
+			{
+				f.level = m_floorLevel->value();
+			}
+		}
+	}
+	return out;
+}
+
+void RezDock::saveFloors( const std::vector<FloorInfo>& floors )
+{
+	ccHObject* group = m_draw ? m_draw->drawingGroup( true ) : nullptr;
+	if ( !group )
+	{
+		return;
+	}
+	QStringList list;
+	for ( const FloorInfo& f : floors )
+	{
+		list << QStringLiteral( "%1|%2|%3|%4" ).arg( f.id ).arg( QString( f.name ).remove( '|' ) ).arg( f.cut, 0, 'f', 4 ).arg( f.level, 0, 'f', 4 );
+	}
+	group->setMetaData( "qRezy.floors", list );
+}
+
+bool RezDock::floorById( int id, FloorInfo& f ) const
+{
+	if ( !isPlanView( id ) )
+	{
+		return false;
+	}
+	for ( const FloorInfo& x : loadFloors() )
+	{
+		if ( x.id == id )
+		{
+			f = x;
+			return true;
+		}
+	}
+	return false;
+}
+
+void RezDock::storeActiveFloor()
+{
+	if ( isPlanView( m_activeView ) && cloud() )
+	{
+		saveFloors( loadFloors() );
+	}
+}
+
+double RezDock::currentLevel() const
+{
+	FloorInfo f;
+	if ( isPlanView( m_activeView ) && m_activeView != 0 && floorById( m_activeView, f ) )
+	{
+		return f.level;
+	}
+	return m_zero->value();
+}
+
+double RezDock::estimateFloorRange( ccGenericPointCloud* c, double zMin, double zMax, bool& ok ) const
+{
+	// nejhustší vodorovná vrstva bodů ve výškách zMin–zMax (globálně)
+	ok = false;
+	const unsigned n = c->size();
+	const double sc = c->getGlobalScale();
+	const double zl0 = c->toLocal3d( CCVector3d( 0, 0, zMin ) ).z;
+	const double zl1 = c->toLocal3d( CCVector3d( 0, 0, zMax ) ).z;
+	const double bin = 0.02 * sc;
+	const size_t bins = static_cast<size_t>( std::max( 1.0, std::ceil( ( zl1 - zl0 ) / bin ) ) );
+	if ( n == 0 || bins > 100000 )
+	{
+		return 0.0;
+	}
+	std::vector<unsigned> h( bins, 0 );
+	const unsigned stride = std::max( 1u, n / 3000000u );
+	for ( unsigned i = 0; i < n; i += stride )
+	{
+		const double z = c->getPoint( i )->z;
+		if ( z >= zl0 && z < zl1 )
+		{
+			++h[static_cast<size_t>( ( z - zl0 ) / bin )];
+		}
+	}
+	const size_t best = std::max_element( h.begin(), h.end() ) - h.begin();
+	if ( h[best] < 200 / stride + 20 )
+	{
+		return 0.0;
+	}
+	ok = true;
+	return c->toGlobal3d( CCVector3d( 0, 0, zl0 + ( best + 0.5 ) * bin ) ).z;
+}
+
+double RezDock::estimateFace( const SectionInfo& si ) const
+{
+	// pohled: líc objektu = nejhustší vrstva bodů za rovinou pohledu (v délce čáry)
+	ccGenericPointCloud* c = cloud();
+	if ( !c )
+	{
+		return -1.0;
+	}
+	const double sc = c->getGlobalScale();
+	CCVector3d N( si.N.x, si.N.y, 0.0 );
+	const CCVector3d V( 0, 0, 1 );
+	const CCVector3d U = V.cross( N );
+	const CCVector3d A( si.A.x, si.A.y, 0 );
+	const CCVector3d B( si.B.x, si.B.y, 0 );
+	const double u0 = std::min( A.dot( U ), B.dot( U ) );
+	const double u1 = std::max( A.dot( U ), B.dot( U ) );
+	const double d0 = A.dot( N );
+	const double depth = si.depth * sc;
+	const double bin = 0.02 * sc;
+	const size_t bins = static_cast<size_t>( std::ceil( depth / bin ) ) + 1;
+	std::vector<unsigned> h( bins, 0 );
+	const unsigned n = c->size();
+	const unsigned stride = std::max( 1u, n / 3000000u );
+	for ( unsigned i = 0; i < n; i += stride )
+	{
+		const CCVector3* p = c->getPoint( i );
+		const CCVector3d P( p->x, p->y, 0 );
+		const double u = P.dot( U );
+		const double behind = d0 - P.dot( N ); // kladně = za rovinou
+		if ( u >= u0 && u <= u1 && behind >= 0.0 && behind < depth )
+		{
+			++h[static_cast<size_t>( behind / bin )];
+		}
+	}
+	const size_t best = std::max_element( h.begin(), h.end() ) - h.begin();
+	if ( h[best] < 50 )
+	{
+		return -1.0;
+	}
+	return ( best + 0.5 ) * bin / sc;
+}
+
+void RezDock::newFloor()
+{
+	ccGenericPointCloud* c = cloud();
+	if ( !c )
+	{
+		QMessageBox::information( this, QStringLiteral( "Řezy" ), QStringLiteral( "Nejdřív vyberte mračno." ) );
+		return;
+	}
+	storeActiveFloor();
+	std::vector<FloorInfo> floors = loadFloors();
+	FloorInfo cur;
+	if ( !floorById( m_lastPlan, cur ) )
+	{
+		cur = floors.front();
+	}
+	bool ok = false;
+	double level = estimateFloorRange( c, cur.level + 2.2, cur.level + 6.0, ok );
+	if ( !ok )
+	{
+		level = cur.level + 3.0;
+	}
+	FloorInfo nf;
+	nf.id = FloorBase;
+	for ( const FloorInfo& f : floors )
+	{
+		nf.id = std::max( nf.id, f.id );
+	}
+	++nf.id;
+	bool okName = false;
+	nf.name = QInputDialog::getText( this, QStringLiteral( "Nové patro" ),
+	                                 QStringLiteral( "Název patra (podlaha odhadnuta na %1 m, upravíte v panelu):" ).arg( QString::number( level, 'f', 2 ).replace( '.', ',' ) ),
+	                                 QLineEdit::Normal, QStringLiteral( "%1NP" ).arg( floors.size() + 1 ), &okName ).trimmed();
+	if ( !okName || nf.name.isEmpty() )
+	{
+		return;
+	}
+	nf.level = level;
+	nf.cut = level + 1.0;
+	floors.push_back( nf );
+	saveFloors( floors );
+	const int prev = cur.id;
+	activateView( nf.id );
+	// předchozí patro rovnou jako reference
+	const int idx = m_refCombo->findData( prev );
+	if ( idx >= 0 )
+	{
+		m_refCombo->setCurrentIndex( idx );
+		m_draw->setReference( prev, m_refSnap->isChecked() );
+	}
+	m_status->setText( QStringLiteral( "Patro %1: podlaha %2 m, řez %3 m. Reference: předchozí patro (šedě)." )
+	                       .arg( nf.name, QString::number( nf.level, 'f', 3 ).replace( '.', ',' ), QString::number( nf.cut, 'f', 3 ).replace( '.', ',' ) ) );
+}
+
+void RezDock::refreshRefCombo()
+{
+	if ( !m_refCombo )
+	{
+		return;
+	}
+	const int prev = m_refCombo->currentData().isValid() ? m_refCombo->currentData().toInt() : -1;
+	const QSignalBlocker b( m_refCombo );
+	m_refCombo->clear();
+	m_refCombo->addItem( QStringLiteral( "žádná" ), -1 );
+	for ( const FloorInfo& f : loadFloors() )
+	{
+		if ( f.id != m_activeView )
+		{
+			m_refCombo->addItem( f.name, f.id );
+		}
+	}
+	int idx = m_refCombo->findData( prev );
+	if ( idx < 0 )
+	{
+		idx = 0;
+	}
+	m_refCombo->setCurrentIndex( idx );
+	m_draw->setReference( isPlanView( m_activeView ) ? m_refCombo->currentData().toInt() : -1, m_refSnap->isChecked() );
 }
 
 // ================================================================ panel
@@ -743,7 +1087,7 @@ void RezDock::step( int direction )
 	{
 		return;
 	}
-	if ( m_activeView == 0 )
+	if ( isPlanView( m_activeView ) )
 	{
 		m_height->setValue( m_height->value() + direction * m_step->value() );
 		return;
@@ -797,11 +1141,12 @@ void RezDock::thicknessStep( int direction )
 void RezDock::onPosSlider( int cm )
 {
 	const double v = cm / 100.0;
-	if ( m_activeView == 0 )
+	if ( isPlanView( m_activeView ) )
 	{
-		if ( std::abs( m_height->value() - ( v + m_zero->value() ) ) > 0.004 )
+		const double lv = currentLevel();
+		if ( std::abs( m_height->value() - ( v + lv ) ) > 0.004 )
 		{
-			m_height->setValue( v + m_zero->value() );
+			m_height->setValue( v + lv );
 		}
 		return;
 	}
@@ -852,9 +1197,10 @@ void RezDock::syncPosSlider()
 	else
 	{
 		// výška nad ±0
-		lo = c->toGlobal3d( CCVector3d( 0, 0, mn.z ) ).z - m_zero->value();
-		hi = c->toGlobal3d( CCVector3d( 0, 0, mx.z ) ).z - m_zero->value();
-		cur = m_height->value() - m_zero->value();
+		const double lv = currentLevel();
+		lo = c->toGlobal3d( CCVector3d( 0, 0, mn.z ) ).z - lv;
+		hi = c->toGlobal3d( CCVector3d( 0, 0, mx.z ) ).z - lv;
+		cur = m_height->value() - lv;
 	}
 	lo = std::min( lo, cur );
 	hi = std::max( hi, cur );
@@ -973,11 +1319,13 @@ void RezDock::updateLabels()
 	}
 	else
 	{
-		m_relLabel->setText( fmt( m_height->value() - m_zero->value() ) );
+		m_relLabel->setText( fmt( m_height->value() - currentLevel() ) );
 		m_upBtn->setToolTip( QStringLiteral( "Nahoru (PgUp)" ) );
 		m_downBtn->setToolTip( QStringLiteral( "Dolů (PgDn)" ) );
 	}
 	m_height->setEnabled( !sec );
+	m_floorLevel->setEnabled( isPlanView( m_activeView ) && m_activeView != 0 );
+	m_refRow->setEnabled( isPlanView( m_activeView ) );
 	syncPosSlider();
 	m_thickness->setEnabled( !sec || si.kind == 0 );
 	m_thickSlider->setEnabled( !sec || si.kind == 0 );
@@ -1126,6 +1474,8 @@ void RezDock::refresh3DLines()
 		return;
 	}
 	std::vector<View3D::Line> lines;
+	ccGenericPointCloud* c = cloud();
+	const double sc = c ? c->getGlobalScale() : 1.0;
 	ccHObject* group = m_draw->drawingGroup( false );
 	if ( group )
 	{
@@ -1137,17 +1487,45 @@ void RezDock::refresh3DLines()
 				continue;
 			}
 			auto* poly = static_cast<ccPolyline*>( ch );
-			// skutečná poloha čáry (bez posunu k pozorovateli)
-			const CCVector3d f( ch->getMetaData( "qRezy.fx" ).toDouble(), ch->getMetaData( "qRezy.fy" ).toDouble(), ch->getMetaData( "qRezy.fz" ).toDouble() );
+			const int view = ch->hasMetaData( Drawing::MetaView ) ? ch->getMetaData( Drawing::MetaView ).toInt() : 0;
 			const int cat = ch->getMetaData( Drawing::MetaCategory ).toInt();
 			const bool hid = ch->getMetaData( Drawing::MetaHidden ).toBool();
 			View3D::Line l;
 			const QColor qc = Drawing::displayColor( cat, hid );
 			l.color = ccColor::Rgb( static_cast<ColorCompType>( qc.red() ), static_cast<ColorCompType>( qc.green() ), static_cast<ColorCompType>( qc.blue() ) );
 			l.dashed = hid;
-			for ( unsigned k = 0; k < poly->size(); ++k )
+			if ( isPlanView( view ) )
 			{
-				l.pts.push_back( CCVector3d::fromArray( poly->getPoint( k )->u ) - f );
+				// celé patro v jedné rovině: na podlaze patra (posuvníkem nahoru/dolů)
+				FloorInfo fi;
+				if ( !floorById( view, fi ) )
+				{
+					continue;
+				}
+				const double zl = c ? c->toLocal3d( CCVector3d( 0, 0, fi.level ) ).z : fi.level;
+				for ( unsigned k = 0; k < poly->size(); ++k )
+				{
+					const CCVector3* P = poly->getPoint( k );
+					l.pts.push_back( CCVector3d( P->x, P->y, zl ) );
+				}
+				l.shiftDir = CCVector3d( 0, 0, sc );
+			}
+			else
+			{
+				// řez / pohled: v rovině řezu, u pohledu na líci objektu (posuvníkem do hloubky)
+				SectionInfo si;
+				if ( !sectionById( view, si ) )
+				{
+					continue;
+				}
+				const DrawFrame f = frameFor( view );
+				const double sN = ( si.kind == 1 && si.face >= 0.0 ) ? -si.face * sc : -si.offset * sc;
+				for ( unsigned k = 0; k < poly->size(); ++k )
+				{
+					const CCVector2d uv = f.toUV( CCVector3d::fromArray( poly->getPoint( k )->u ) );
+					l.pts.push_back( f.O + f.U * uv.x + f.V * uv.y + f.N * sN );
+				}
+				l.shiftDir = f.N * -sc;
 			}
 			lines.push_back( l );
 		}
@@ -1242,6 +1620,25 @@ void RezDock::openSaveDialog()
 	connect( seedBtn, &QPushButton::clicked, &dlg, [this, &dlg, updateSeed]() { chooseSeed( &dlg ); updateSeed(); } );
 	connect( symBtn, &QPushButton::clicked, &dlg, [this]() { editSymbology(); } );
 
+	// soubory: každé patro zvlášť, řezy a pohledy společně
+	storeActiveFloor();
+	const std::vector<FloorInfo> floorsAll = loadFloors();
+	auto* fileBox = new QGroupBox( QStringLiteral( "Soubory (každé patro zvlášť, řezy a pohledy do společného souboru)" ) );
+	auto* fl = new QVBoxLayout( fileBox );
+	std::vector<std::pair<int, QCheckBox*>> floorChecks;
+	for ( const FloorInfo& f : floorsAll )
+	{
+		auto* cb = new QCheckBox( QStringLiteral( "Půdorys %1" ).arg( f.name ) );
+		cb->setChecked( true );
+		fl->addWidget( cb );
+		floorChecks.push_back( { f.id, cb } );
+	}
+	auto* secCheck = new QCheckBox( QStringLiteral( "Řezy a pohledy" ) );
+	secCheck->setChecked( true );
+	secCheck->setVisible( !loadSections().empty() );
+	fl->addWidget( secCheck );
+	l->addWidget( fileBox );
+
 	// řezy a pohledy
 	QSettings st;
 	auto* secBox = new QGroupBox( QStringLiteral( "Řezy a pohledy – umístění ve výkresu (levý konec, ±0,000)" ) );
@@ -1300,11 +1697,19 @@ void RezDock::openSaveDialog()
 	}
 	if ( res == QDialog::Accepted )
 	{
-		exportV7();
+		std::vector<int> ids;
+		for ( const auto& fc : floorChecks )
+		{
+			if ( fc.second->isChecked() )
+			{
+				ids.push_back( fc.first );
+			}
+		}
+		exportV7( ids, secCheck->isVisible() && secCheck->isChecked() );
 	}
 }
 
-void RezDock::exportV7()
+void RezDock::exportV7( const std::vector<int>& floorIds, bool withSections )
 {
 	ccGenericPointCloud* c = cloud();
 	if ( !c )
@@ -1317,71 +1722,49 @@ void RezDock::exportV7()
 	const double sc = c->getGlobalScale();
 	const bool absH = st.value( QStringLiteral( "qRezy/absHeights" ), false ).toBool();
 	const double textH = st.value( QStringLiteral( "qRezy/textHeight" ), 0.25 ).toDouble();
+	const int userTextLevel = st.value( QStringLiteral( "qRezy/userTextLevel" ), 15 ).toInt();
+	const double userTextH = st.value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble();
 	const double zeroG = m_zero->value();
 	const std::vector<SectionInfo> sections = loadSections();
-	std::vector<int> usedViews;
+	const std::vector<FloorInfo> floors = loadFloors();
 
-	auto map = [&]( int view, const CCVector3d& P, DgnV7::Point2& out ) -> bool
+	// cílové soubory
+	struct Target
 	{
-		if ( view == 0 )
+		QString suffix;
+		std::vector<int> views;
+		bool sections = false;
+	};
+	std::vector<Target> targets;
+	for ( int id : floorIds )
+	{
+		FloorInfo f;
+		if ( floorById( id, f ) )
 		{
-			out.x = P.x / sc - shift.x;
-			out.y = P.y / sc - shift.y;
-			return true;
+			Target t;
+			t.suffix = f.name;
+			t.views.push_back( id );
+			targets.push_back( t );
 		}
+	}
+	if ( withSections && !sections.empty() )
+	{
+		Target t;
+		t.suffix = QStringLiteral( "rezy" );
+		t.sections = true;
 		for ( const SectionInfo& si : sections )
 		{
-			if ( si.id == view )
-			{
-				const DrawFrame f = frameFor( view );
-				const CCVector2d uv = f.toUV( P );
-				out.x = si.insX + uv.x / sc;
-				out.y = absH ? ( uv.y / sc + zeroG ) : ( si.insY + uv.y / sc );
-				if ( std::find( usedViews.begin(), usedViews.end(), view ) == usedViews.end() )
-				{
-					usedViews.push_back( view );
-				}
-				return true;
-			}
+			t.views.push_back( si.id );
 		}
-		return false; // řez byl smazán
-	};
-	std::vector<DgnV7::Element> elements = m_draw->exportElements( table, map, st.value( QStringLiteral( "qRezy/userTextLevel" ), 15 ).toInt(),
-	                                                               st.value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() );
-	if ( elements.empty() )
+		targets.push_back( t );
+	}
+	if ( targets.empty() )
 	{
-		QMessageBox::information( this, QStringLiteral( "Řezy" ), QStringLiteral( "Zatím není nic nakreslené (u vybraného mračna)." ) );
+		QMessageBox::information( this, QStringLiteral( "Řezy" ), QStringLiteral( "Není zaškrtnutý žádný soubor." ) );
 		return;
 	}
-
-	// popisy řezů a pohledů
-	QTextCodec* codec = QTextCodec::codecForName( "Windows-1250" );
-	for ( const SectionInfo& si : sections )
-	{
-		if ( std::find( usedViews.begin(), usedViews.end(), si.id ) == usedViews.end() )
-		{
-			continue;
-		}
-		const double y0 = absH ? zeroG : si.insY;
-		QStringList texts;
-		texts << si.name;
-		if ( !absH )
-		{
-			texts << QStringLiteral( "±0,000 = %1 m n. m. Bpv" ).arg( QString::number( zeroG, 'f', 3 ).replace( '.', ',' ) );
-		}
-		for ( int i = 0; i < texts.size(); ++i )
-		{
-			DgnV7::Element t;
-			t.isText = true;
-			t.sym.level = 14;
-			t.sym.color = 0;
-			t.textHeight = textH;
-			t.pts.push_back( { si.insX, y0 - ( i + 2 ) * textH * 1.6 } );
-			const QByteArray bytes = codec ? codec->fromUnicode( texts[i] ) : texts[i].toLatin1();
-			t.text = std::string( bytes.constData(), static_cast<size_t>( bytes.size() ) );
-			elements.push_back( t );
-		}
-	}
+	// jeden půdorys bez pater a řezů = jeden soubor bez přípony (jako dřív)
+	const bool multi = targets.size() > 1 || floors.size() > 1;
 
 	QString seed = st.value( QStringLiteral( "qRezy/seed" ) ).toString();
 	if ( seed.isEmpty() || !QFileInfo::exists( seed ) )
@@ -1396,7 +1779,6 @@ void RezDock::exportV7()
 		}
 		seed = st.value( QStringLiteral( "qRezy/seed" ) ).toString();
 	}
-
 	QFile in( seed );
 	if ( !in.open( QIODevice::ReadOnly ) )
 	{
@@ -1414,39 +1796,117 @@ void RezDock::exportV7()
 	}
 
 	const QString lastOut = st.value( QStringLiteral( "qRezy/lastOut" ), QFileInfo( seed ).absolutePath() ).toString();
-	QString out = QFileDialog::getSaveFileName( this, QStringLiteral( "Uložit NOVÝ výkres V7 jako…" ), lastOut, QStringLiteral( "MicroStation V7 (*.dgn)" ) );
+	QString out = QFileDialog::getSaveFileName( this, multi ? QStringLiteral( "Uložit výkresy V7 – zadejte základ názvu (přidá se _1NP, _rezy …)" ) : QStringLiteral( "Uložit NOVÝ výkres V7 jako…" ),
+	                                            lastOut, QStringLiteral( "MicroStation V7 (*.dgn)" ) );
 	if ( out.isEmpty() )
 	{
 		return;
 	}
-	if ( !out.endsWith( QStringLiteral( ".dgn" ), Qt::CaseInsensitive ) )
+	if ( out.endsWith( QStringLiteral( ".dgn" ), Qt::CaseInsensitive ) )
 	{
-		out += QStringLiteral( ".dgn" );
-	}
-	if ( QFileInfo( out ).absoluteFilePath() == QFileInfo( seed ).absoluteFilePath() )
-	{
-		QMessageBox::warning( this, QStringLiteral( "Řezy" ), QStringLiteral( "Výstup nesmí přepsat seed výkres." ) );
-		return;
+		out.chop( 4 );
 	}
 
-	std::vector<uint8_t> bytes;
-	if ( !w.writeBytes( bytes, elements, err ) )
+	QStringList report;
+	QStringList skipped;
+	for ( const Target& t : targets )
 	{
-		QMessageBox::warning( this, QStringLiteral( "Řezy" ), QString::fromStdString( err ) );
-		return;
+		std::vector<int> usedViews;
+		auto map = [&]( int view, const CCVector3d& P, DgnV7::Point2& o ) -> bool
+		{
+			if ( std::find( t.views.begin(), t.views.end(), view ) == t.views.end() )
+			{
+				return false; // patří do jiného souboru
+			}
+			if ( isPlanView( view ) )
+			{
+				o.x = P.x / sc - shift.x;
+				o.y = P.y / sc - shift.y;
+				return true;
+			}
+			for ( const SectionInfo& si : sections )
+			{
+				if ( si.id == view )
+				{
+					const DrawFrame f = frameFor( view );
+					const CCVector2d uv = f.toUV( P );
+					o.x = si.insX + uv.x / sc;
+					o.y = absH ? ( uv.y / sc + zeroG ) : ( si.insY + uv.y / sc );
+					if ( std::find( usedViews.begin(), usedViews.end(), view ) == usedViews.end() )
+					{
+						usedViews.push_back( view );
+					}
+					return true;
+				}
+			}
+			return false;
+		};
+		std::vector<DgnV7::Element> elements = m_draw->exportElements( table, map, userTextLevel, userTextH );
+		if ( t.sections )
+		{
+			// popisy řezů a pohledů
+			QTextCodec* codec = QTextCodec::codecForName( "Windows-1250" );
+			for ( const SectionInfo& si : sections )
+			{
+				if ( std::find( usedViews.begin(), usedViews.end(), si.id ) == usedViews.end() )
+				{
+					continue;
+				}
+				const double y0 = absH ? zeroG : si.insY;
+				QStringList texts;
+				texts << si.name;
+				if ( !absH )
+				{
+					texts << QStringLiteral( "±0,000 = %1 m n. m. Bpv" ).arg( QString::number( zeroG, 'f', 3 ).replace( '.', ',' ) );
+				}
+				for ( int i = 0; i < texts.size(); ++i )
+				{
+					DgnV7::Element tx;
+					tx.isText = true;
+					tx.sym.level = 14;
+					tx.sym.color = 0;
+					tx.textHeight = textH;
+					tx.pts.push_back( { si.insX, y0 - ( i + 2 ) * textH * 1.6 } );
+					const QByteArray bytes = codec ? codec->fromUnicode( texts[i] ) : texts[i].toLatin1();
+					tx.text = std::string( bytes.constData(), static_cast<size_t>( bytes.size() ) );
+					elements.push_back( tx );
+				}
+			}
+		}
+		const QString path = multi ? QStringLiteral( "%1_%2.dgn" ).arg( out, t.suffix ) : out + QStringLiteral( ".dgn" );
+		if ( elements.empty() )
+		{
+			skipped << QFileInfo( path ).fileName();
+			continue;
+		}
+		if ( QFileInfo( path ).absoluteFilePath() == QFileInfo( seed ).absoluteFilePath() )
+		{
+			QMessageBox::warning( this, QStringLiteral( "Řezy" ), QStringLiteral( "Výstup nesmí přepsat seed výkres." ) );
+			return;
+		}
+		std::vector<uint8_t> bytes;
+		if ( !w.writeBytes( bytes, elements, err ) )
+		{
+			QMessageBox::warning( this, QStringLiteral( "Řezy" ), QString::fromStdString( err ) );
+			return;
+		}
+		QFile f( path );
+		if ( !f.open( QIODevice::WriteOnly | QIODevice::Truncate ) || f.write( reinterpret_cast<const char*>( bytes.data() ), static_cast<qint64>( bytes.size() ) ) != static_cast<qint64>( bytes.size() ) )
+		{
+			QMessageBox::warning( this, QStringLiteral( "Řezy" ), QStringLiteral( "Soubor nelze zapsat: %1" ).arg( path ) );
+			return;
+		}
+		report << QStringLiteral( "%1 – %2 prvků" ).arg( QFileInfo( path ).fileName() ).arg( elements.size() );
+		m_app->dispToConsole( QStringLiteral( "[Řezy] Uloženo %1 prvků do %2" ).arg( elements.size() ).arg( path ) );
+		st.setValue( QStringLiteral( "qRezy/lastOut" ), path );
 	}
-	QFile f( out );
-	if ( !f.open( QIODevice::WriteOnly | QIODevice::Truncate ) || f.write( reinterpret_cast<const char*>( bytes.data() ), static_cast<qint64>( bytes.size() ) ) != static_cast<qint64>( bytes.size() ) )
+	QString msg = report.isEmpty() ? QStringLiteral( "Nic se neuložilo – zatím není nic nakreslené." ) : QStringLiteral( "Uloženo:\n" ) + report.join( '\n' );
+	if ( !skipped.isEmpty() )
 	{
-		QMessageBox::warning( this, QStringLiteral( "Řezy" ), QStringLiteral( "Soubor nelze zapsat: %1" ).arg( out ) );
-		return;
+		msg += QStringLiteral( "\n\nPrázdné (neuloženo): " ) + skipped.join( QStringLiteral( ", " ) );
 	}
-	st.setValue( QStringLiteral( "qRezy/lastOut" ), out );
-	m_app->dispToConsole( QStringLiteral( "[Řezy] Uloženo %1 prvků do %2" ).arg( elements.size() ).arg( out ) );
-	QMessageBox::information( this, QStringLiteral( "Řezy" ), QStringLiteral( "Uloženo %1 prvků do\n%2" ).arg( elements.size() ).arg( out ) );
+	QMessageBox::information( this, QStringLiteral( "Řezy" ), msg );
 }
-
-// ================================================================ svislé řezy a pohledy
 
 std::vector<RezDock::SectionInfo> RezDock::loadSections() const
 {
@@ -1474,6 +1934,7 @@ std::vector<RezDock::SectionInfo> RezDock::loadSections() const
 		si.depth = ch->hasMetaData( "qRezy.secDepth" ) ? ch->getMetaData( "qRezy.secDepth" ).toDouble() : 15.0;
 		si.insX = ch->getMetaData( "qRezy.secInsX" ).toDouble();
 		si.insY = ch->getMetaData( "qRezy.secInsY" ).toDouble();
+		si.face = ch->hasMetaData( "qRezy.secFace" ) ? ch->getMetaData( "qRezy.secFace" ).toDouble() : -1.0;
 		si.poly = static_cast<ccPolyline*>( ch );
 		out.push_back( si );
 	}
@@ -1516,6 +1977,7 @@ void RezDock::saveSection( const SectionInfo& s )
 	s.poly->setMetaData( "qRezy.secDepth", s.depth );
 	s.poly->setMetaData( "qRezy.secInsX", s.insX );
 	s.poly->setMetaData( "qRezy.secInsY", s.insY );
+	s.poly->setMetaData( "qRezy.secFace", s.face );
 	updateLabels();
 }
 
@@ -1596,12 +2058,24 @@ void RezDock::createSection( int kind, double ax, double ay, double bx, double b
 	si.N = N;
 	si.poly = poly;
 	poly->setName( si.name );
-	// výchozí umístění ve výkresu: pod mračnem, pod sebou
+	// výchozí umístění v souboru řezů: řezy v řadě, pohledy v řadě pod nimi
 	const CCVector3d gmin = c->toGlobal3d( bb.minCorner() );
 	const CCVector3d gmax = c->toGlobal3d( bb.maxCorner() );
 	const double zRange = std::min( 30.0, gmax.z - gmin.z );
-	si.insX = gmin.x;
-	si.insY = gmin.y - 5.0 - static_cast<double>( existing.size() ) * ( zRange + 5.0 );
+	double x = gmin.x;
+	for ( const SectionInfo& e : existing )
+	{
+		if ( e.kind == kind )
+		{
+			x = std::max( x, e.insX + ( e.B - e.A ).norm() / c->getGlobalScale() + 5.0 );
+		}
+	}
+	si.insX = x;
+	si.insY = gmin.y - 5.0 - ( kind == 1 ? ( zRange + 10.0 ) : 0.0 );
+	if ( kind == 1 )
+	{
+		si.face = estimateFace( si );
+	}
 	saveSection( si );
 
 	refreshViewCombo();
@@ -1610,6 +2084,46 @@ void RezDock::createSection( int kind, double ax, double ay, double bx, double b
 
 void RezDock::deleteActiveSection()
 {
+	if ( isPlanView( m_activeView ) )
+	{
+		FloorInfo fi;
+		if ( m_activeView == 0 || !floorById( m_activeView, fi ) )
+		{
+			QMessageBox::information( this, QStringLiteral( "Řezy" ), QStringLiteral( "První patro nejde smazat. Vyberte v seznamu řez, pohled nebo jiné patro." ) );
+			return;
+		}
+		if ( QMessageBox::question( this, QStringLiteral( "Řezy" ), QStringLiteral( "Smazat patro %1 i se vším, co je v něm nakreslené?" ).arg( fi.name ) ) != QMessageBox::Yes )
+		{
+			return;
+		}
+		ccHObject* group = m_draw->drawingGroup( false );
+		const int id = fi.id;
+		activateView( 0 );
+		std::vector<FloorInfo> floors = loadFloors();
+		floors.erase( std::remove_if( floors.begin(), floors.end(), [id]( const FloorInfo& f ) { return f.id == id; } ), floors.end() );
+		saveFloors( floors );
+		if ( group )
+		{
+			std::vector<ccHObject*> toRemove;
+			for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+			{
+				ccHObject* ch = group->getChild( i );
+				if ( ch->isA( CC_TYPES::POLY_LINE ) && ch->hasMetaData( Drawing::MetaView ) && ch->getMetaData( Drawing::MetaView ).toInt() == id )
+				{
+					toRemove.push_back( ch );
+				}
+			}
+			for ( ccHObject* o : toRemove )
+			{
+				m_app->removeFromDB( o, true );
+			}
+		}
+		refreshViewCombo();
+		refreshRefCombo();
+		refresh3DLines();
+		m_app->refreshAll();
+		return;
+	}
 	SectionInfo si;
 	if ( !sectionById( m_activeView, si ) )
 	{
@@ -1649,12 +2163,15 @@ DrawFrame RezDock::frameFor( int viewId ) const
 	DrawFrame f;
 	SectionInfo si;
 	ccGenericPointCloud* c = cloud();
-	if ( viewId == 0 || !c || !sectionById( viewId, si ) )
+	if ( isPlanView( viewId ) || !c || !sectionById( viewId, si ) )
 	{
-		// půdorys ve výšce řezu
+		// půdorys (patro) ve výšce řezu
+		f.viewId = isPlanView( viewId ) ? viewId : 0;
+		f.plan = true;
 		f.O = CCVector3d( 0, 0, planZLocal() );
 		return f;
 	}
+	f.plan = false;
 	const double sc = c->getGlobalScale();
 	f.viewId = viewId;
 	f.N = CCVector3d( si.N.x, si.N.y, 0.0 );
@@ -1688,7 +2205,11 @@ void RezDock::refreshViewCombo()
 {
 	const QSignalBlocker b( m_viewCombo );
 	m_viewCombo->clear();
-	m_viewCombo->addItem( QStringLiteral( "Půdorys" ), 0 );
+	const std::vector<FloorInfo> floors = loadFloors();
+	for ( const FloorInfo& f : floors )
+	{
+		m_viewCombo->addItem( Icons::get( QStringLiteral( "newfloor" ) ), floors.size() > 1 ? QStringLiteral( "Půdorys %1" ).arg( f.name ) : QStringLiteral( "Půdorys" ), f.id );
+	}
 	for ( const SectionInfo& si : loadSections() )
 	{
 		m_viewCombo->addItem( Icons::get( si.kind == 1 ? QStringLiteral( "facade" ) : QStringLiteral( "section" ) ), si.name, si.id );
@@ -1737,15 +2258,27 @@ void RezDock::sectionCamera( const SectionInfo& si )
 void RezDock::activateView( int viewId )
 {
 	SectionInfo si;
-	if ( viewId != 0 && !sectionById( viewId, si ) )
+	FloorInfo fi;
+	if ( isPlanView( viewId ) ? !floorById( viewId, fi ) : !sectionById( viewId, si ) )
 	{
 		viewId = 0;
+		floorById( 0, fi );
 	}
+	storeActiveFloor(); // výška řezu opouštěného patra
 	m_activeView = viewId;
+	if ( isPlanView( viewId ) )
+	{
+		m_lastPlan = viewId;
+		const QSignalBlocker b1( m_height );
+		const QSignalBlocker b2( m_floorLevel );
+		m_height->setValue( fi.cut );
+		m_floorLevel->setValue( fi.level );
+	}
 	m_draw->setFrame( frameFor( viewId ) );
 	refreshViewCombo();
+	refreshRefCombo();
 	applyClip();
-	if ( viewId == 0 )
+	if ( isPlanView( viewId ) )
 	{
 		topView();
 	}
