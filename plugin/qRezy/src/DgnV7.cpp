@@ -84,6 +84,47 @@ namespace DgnV7
 			return out;
 		}
 
+		// IEEE double -> VAX D-float (opak vaxToDouble, jako GDAL IEEE2DGNDouble)
+		void doubleToVax( double v, uint8_t* dst )
+		{
+			uint64_t bits = 0;
+			std::memcpy( &bits, &v, sizeof( bits ) );
+			uint32_t hi = static_cast<uint32_t>( bits >> 32 );
+			uint32_t lo = static_cast<uint32_t>( bits & 0xFFFFFFFFu );
+			const uint32_t sign = hi & 0x80000000u;
+			int32_t exponent = static_cast<int32_t>( ( hi >> 20 ) & 0x7FFu );
+			if ( exponent )
+			{
+				exponent = exponent - 1023 + 129;
+			}
+			if ( v == 0.0 || exponent <= 0 )
+			{
+				hi = 0;
+				lo = 0;
+			}
+			else if ( exponent > 255 )
+			{
+				hi = sign | 0x7FFFFFFFu;
+				lo = 0xFFFFFFFFu;
+			}
+			else
+			{
+				hi = hi << 3;
+				hi = hi | ( lo >> 29 );
+				hi = hi & 0x007FFFFFu;
+				hi = hi | ( static_cast<uint32_t>( exponent ) << 23 ) | sign;
+				lo = lo << 3;
+			}
+			uint8_t d[8];
+			for ( int i = 0; i < 4; ++i )
+			{
+				d[i] = static_cast<uint8_t>( ( hi >> ( 8 * i ) ) & 0xFF );
+				d[4 + i] = static_cast<uint8_t>( ( lo >> ( 8 * i ) ) & 0xFF );
+			}
+			dst[0] = d[2]; dst[1] = d[3]; dst[2] = d[0]; dst[3] = d[1];
+			dst[4] = d[6]; dst[5] = d[7]; dst[6] = d[4]; dst[7] = d[5];
+		}
+
 		// negrafické prvky, které ze seedu přebíráme
 		bool keepType( int type )
 		{
@@ -137,6 +178,7 @@ namespace DgnV7
 		for ( int i = 0; i < 3; ++i )
 		{
 			m_origin[i] = vaxToDouble( &b[1240 + 8 * i] );
+			m_seedOrigin[i] = m_origin[i];
 		}
 
 		size_t p = 0;
@@ -375,6 +417,45 @@ namespace DgnV7
 			return false;
 		}
 		out = m_header;
+
+		// souřadnice se nevejdou do 32 bitů (např. S-JTSK × 10 000 UOR/m) → posunout globální počátek
+		// výkresu k datům (zaokrouhleno na 10 km); souřadnice v MicroStationu zůstanou skutečné
+		for ( int i = 0; i < 3; ++i )
+		{
+			m_origin[i] = m_seedOrigin[i];
+		}
+		double mn[2] = { 1e300, 1e300 };
+		double mx[2] = { -1e300, -1e300 };
+		for ( const Element& e : elements )
+		{
+			for ( const Point2& P : e.pts )
+			{
+				mn[0] = std::min( mn[0], P.x );
+				mx[0] = std::max( mx[0], P.x );
+				mn[1] = std::min( mn[1], P.y );
+				mx[1] = std::max( mx[1], P.y );
+			}
+		}
+		bool shifted = false;
+		for ( int i = 0; i < 2 && mn[i] <= mx[i]; ++i )
+		{
+			const double lo = mn[i] * m_uorPerMaster + m_origin[i];
+			const double hi = mx[i] * m_uorPerMaster + m_origin[i];
+			if ( lo < -2.0e9 || hi > 2.0e9 )
+			{
+				const double center = std::round( ( mn[i] + mx[i] ) / 2.0 / 10000.0 ) * 10000.0;
+				m_origin[i] = -center * m_uorPerMaster;
+				shifted = true;
+			}
+		}
+		if ( shifted && out.size() >= 1240 + 24 )
+		{
+			for ( int i = 0; i < 3; ++i )
+			{
+				doubleToVax( m_origin[i], &out[1240 + 8 * i] );
+			}
+		}
+
 		for ( const Element& e : elements )
 		{
 			if ( !appendElement( out, e, error ) )

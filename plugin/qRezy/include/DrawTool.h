@@ -73,7 +73,11 @@ public:
 		Measure,    //!< měření vzdálenosti
 		Break,      //!< rozdělit čáru / smazat část mezi 2 body
 		Trim,       //!< oříznout / prodloužit k hraniční čáře
-		Text        //!< vložit text
+		Text,       //!< vložit text
+		Select,     //!< výběr (klik, Ctrl+klik, okno), úchopy na koncích
+		Modify,     //!< upravit prvek: posun bližšího konce čáry
+		InsertVertex, //!< vložit vrchol (rozdělí čáru, vrchol se umístí)
+		DeleteVertex  //!< smazat vrchol (sloučí dvě navazující čáry)
 	};
 
 	enum class SnapType
@@ -111,6 +115,8 @@ public:
 
 	void resetTool();
 	void undo();
+	void selectAll(); //!< Ctrl+A: vše v aktuálním pohledu
+	bool hasSelection() const { return !m_selSet.empty(); }
 
 	//! skupina s nakreslenými čarami (vytvoří ji, pokud neexistuje)
 	ccHObject* drawingGroup( bool create );
@@ -183,8 +189,11 @@ private:
 		{
 			Add,
 			Remove,
-			Modify
+			Modify,
+			Attr //!< změna hladiny / zakrytí
 		} kind;
+		int cat = 0;       //!< původní hladina (Attr)
+		bool hidden = false;
 		unsigned id = 0;
 		ccPolyline* poly = nullptr; //!< u smazaných držíme objekt
 		CCVector2d a;               //!< původní body (Modify)
@@ -213,6 +222,17 @@ private:
 	void removeLine( ccPolyline* poly, UndoItem* undo );
 	void pushUndo( UndoItem&& u );
 	void select( ccPolyline* poly );
+	// výběrová sada (nástroj Výběr)
+	void setSelection( const std::vector<ccPolyline*>& sel );
+	void toggleSelected( ccPolyline* poly );
+	bool isSelected( ccPolyline* poly ) const;
+	void restoreLook( ccPolyline* poly );
+	void applyLook( ccPolyline* poly, int cat, bool hidden );
+	void pruneSelection();
+	void deleteSelection();
+	void selectWindow( const QPoint& p0, const QPoint& p1, bool add );
+	bool pickHandle( const QPoint& pos, ccPolyline*& poly, int& end ) const;
+	bool lineAttrs( ccPolyline* poly, int& cat, bool& hidden ) const;
 
 	// obsluha režimů
 	void onDataPoint( const QPoint& pos );
@@ -315,6 +335,12 @@ private:
 	bool m_showPoints = true;
 	bool m_showCodes = true;
 	int m_refView = -1;
+	std::vector<ccPolyline*> m_selSet; //!< výběr
+	bool m_winPressed = false;         //!< výběr: levé stisknuto
+	bool m_winDragging = false;        //!< výběr oknem
+	QPoint m_winStart;
+	CCVector2d m_fixed;                //!< pevný konec (úprava prvku / úchop)
+	CCVector2d m_far2;                 //!< vložit vrchol: druhý konec
 	bool m_refSnap = false;
 	QString m_lastText;
 

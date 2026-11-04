@@ -66,6 +66,7 @@ namespace DgnV7
 		std::vector<uint8_t> m_header; //!< negrafické prvky ze seedu
 		bool m_is3D = false;
 		double m_uorPerMaster = 10000.0;
-		double m_origin[3] = { 0.0, 0.0, 0.0 }; //!< globální počátek v UOR
+		mutable double m_origin[3] = { 0.0, 0.0, 0.0 }; //!< globální počátek v UOR (při přetečení se posune)
+		double m_seedOrigin[3] = { 0.0, 0.0, 0.0 };
 	};
 }

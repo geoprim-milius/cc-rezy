@@ -10,6 +10,7 @@
 #include "ccGLWindowInterface.h"
 #include "ccMainAppInterface.h"
 
+#include <cc2DViewportObject.h>
 #include <ccGenericPointCloud.h>
 
 #include <limits>
@@ -293,6 +294,10 @@ void RezDock::buildPanel()
 
 	m_step = makeSpin( 0.001, 100.0, 0.05, 0.01, 3, QStringLiteral( " m" ) );
 	form->addRow( QStringLiteral( "Krok PgUp/PgDn:" ), m_step );
+	auto* zoomSpin = makeSpin( 1.05, 3.0, QSettings().value( QStringLiteral( "qRezy/zoomStep" ), 1.25 ).toDouble(), 0.05, 2, QStringLiteral( " ×" ) );
+	zoomSpin->setToolTip( QStringLiteral( "Zoom kolečkem: kolikrát přiblíží jeden zub kolečka (1,25 ≈ MicroStation)" ) );
+	form->addRow( QStringLiteral( "Zoom kolečkem:" ), zoomSpin );
+	connect( zoomSpin, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, []( double v ) { QSettings().setValue( QStringLiteral( "qRezy/zoomStep" ), v ); } );
 
 	auto* zeroRow = new QWidget;
 	auto* zl = new QHBoxLayout( zeroRow );
@@ -330,7 +335,7 @@ void RezDock::buildPanel()
 	auto* help = new QLabel( QStringLiteral(
 		"<small>Levé = bod · pravé = reset · <b>Shift + tažení</b> nebo tažení kolečkem = posun · kolečko = zoom · "
 		"<b>prostřední klik = 3D náhled</b> · Ctrl+kolečko = tloušťka · Esc = zrušit<br>"
-		"Klávesy jako MicroStation: Q čára · 3 manipulace · 7 úpravy · 8 mazat · D měřit. "
+		"Klávesy jako MicroStation: 1 výběr · Q čára · 3 manipulace · 7 úpravy · 8 mazat · D měřit · Esc = výběr. "
 		"Délka: čísla na numerické klávesnici (nebo Shift + horní řada) + Enter.<br>"
 		"Trasování (F11): podržte kurzor na konci čáry → zelená pomocná čára.</small>" ) );
 	help->setWordWrap( true );
@@ -435,13 +440,17 @@ void RezDock::buildToolbar()
 		const char* tip;
 	};
 	const ToolDef tools[] = {
+		{ DrawTool::Mode::Select, "select", "Výběr (1) – klik, Ctrl+klik, okno tažením; úchopy na koncích; s výběrem F1–F4/F5 změní hladinu/zakrytí, Del smaže, 3→1/3→2 kopie/přesun" },
 		{ DrawTool::Mode::Line, "line", "Čára (Q) – body, pravé kliknutí ukončí" },
 		{ DrawTool::Mode::Move, "move", "Přesun (3 → 2) – čára, výchozí bod, cíl nebo vzdálenost" },
 		{ DrawTool::Mode::Copy, "copy", "Kopie (3 → 1) – čára, výchozí bod, cíle nebo vzdálenost" },
 		{ DrawTool::Mode::Offset, "offset", "Rovnoběžně (3 → 9) – čára, strana; vzdálenost z pole vedle nebo napsat + Enter" },
+		{ DrawTool::Mode::Modify, "modify", "Upravit prvek (7 → 1) – klik u konce čáry, pak nové místo konce" },
 		{ DrawTool::Mode::Break, "break", "Rozdělit (7 → 2) – 2 body na čáře, část mezi nimi se smaže; stejný bod 2× = jen rozdělit" },
 		{ DrawTool::Mode::Extend, "extend", "Prodloužit / zkrátit (7 → 3) – klik u konce čáry, nový konec nebo celková délka" },
 		{ DrawTool::Mode::Corner, "corner", "Roh (7 → 4) – dvě čáry do průsečíku; klikejte na části, které zůstanou" },
+		{ DrawTool::Mode::InsertVertex, "insvertex", "Vložit vrchol (7 → 7) – klik na čáru, pak umístit nový vrchol" },
+		{ DrawTool::Mode::DeleteVertex, "delvertex", "Smazat vrchol (7 → 8) – klik na spoj dvou čar → jedna čára" },
 		{ DrawTool::Mode::Trim, "trim", "Oříznout k prvku (7 → 5) – hraniční čára, pak čáry k oříznutí/prodloužení" },
 		{ DrawTool::Mode::Delete, "delete", "Mazat (8 nebo Del) – klik na čáru" },
 		{ DrawTool::Mode::Measure, "measure", "Měřit vzdálenost (D) – dva body" },
@@ -463,7 +472,13 @@ void RezDock::buildToolbar()
 			connect( m_offsetSpin, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]( double v ) { m_draw->setOffsetDistance( v ); } );
 		}
 	}
-	m_toolGroup->actions().first()->setChecked( true );
+	for ( QAction* a : m_toolGroup->actions() )
+	{
+		if ( a->data().toInt() == static_cast<int>( DrawTool::Mode::Line ) )
+		{
+			a->setChecked( true );
+		}
+	}
 	connect( m_toolGroup, &QActionGroup::triggered, this, [this]( QAction* a )
 	{
 		if ( !m_draw->isActive() )
@@ -670,6 +685,8 @@ void RezDock::buildToolbar()
 			show3DAt( C.x, C.y, std::numeric_limits<double>::quiet_NaN() );
 		}
 	} );
+	QAction* proj = m_toolbar->addAction( Icons::get( QStringLiteral( "project" ) ), QStringLiteral( "Uložit rozdělanou práci – projekt CloudCompare (.bin) s mračnem, kresbou, řezy, patry, body, nastavením i pohledem; otevře se přes File → Open" ) );
+	connect( proj, &QAction::triggered, this, &RezDock::saveProject );
 	QAction* save = m_toolbar->addAction( Icons::get( QStringLiteral( "save" ) ), QStringLiteral( "Uložit výkres V7 a nastavení výstupu" ) );
 	connect( save, &QAction::triggered, this, &RezDock::openSaveDialog );
 }
@@ -1032,14 +1049,133 @@ void RezDock::setCloud( ccGenericPointCloud* c )
 	}
 	m_app->dispToConsole( QStringLiteral( "[Řezy] Mračno %1, odhad podlahy %2 m" ).arg( c->getName() ).arg( floorZ, 0, 'f', 3 ) );
 
-	m_activeView = 0;
+	// rozdělaná práce uložená v projektu (.bin): nastavení panelu a pohled
+	ccHObject* group = m_draw->drawingGroup( false );
+	const QVariantMap st = ( group && group->hasMetaData( "qRezy.state" ) ) ? group->getMetaData( "qRezy.state" ).toMap() : QVariantMap();
+	int view = 0;
+	m_restoring = true;
+	if ( !st.isEmpty() )
+	{
+		const QSignalBlocker b1( m_height );
+		const QSignalBlocker b2( m_zero );
+		const QSignalBlocker b3( m_thickness );
+		const QSignalBlocker b4( m_step );
+		const QSignalBlocker b5( m_enabled );
+		m_zero->setValue( st.value( QStringLiteral( "zero" ), floorZ ).toDouble() );
+		m_height->setValue( st.value( QStringLiteral( "height" ), floorZ + 1.0 ).toDouble() );
+		m_thickness->setValue( st.value( QStringLiteral( "thickness" ), m_thickness->value() ).toDouble() );
+		m_step->setValue( st.value( QStringLiteral( "step" ), m_step->value() ).toDouble() );
+		m_enabled->setChecked( st.value( QStringLiteral( "clip" ), true ).toBool() );
+		m_viewAngle = st.value( QStringLiteral( "angle" ), 0.0 ).toDouble();
+		view = st.value( QStringLiteral( "view" ), 0 ).toInt();
+		syncThicknessSlider();
+		m_app->dispToConsole( QStringLiteral( "[Řezy] Obnovena rozdělaná práce z projektu." ) );
+	}
+
+	m_activeView = st.isEmpty() ? 0 : -999; // při obnově neukládat výšku řezu do žádného patra
 	refreshViewCombo();
-	activateView( 0 );
+	activateView( view );
 
 	if ( m_draw->isActive() )
 	{
 		m_draw->start( c );
-		m_draw->setFrame( frameFor( 0 ) );
+		m_draw->setFrame( frameFor( m_activeView ) );
+	}
+	if ( !st.isEmpty() )
+	{
+		const int ref = st.value( QStringLiteral( "ref" ), -1 ).toInt();
+		const int idx = m_refCombo->findData( ref );
+		if ( idx >= 0 )
+		{
+			const QSignalBlocker b( m_refSnap );
+			m_refSnap->setChecked( st.value( QStringLiteral( "refSnap" ), false ).toBool() );
+			m_refCombo->setCurrentIndex( idx );
+			m_draw->setReference( ref, m_refSnap->isChecked() );
+		}
+		// pohled kamery
+		if ( group )
+		{
+			for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+			{
+				if ( auto* vo = dynamic_cast<cc2DViewportObject*>( group->getChild( i ) ) )
+				{
+					if ( ccGLWindowInterface* win = m_app->getActiveGLWindow() )
+					{
+						win->setViewportParameters( vo->getParameters() );
+						win->redraw();
+					}
+					break;
+				}
+			}
+		}
+	}
+	m_restoring = false;
+}
+
+void RezDock::storeState( bool withCamera )
+{
+	if ( m_restoring || !cloud() || !m_draw )
+	{
+		return;
+	}
+	ccHObject* group = m_draw->drawingGroup( withCamera );
+	if ( !group )
+	{
+		return;
+	}
+	storeActiveFloor();
+	QVariantMap st;
+	st.insert( QStringLiteral( "zero" ), m_zero->value() );
+	st.insert( QStringLiteral( "height" ), m_height->value() );
+	st.insert( QStringLiteral( "thickness" ), m_thickness->value() );
+	st.insert( QStringLiteral( "step" ), m_step->value() );
+	st.insert( QStringLiteral( "clip" ), m_enabled->isChecked() );
+	st.insert( QStringLiteral( "angle" ), m_viewAngle );
+	st.insert( QStringLiteral( "view" ), m_activeView );
+	st.insert( QStringLiteral( "ref" ), m_refCombo->currentData().toInt() );
+	st.insert( QStringLiteral( "refSnap" ), m_refSnap->isChecked() );
+	group->setMetaData( "qRezy.state", st );
+	if ( !withCamera )
+	{
+		return;
+	}
+	ccGLWindowInterface* win = m_app->getActiveGLWindow();
+	if ( !win )
+	{
+		return;
+	}
+	cc2DViewportObject* vo = nullptr;
+	for ( unsigned i = 0; i < group->getChildrenNumber() && !vo; ++i )
+	{
+		vo = dynamic_cast<cc2DViewportObject*>( group->getChild( i ) );
+	}
+	if ( !vo )
+	{
+		vo = new cc2DViewportObject( QStringLiteral( "Pohled (Řezy)" ) );
+		vo->setVisible( false );
+		group->addChild( vo );
+		m_app->addToDB( vo, false, false, false, false );
+	}
+	vo->setParameters( win->getViewportParameters() );
+}
+
+void RezDock::saveProject()
+{
+	if ( !cloud() )
+	{
+		QMessageBox::information( this, QStringLiteral( "Řezy" ), QStringLiteral( "Nejdřív vyberte mračno." ) );
+		return;
+	}
+	storeState( true );
+	// projekt CloudCompare (.bin) obsahuje mračno, kresbu, body, řezy, patra i nastavení
+	QAction* a = m_app->getMainWindow()->findChild<QAction*>( QStringLiteral( "actionSaveProject" ) );
+	if ( a )
+	{
+		a->trigger();
+	}
+	else
+	{
+		QMessageBox::information( this, QStringLiteral( "Řezy" ), QStringLiteral( "Uložte projekt přes File → Save project (.bin)." ) );
 	}
 }
 
@@ -1288,6 +1424,7 @@ void RezDock::applyClip()
 
 	c->prepareDisplayForRefresh();
 	m_app->refreshAll();
+	storeState( false );
 }
 
 void RezDock::clearClip()

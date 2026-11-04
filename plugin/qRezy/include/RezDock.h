@@ -73,6 +73,9 @@ private:
 	void storeActiveFloor();
 	double currentLevel() const;
 	void newFloor();
+	void storeState( bool withCamera ); //!< nastavení panelu (+ pohled kamery) do projektu
+	void saveProject();                 //!< uložit rozdělanou práci (projekt CloudCompare .bin)
+	bool m_restoring = false;
 	void refreshRefCombo();
 	double estimateFloorRange( ccGenericPointCloud* cloud, double zMin, double zMax, bool& ok ) const;
 	double estimateFace( const SectionInfo& si ) const;

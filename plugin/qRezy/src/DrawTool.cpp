@@ -34,7 +34,8 @@
 namespace
 {
 	constexpr double SnapPixels = 10.0; //!< dosah uchopení v pixelech
-	constexpr double PickPixels = 8.0;  //!< dosah výběru čáry
+	constexpr double PickPixels = 5.0;  //!< dosah výběru čáry
+	constexpr double PickBoxPixels = 4.0; //!< polovina čtverečku v kurzoru
 	constexpr int ClickTolerance = 4;   //!< max. posun myši, aby šlo o kliknutí
 	constexpr double CrossPixels = 45.0; //!< ramena nitkového kříže
 	constexpr double RadToDeg = 57.29577951308232;
@@ -429,6 +430,29 @@ void DrawTool::stop()
 void DrawTool::setCategory( int cat )
 {
 	m_category = std::max( 0, std::min( Drawing::CategoryCount - 1, cat ) );
+	pruneSelection();
+	if ( !m_selSet.empty() )
+	{
+		// změna hladiny vybraných čar
+		UndoItem u;
+		for ( ccPolyline* p : m_selSet )
+		{
+			int c0;
+			bool h0;
+			if ( lineAttrs( p, c0, h0 ) && c0 != m_category )
+			{
+				Action a;
+				a.kind = Action::Attr;
+				a.id = p->getUniqueID();
+				a.cat = c0;
+				a.hidden = h0;
+				u.push_back( a );
+				applyLook( p, m_category, h0 );
+			}
+		}
+		pushUndo( std::move( u ) );
+		redraw3D();
+	}
 	updateTip();
 	updateStatus();
 	Q_EMIT categoryChanged( m_category );
@@ -437,6 +461,29 @@ void DrawTool::setCategory( int cat )
 void DrawTool::setHidden( bool hidden )
 {
 	m_hidden = hidden;
+	pruneSelection();
+	if ( !m_selSet.empty() )
+	{
+		// zakrytí vybraných čar
+		UndoItem u;
+		for ( ccPolyline* p : m_selSet )
+		{
+			int c0;
+			bool h0;
+			if ( lineAttrs( p, c0, h0 ) && h0 != hidden )
+			{
+				Action a;
+				a.kind = Action::Attr;
+				a.id = p->getUniqueID();
+				a.cat = c0;
+				a.hidden = h0;
+				u.push_back( a );
+				applyLook( p, c0, hidden );
+			}
+		}
+		pushUndo( std::move( u ) );
+		redraw3D();
+	}
 	updateTip();
 	updateStatus();
 	Q_EMIT hiddenChanged( m_hidden );
@@ -444,12 +491,31 @@ void DrawTool::setHidden( bool hidden )
 
 void DrawTool::setMode( Mode m )
 {
+	pruneSelection();
+	if ( m == Mode::Delete && !m_selSet.empty() )
+	{
+		// s výběrem se maže hned, nástroj se nemění
+		deleteSelection();
+		Q_EMIT modeChanged( m_mode );
+		return;
+	}
 	if ( m_mode != Mode::RotateView && m_mode != Mode::SectionDef )
 	{
 		m_prevMode = m_mode;
 	}
 	m_mode = m;
+	// výběr zůstává jen pro výběr, přesun a kopii
+	if ( m != Mode::Select && m != Mode::Move && m != Mode::Copy )
+	{
+		setSelection( {} );
+	}
 	resetTool();
+	if ( ( m == Mode::Move || m == Mode::Copy ) && !m_selSet.empty() )
+	{
+		m_step = 1; // rovnou výchozí bod
+		updateTip();
+		updateStatus();
+	}
 	Q_EMIT modeChanged( m );
 }
 
@@ -1112,6 +1178,11 @@ void DrawTool::removeLine( ccPolyline* poly, UndoItem* undo )
 	{
 		select( nullptr );
 	}
+	if ( isSelected( poly ) )
+	{
+		restoreLook( poly );
+		m_selSet.erase( std::remove( m_selSet.begin(), m_selSet.end(), poly ), m_selSet.end() );
+	}
 	m_app->removeFromDB( poly, false ); // necháme si objekt kvůli Zpět
 	if ( undo )
 	{
@@ -1142,14 +1213,12 @@ void DrawTool::pushUndo( UndoItem&& u )
 
 void DrawTool::select( ccPolyline* poly )
 {
-	if ( m_sel && lineExists( m_sel ) )
-	{
-		const int cat = m_sel->getMetaData( Drawing::MetaCategory ).toInt();
-		const bool hid = m_sel->getMetaData( Drawing::MetaHidden ).toBool();
-		m_sel->setColor( toRgb( Drawing::displayColor( cat, hid ) ) );
-		m_sel->setWidth( 2 );
-	}
+	ccPolyline* prev = m_sel;
 	m_sel = poly;
+	if ( prev && prev != poly && lineExists( prev ) )
+	{
+		restoreLook( prev );
+	}
 	if ( m_sel )
 	{
 		m_sel->setColor( ccColor::Rgb( 255, 220, 0 ) );
@@ -1165,6 +1234,7 @@ void DrawTool::undo()
 		return;
 	}
 	select( nullptr );
+	setSelection( {} );
 	UndoItem u = std::move( m_undo.back() );
 	m_undo.pop_back();
 
@@ -1196,6 +1266,15 @@ void DrawTool::undo()
 				if ( obj->isA( CC_TYPES::POLY_LINE ) )
 				{
 					setLine( static_cast<ccPolyline*>( obj ), a.a, a.b, nullptr );
+				}
+			}
+			break;
+		case Action::Attr:
+			if ( ccHObject* obj = m_app->dbRootObject()->find( a.id ) )
+			{
+				if ( obj->isA( CC_TYPES::POLY_LINE ) )
+				{
+					applyLook( static_cast<ccPolyline*>( obj ), a.cat, a.hidden );
 				}
 			}
 			break;
@@ -1420,6 +1499,43 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			m_base = cursorPoint( pos, st, nullptr );
 			m_step = 2;
 		}
+		else if ( !m_selSet.empty() )
+		{
+			// přesun / kopie celého výběru
+			m_cursor = cursorPoint( pos, st, &m_base );
+			const CCVector2d d = m_cursor - m_base;
+			UndoItem u;
+			std::vector<ccPolyline*> created;
+			for ( ccPolyline* p : m_selSet )
+			{
+				CCVector2d a;
+				CCVector2d b;
+				if ( !lineEnds( p, a, b ) )
+				{
+					continue;
+				}
+				if ( m_mode == Mode::Move )
+				{
+					setLine( p, a + d, b + d, &u );
+				}
+				else if ( isText( p ) )
+				{
+					addText( a + d, p->getMetaData( "qRezy.text" ).toString(), &u );
+				}
+				else
+				{
+					int c0;
+					bool h0;
+					lineAttrs( p, c0, h0 );
+					addLine( a + d, b + d, c0, h0, &u );
+				}
+			}
+			pushUndo( std::move( u ) );
+			if ( m_mode == Mode::Move )
+			{
+				m_step = 1; // výběr zůstává, další přesun od nového výchozího bodu
+			}
+		}
 		else
 		{
 			m_cursor = cursorPoint( pos, st, &m_base );
@@ -1451,6 +1567,142 @@ void DrawTool::onDataPoint( const QPoint& pos )
 				}
 			}
 		}
+		break;
+	}
+	case Mode::Select:
+	case Mode::Modify:
+	{
+		// úprava prvku / úchop: 1. klik vybere konec, 2. klik ho položí
+		if ( m_step == 0 )
+		{
+			if ( m_mode == Mode::Select )
+			{
+				break; // výběr obsluhuje eventFilter
+			}
+			CCVector2d click;
+			if ( ccPolyline* p = pickLine( pos, &click ) )
+			{
+				CCVector2d a;
+				CCVector2d b;
+				lineEnds( p, a, b );
+				m_selEnd = ( dist( click, a ) <= dist( click, b ) ) ? 0 : 1;
+				m_fixed = ( m_selEnd == 0 ) ? b : a;
+				select( p );
+				m_step = 1;
+			}
+		}
+		else
+		{
+			const CCVector2d P = cursorPoint( pos, st, &m_fixed );
+			CCVector2d a;
+			CCVector2d b;
+			if ( lineEnds( m_sel, a, b ) )
+			{
+				UndoItem u;
+				if ( isText( m_sel ) )
+				{
+					setLine( m_sel, P, P, &u );
+				}
+				else
+				{
+					setLine( m_sel, m_selEnd == 0 ? P : a, m_selEnd == 0 ? b : P, &u );
+				}
+				pushUndo( std::move( u ) );
+			}
+			select( nullptr );
+			m_step = 0;
+		}
+		break;
+	}
+	case Mode::InsertVertex:
+	{
+		if ( m_step == 0 )
+		{
+			CCVector2d click;
+			if ( ccPolyline* p = pickLine( pos, &click ) )
+			{
+				CCVector2d a;
+				CCVector2d b;
+				if ( !isText( p ) && lineEnds( p, a, b ) && dist( a, b ) > 1e-9 )
+				{
+					select( p );
+					m_fixed = a;
+					m_far2 = b;
+					m_step = 1;
+				}
+			}
+		}
+		else
+		{
+			const CCVector2d P = cursorPoint( pos, st, nullptr );
+			if ( lineExists( m_sel ) && dist( P, m_fixed ) > 1e-9 && dist( P, m_far2 ) > 1e-9 )
+			{
+				int c0;
+				bool h0;
+				lineAttrs( m_sel, c0, h0 );
+				ccPolyline* line = m_sel;
+				select( nullptr );
+				UndoItem u;
+				setLine( line, m_fixed, P, &u );
+				addLine( P, m_far2, c0, h0, &u );
+				pushUndo( std::move( u ) );
+			}
+			select( nullptr );
+			m_step = 0;
+		}
+		break;
+	}
+	case Mode::DeleteVertex:
+	{
+		// spoj dvou čar u kliknutí → jedna čára
+		CCVector2d P;
+		if ( !screenToLocal( pos, P ) )
+		{
+			break;
+		}
+		const double tol = SnapPixels * pixelSize();
+		struct EndRef
+		{
+			ccPolyline* poly;
+			CCVector2d at;
+			CCVector2d other;
+		};
+		std::vector<EndRef> ends;
+		for ( const Segment& sg : collectSegments() )
+		{
+			if ( sg.ref || isText( sg.poly ) )
+			{
+				continue;
+			}
+			if ( dist( sg.a, P ) < tol )
+				ends.push_back( { sg.poly, sg.a, sg.b } );
+			else if ( dist( sg.b, P ) < tol )
+				ends.push_back( { sg.poly, sg.b, sg.a } );
+		}
+		if ( ends.empty() )
+		{
+			break;
+		}
+		// nejbližší vrchol a čáry, které v něm končí
+		std::sort( ends.begin(), ends.end(), [&P]( const EndRef& x, const EndRef& y ) { return dist( x.at, P ) < dist( y.at, P ); } );
+		const CCVector2d V = ends.front().at;
+		std::vector<EndRef> atV;
+		for ( const EndRef& e : ends )
+		{
+			if ( dist( e.at, V ) < 1e-3 * m_scale )
+			{
+				atV.push_back( e );
+			}
+		}
+		if ( atV.size() != 2 )
+		{
+			Q_EMIT statusChanged( QStringLiteral( "Smazat vrchol: ve vrcholu se musí potkat právě dvě čáry (je jich %1)" ).arg( atV.size() ) );
+			return;
+		}
+		UndoItem u;
+		setLine( atV[0].poly, atV[0].other, atV[1].other, &u );
+		removeLine( atV[1].poly, &u );
+		pushUndo( std::move( u ) );
 		break;
 	}
 	case Mode::Text:
@@ -1729,6 +1981,26 @@ void DrawTool::onTypedValue( double v )
 	}
 	const double L = v * m_scale;
 
+	if ( ( m_mode == Mode::Modify || m_mode == Mode::Select ) && m_step == 1 && m_hasCursor && lineExists( m_sel ) && !isText( m_sel ) )
+	{
+		// nová délka čáry od pevného konce ve směru kurzoru
+		CCVector2d dir = m_cursor - m_fixed;
+		if ( dir.norm() < 1e-9 )
+		{
+			return;
+		}
+		dir.normalize();
+		const CCVector2d P = m_fixed + dir * L;
+		CCVector2d a;
+		CCVector2d b;
+		lineEnds( m_sel, a, b );
+		UndoItem u;
+		setLine( m_sel, m_selEnd == 0 ? P : a, m_selEnd == 0 ? b : P, &u );
+		pushUndo( std::move( u ) );
+		select( nullptr );
+		m_step = 0;
+		return;
+	}
 	switch ( m_mode )
 	{
 	case Mode::Line:
@@ -2047,6 +2319,104 @@ void DrawTool::updateTip()
 		{
 			segment( *from, m_cursor, col, m_mode == Mode::Line ? 1.0f : 2.0f );
 		}
+		// úprava prvku / úchop: čára od pevného konce ke kurzoru
+		if ( ( m_mode == Mode::Modify || m_mode == Mode::Select ) && m_step == 1 )
+		{
+			segment( m_fixed, m_cursor, yellow, 2.0f );
+		}
+		// vložit vrchol: obě části ke kurzoru
+		if ( m_mode == Mode::InsertVertex && m_step == 1 )
+		{
+			segment( m_fixed, m_cursor, yellow, 2.0f );
+			segment( m_cursor, m_far2, yellow, 2.0f );
+		}
+		// přesun / kopie výběru
+		if ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && m_step == 2 && !m_selSet.empty() )
+		{
+			const CCVector2d d = m_cursor - m_base;
+			for ( ccPolyline* p : m_selSet )
+			{
+				CCVector2d a;
+				CCVector2d b;
+				if ( lineEnds( p, a, b ) )
+				{
+					if ( dist( a, b ) < 1e-9 )
+					{
+						addMarker( ovs, a + d, SnapType::End, yellow );
+					}
+					else
+					{
+						segment( a + d, b + d, yellow, 2.0f );
+					}
+				}
+			}
+		}
+	}
+
+	// výběr: úchopy na koncích vybraných čar
+	if ( m_mode == Mode::Select || ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && m_step < 2 ) )
+	{
+		for ( ccPolyline* p : m_selSet )
+		{
+			CCVector2d a;
+			CCVector2d b;
+			if ( lineEnds( p, a, b ) )
+			{
+				for ( const CCVector2d& E : { a, b } )
+				{
+					CCVector2d S;
+					if ( localToScreen( E, S ) )
+					{
+						const double h = 3.5 * m_win->getDevicePixelRatio();
+						Overlay o;
+						o.pts = { S + CCVector2d( -h, -h ), S + CCVector2d( h, -h ), S + CCVector2d( h, h ), S + CCVector2d( -h, h ), S + CCVector2d( -h, -h ) };
+						o.color = ccColor::Rgb( 0, 160, 255 );
+						o.width = 2.0f;
+						ovs.push_back( o );
+					}
+				}
+			}
+		}
+	}
+
+	// okno výběru: zleva doprava modré (uvnitř), zprava doleva zelené čárkované (křížem)
+	if ( m_mode == Mode::Select && m_winDragging )
+	{
+		const QPointF g0 = m_win->toCornerGLCoordinates( m_winStart.x(), m_winStart.y() );
+		const QPointF g1 = m_win->toCornerGLCoordinates( m_mousePos.x(), m_mousePos.y() );
+		ccGLCameraParameters camera;
+		m_win->getGLCameraParameters( camera );
+		const double cx = camera.viewport[2] / 2.0;
+		const double cy = camera.viewport[3] / 2.0;
+		const CCVector2d c[4] = { CCVector2d( g0.x() - cx, g0.y() - cy ), CCVector2d( g1.x() - cx, g0.y() - cy ), CCVector2d( g1.x() - cx, g1.y() - cy ), CCVector2d( g0.x() - cx, g1.y() - cy ) };
+		const bool inside = m_mousePos.x() >= m_winStart.x();
+		const ccColor::Rgb wc = inside ? ccColor::Rgb( 70, 140, 255 ) : ccColor::Rgb( 60, 220, 90 );
+		for ( int i = 0; i < 4; ++i )
+		{
+			const CCVector2d A = c[i];
+			const CCVector2d B = c[( i + 1 ) % 4];
+			if ( inside )
+			{
+				Overlay o;
+				o.pts = { A, B };
+				o.color = wc;
+				o.width = 1.5f;
+				ovs.push_back( o );
+			}
+			else
+			{
+				const double L = dist( A, B );
+				const CCVector2d u = L > 0 ? ( B - A ) / L : CCVector2d( 0, 0 );
+				for ( double t = 0; t < L; t += 12.0 )
+				{
+					Overlay o;
+					o.pts = { A + u * t, A + u * std::min( L, t + 6.0 ) };
+					o.color = wc;
+					o.width = 1.5f;
+					ovs.push_back( o );
+				}
+			}
+		}
 	}
 
 	// náhled upravované čáry
@@ -2110,11 +2480,32 @@ void DrawTool::updateTip()
 		ovs.push_back( v );
 		if ( pickingCursor() )
 		{
-			const double q = PickPixels * m_win->getDevicePixelRatio();
+			const double q = PickBoxPixels * m_win->getDevicePixelRatio();
 			Overlay box;
 			box.pts = { C + CCVector2d( -q, -q ), C + CCVector2d( q, -q ), C + CCVector2d( q, q ), C + CCVector2d( -q, q ), C + CCVector2d( -q, -q ) };
 			box.color = cc;
 			ovs.push_back( box );
+			// s Ctrl znaménko + / − (přidat / ubrat z výběru)
+			if ( m_mode == Mode::Select && ( QApplication::keyboardModifiers() & Qt::ControlModifier ) )
+			{
+				ccPolyline* under = pickLine( m_mousePos );
+				const bool minus = under && isSelected( under );
+				const double s0 = 4.0 * m_win->getDevicePixelRatio();
+				const CCVector2d M = C + CCVector2d( 3 * s0, 3 * s0 );
+				Overlay hz;
+				hz.pts = { M + CCVector2d( -s0, 0 ), M + CCVector2d( s0, 0 ) };
+				hz.color = cc;
+				hz.width = 2.0f;
+				ovs.push_back( hz );
+				if ( !minus )
+				{
+					Overlay vt;
+					vt.pts = { M + CCVector2d( 0, -s0 ), M + CCVector2d( 0, s0 ) };
+					vt.color = cc;
+					vt.width = 2.0f;
+					ovs.push_back( vt );
+				}
+			}
 		}
 	}
 
@@ -2135,6 +2526,7 @@ void DrawTool::redraw3D()
 	if ( m_win )
 	{
 		refreshLayer();
+		m_win->deprecate3DLayer(); // jinak se po Zpět / mazání může ukázat starý obraz
 		m_win->redraw( false, false );
 	}
 }
@@ -2179,14 +2571,14 @@ void DrawTool::showToolMenu( int group )
 	{
 		title = QStringLiteral( "Úpravy" );
 		items = {
-			{ 1, "Upravit prvek  (Modify Element)", false, Mode::Line },
+			{ 1, "Upravit prvek  (Modify Element)", true, Mode::Modify },
 			{ 2, "Rozdělit  (Break Element)", true, Mode::Break },
 			{ 3, "Prodloužit/zkrátit  (Extend Line)", true, Mode::Extend },
 			{ 4, "Roh  (Trim To Intersection)", true, Mode::Corner },
 			{ 5, "Oříznout k prvku  (Trim To Element)", true, Mode::Trim },
 			{ 6, "Oříznout více  (Trim Multiple)", false, Mode::Line },
-			{ 7, "Vložit vrchol  (Insert Vertex)", false, Mode::Line },
-			{ 8, "Smazat vrchol  (Delete Vertex)", false, Mode::Line },
+			{ 7, "Vložit vrchol  (Insert Vertex)", true, Mode::InsertVertex },
+			{ 8, "Smazat vrchol  (Delete Vertex)", true, Mode::DeleteVertex },
 			{ 9, "Zaoblit  (Circular Fillet)", false, Mode::Line },
 			{ 0, "Parabolické zaoblení  (Parabolic Fillet)", false, Mode::Line },
 			{ Qt::Key_Q, "Zkosit  (Chamfer)", false, Mode::Line },
@@ -2244,9 +2636,15 @@ bool DrawTool::pickingCursor() const
 	switch ( m_mode )
 	{
 	case Mode::Delete:
+	case Mode::DeleteVertex:
 		return true;
+	case Mode::Select:
+	case Mode::Modify:
+	case Mode::InsertVertex:
+		return m_step == 0;
 	case Mode::Move:
 	case Mode::Copy:
+		return m_step == 0 && m_selSet.empty();
 	case Mode::Offset:
 	case Mode::Extend:
 	case Mode::Break:
@@ -2338,6 +2736,21 @@ void DrawTool::updateStatus()
 	case Mode::Text:
 		prompt = QStringLiteral( "Text: klikněte, kam text vložit (levý dolní roh)" );
 		break;
+	case Mode::Select:
+		prompt = m_step == 1 ? QStringLiteral( "Úchop: nové místo konce čáry (nebo délka)" )
+		                     : QStringLiteral( "Výběr: klik = vybrat, Ctrl+klik = přidat/ubrat, okno tažením (zleva = uvnitř, zprava = křížem); úchop na konci = přesun konce. Vybráno: %1" ).arg( m_selSet.size() );
+		break;
+	case Mode::Modify:
+		prompt = m_step == 0 ? QStringLiteral( "Upravit prvek: klikněte na čáru u konce, který se má přesunout" )
+		                     : QStringLiteral( "Upravit prvek: nové místo konce (nebo délka)" );
+		break;
+	case Mode::InsertVertex:
+		prompt = m_step == 0 ? QStringLiteral( "Vložit vrchol: klikněte na čáru" )
+		                     : QStringLiteral( "Vložit vrchol: umístěte nový vrchol" );
+		break;
+	case Mode::DeleteVertex:
+		prompt = QStringLiteral( "Smazat vrchol: klikněte na spoj dvou čar" );
+		break;
 	case Mode::Trim:
 		prompt = m_step == 0 ? QStringLiteral( "Oříznout k prvku: vyberte hraniční čáru" )
 		                     : QStringLiteral( "Oříznout k prvku: klikněte na čáry (na část, která zůstane); reset = nová hranice" );
@@ -2362,6 +2775,10 @@ void DrawTool::updateStatus()
 	else if ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && m_step == 2 )
 	{
 		from = &m_base;
+	}
+	if ( !from && ( m_mode == Mode::Modify || m_mode == Mode::Select ) && m_step == 1 )
+	{
+		from = &m_fixed;
 	}
 	if ( from && m_hasCursor )
 	{
@@ -2414,7 +2831,35 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		}
 		if ( e->button() == Qt::LeftButton && !( e->modifiers() & Qt::ShiftModifier ) )
 		{
-			onDataPoint( e->pos() );
+			if ( m_mode == Mode::Select && m_step == 0 )
+			{
+				ccPolyline* hp = nullptr;
+				int he = 0;
+				if ( !( e->modifiers() & Qt::ControlModifier ) && pickHandle( e->pos(), hp, he ) )
+				{
+					// úchop: konec vybrané čáry se přesune dalším klikem
+					CCVector2d a;
+					CCVector2d b;
+					lineEnds( hp, a, b );
+					m_selEnd = he;
+					m_fixed = ( he == 0 ) ? b : a;
+					select( hp );
+					m_step = 1;
+					updateTip();
+					updateStatus();
+					redraw2D();
+				}
+				else
+				{
+					m_winPressed = true;
+					m_winDragging = false;
+					m_winStart = e->pos();
+				}
+			}
+			else
+			{
+				onDataPoint( e->pos() );
+			}
 		}
 		else if ( e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton )
 		{
@@ -2456,10 +2901,42 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 				}
 			}
 		}
+		else if ( e->button() == Qt::LeftButton && m_winPressed )
+		{
+			m_winPressed = false;
+			const bool ctrl = ( e->modifiers() & Qt::ControlModifier );
+			if ( m_winDragging )
+			{
+				m_winDragging = false;
+				selectWindow( m_winStart, e->pos(), ctrl );
+			}
+			else
+			{
+				ccPolyline* p = pickLine( e->pos() );
+				if ( ctrl )
+				{
+					if ( p )
+						toggleSelected( p );
+				}
+				else
+				{
+					setSelection( p ? std::vector<ccPolyline*>{ p } : std::vector<ccPolyline*>{} );
+				}
+			}
+			updateStatus();
+		}
 		else if ( e->button() == Qt::RightButton && m_rightPressed )
 		{
 			// pravé tlačítko = vždy jen reset (konec čáry / zpět o krok nástroje)
 			m_rightPressed = false;
+			if ( m_mode == Mode::Select && m_step == 0 )
+			{
+				setSelection( {} );
+			}
+			if ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && !m_selSet.empty() )
+			{
+				setSelection( {} ); // reset zruší výběr, další klik vybírá čáru
+			}
 			m_chain.clear();
 			m_step = 0;
 			select( nullptr );
@@ -2491,6 +2968,10 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			redraw2D();
 			return true;
 		}
+		if ( m_winPressed && ( e->buttons() & Qt::LeftButton ) && !m_winDragging && ( e->pos() - m_winStart ).manhattanLength() > ClickTolerance )
+		{
+			m_winDragging = true;
+		}
 		SnapType st;
 		const CCVector2d* from = nullptr;
 		if ( m_mode == Mode::Line && !m_chain.empty() )
@@ -2504,6 +2985,14 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		else if ( m_mode == Mode::Measure && m_step == 1 && !m_measDone )
 		{
 			from = &m_measA;
+		}
+		else if ( ( m_mode == Mode::Modify || m_mode == Mode::Select ) && m_step == 1 )
+		{
+			from = &m_fixed;
+		}
+		else if ( m_mode == Mode::InsertVertex && m_step == 1 )
+		{
+			from = &m_fixed;
 		}
 		m_trackLines.clear();
 		m_cursor = cursorPoint( e->pos(), st, from, &m_trackLines );
@@ -2594,6 +3083,7 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		const bool digit = rowDigit < 0 && ( ( k >= Qt::Key_0 && k <= Qt::Key_9 ) || k == Qt::Key_Comma || k == Qt::Key_Period );
 		const bool plain = !ctrl && !( e->modifiers() & ( Qt::AltModifier | Qt::ShiftModifier ) );
 		const bool wantsNumber = ( m_mode == Mode::Line && ( !m_chain.empty() || m_cursorTracked ) ) || ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && m_step == 2 )
+		                      || ( ( m_mode == Mode::Modify || m_mode == Mode::Select ) && m_step == 1 )
 		                      || ( ( m_mode == Mode::Offset || m_mode == Mode::Extend ) && m_step == 1 );
 
 		bool handled = true;
@@ -2633,9 +3123,15 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		{
 			if ( event->type() == QEvent::KeyPress )
 			{
-				if ( m_mode != Mode::Line && m_step == 0 )
+				// Esc = zrušit krok; bez rozdělané práce zpět na Výběr (jako ve Vrstevnicích)
+				if ( m_mode == Mode::Select && m_step == 0 )
 				{
-					setMode( Mode::Line );
+					setSelection( {} );
+					updateStatus();
+				}
+				else if ( m_step == 0 && m_chain.empty() )
+				{
+					setMode( Mode::Select );
 				}
 				else
 				{
@@ -2686,6 +3182,16 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			if ( event->type() == QEvent::KeyPress )
 				setMode( Mode::Delete );
 		}
+		else if ( rowDigit == 1 )
+		{
+			if ( event->type() == QEvent::KeyPress )
+				setMode( Mode::Select );
+		}
+		else if ( k == Qt::Key_A && ctrl )
+		{
+			if ( event->type() == QEvent::KeyPress )
+				selectAll();
+		}
 		else if ( plain && k == Qt::Key_Q )
 		{
 			if ( event->type() == QEvent::KeyPress )
@@ -2714,6 +3220,255 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 	return QObject::eventFilter( obj, event );
 }
 
+
+// ---------------------------------------------------------------- výběr
+
+bool DrawTool::lineAttrs( ccPolyline* poly, int& cat, bool& hidden ) const
+{
+	if ( !poly )
+	{
+		return false;
+	}
+	cat = poly->hasMetaData( Drawing::MetaCategory ) ? poly->getMetaData( Drawing::MetaCategory ).toInt() : m_category;
+	hidden = poly->hasMetaData( Drawing::MetaHidden ) && poly->getMetaData( Drawing::MetaHidden ).toBool();
+	return poly->hasMetaData( Drawing::MetaCategory );
+}
+
+bool DrawTool::isSelected( ccPolyline* poly ) const
+{
+	return poly && std::find( m_selSet.begin(), m_selSet.end(), poly ) != m_selSet.end();
+}
+
+void DrawTool::restoreLook( ccPolyline* poly )
+{
+	if ( !poly )
+	{
+		return;
+	}
+	if ( poly == m_sel )
+	{
+		poly->setColor( ccColor::Rgb( 255, 220, 0 ) );
+		poly->setWidth( 4 );
+	}
+	else if ( isSelected( poly ) )
+	{
+		poly->setColor( ccColor::Rgb( 60, 180, 255 ) ); // vybraná čára
+		poly->setWidth( 3 );
+	}
+	else if ( isText( poly ) )
+	{
+		poly->setColor( ccColor::Rgb( 255, 235, 140 ) );
+		poly->setWidth( 1 );
+	}
+	else
+	{
+		int cat;
+		bool hid;
+		lineAttrs( poly, cat, hid );
+		poly->setColor( toRgb( Drawing::displayColor( cat, hid ) ) );
+		poly->setWidth( 2 );
+	}
+	poly->prepareDisplayForRefresh();
+}
+
+void DrawTool::applyLook( ccPolyline* poly, int cat, bool hidden )
+{
+	if ( !poly || isText( poly ) )
+	{
+		return;
+	}
+	poly->setMetaData( Drawing::MetaCategory, cat );
+	poly->setMetaData( Drawing::MetaHidden, hidden );
+	poly->setName( Drawing::categoryName( cat ) + ( hidden ? QStringLiteral( " (zakrytá)" ) : QString() ) );
+	if ( auto* rl = dynamic_cast<RezLine*>( poly ) )
+	{
+		rl->setDashed( hidden );
+	}
+	restoreLook( poly );
+}
+
+void DrawTool::pruneSelection()
+{
+	std::vector<ccPolyline*> keep;
+	for ( ccPolyline* p : m_selSet )
+	{
+		if ( lineExists( p ) )
+		{
+			keep.push_back( p );
+		}
+	}
+	m_selSet.swap( keep );
+}
+
+void DrawTool::setSelection( const std::vector<ccPolyline*>& sel )
+{
+	std::vector<ccPolyline*> old;
+	old.swap( m_selSet );
+	m_selSet = sel;
+	for ( ccPolyline* p : old )
+	{
+		if ( lineExists( p ) )
+		{
+			restoreLook( p );
+		}
+	}
+	for ( ccPolyline* p : m_selSet )
+	{
+		restoreLook( p );
+	}
+	redraw3D();
+	updateTip();
+}
+
+void DrawTool::toggleSelected( ccPolyline* poly )
+{
+	std::vector<ccPolyline*> sel = m_selSet;
+	auto it = std::find( sel.begin(), sel.end(), poly );
+	if ( it != sel.end() )
+	{
+		sel.erase( it );
+	}
+	else
+	{
+		sel.push_back( poly );
+	}
+	setSelection( sel );
+}
+
+void DrawTool::selectAll()
+{
+	std::vector<ccPolyline*> sel;
+	for ( const Segment& s : collectSegments() )
+	{
+		if ( !s.ref && std::find( sel.begin(), sel.end(), s.poly ) == sel.end() )
+		{
+			sel.push_back( s.poly );
+		}
+	}
+	if ( m_mode != Mode::Select && m_mode != Mode::Move && m_mode != Mode::Copy )
+	{
+		m_mode = Mode::Select;
+		resetTool();
+		Q_EMIT modeChanged( m_mode );
+	}
+	setSelection( sel );
+	updateStatus();
+}
+
+void DrawTool::deleteSelection()
+{
+	pruneSelection();
+	if ( m_selSet.empty() )
+	{
+		return;
+	}
+	std::vector<ccPolyline*> sel = m_selSet;
+	setSelection( {} );
+	UndoItem u;
+	for ( ccPolyline* p : sel )
+	{
+		removeLine( p, &u );
+	}
+	pushUndo( std::move( u ) );
+	redraw3D();
+	updateTip();
+	updateStatus();
+}
+
+void DrawTool::selectWindow( const QPoint& p0, const QPoint& p1, bool add )
+{
+	CCVector2d a;
+	CCVector2d b;
+	CCVector2d c;
+	CCVector2d d;
+	// rohy okna v rovině kresby (pohled může být natočený)
+	if ( !screenToLocal( p0, a ) || !screenToLocal( QPoint( p1.x(), p0.y() ), b ) || !screenToLocal( p1, c ) || !screenToLocal( QPoint( p0.x(), p1.y() ), d ) )
+	{
+		return;
+	}
+	const bool inside = p1.x() >= p0.x(); // zleva = jen uvnitř, zprava = i křížem
+	const CCVector2d poly[4] = { a, b, c, d };
+	auto pointIn = [&poly]( const CCVector2d& P ) -> bool
+	{
+		// konvexní čtyřúhelník: znaménko vektorových součinů
+		int pos = 0;
+		int neg = 0;
+		for ( int i = 0; i < 4; ++i )
+		{
+			const CCVector2d& A = poly[i];
+			const CCVector2d& B = poly[( i + 1 ) % 4];
+			const double cr = ( B.x - A.x ) * ( P.y - A.y ) - ( B.y - A.y ) * ( P.x - A.x );
+			if ( cr > 0 )
+				++pos;
+			else if ( cr < 0 )
+				++neg;
+		}
+		return pos == 0 || neg == 0;
+	};
+	std::vector<ccPolyline*> sel = add ? m_selSet : std::vector<ccPolyline*>();
+	for ( const Segment& s : collectSegments() )
+	{
+		if ( s.ref || std::find( sel.begin(), sel.end(), s.poly ) != sel.end() )
+		{
+			continue;
+		}
+		const bool ia = pointIn( s.a );
+		const bool ib = pointIn( s.b );
+		bool hit = ia && ib;
+		if ( !inside && !hit )
+		{
+			hit = ia || ib;
+			for ( int i = 0; i < 4 && !hit; ++i )
+			{
+				CCVector2d I;
+				hit = segmentIntersection( s.a, s.b, poly[i], poly[( i + 1 ) % 4], I );
+			}
+		}
+		if ( hit )
+		{
+			sel.push_back( s.poly );
+		}
+	}
+	setSelection( sel );
+}
+
+bool DrawTool::pickHandle( const QPoint& pos, ccPolyline*& poly, int& end ) const
+{
+	CCVector2d P;
+	if ( m_selSet.empty() || !screenToLocal( pos, P ) )
+	{
+		return false;
+	}
+	const double tol = 6.0 * pixelSize();
+	double best = tol;
+	bool found = false;
+	for ( ccPolyline* p : m_selSet )
+	{
+		CCVector2d a;
+		CCVector2d b;
+		if ( !lineEnds( p, a, b ) )
+		{
+			continue;
+		}
+		const double da = dist( a, P );
+		const double db = dist( b, P );
+		if ( da < best )
+		{
+			best = da;
+			poly = p;
+			end = 0;
+			found = true;
+		}
+		if ( db < best )
+		{
+			best = db;
+			poly = p;
+			end = 1;
+			found = true;
+		}
+	}
+	return found;
+}
 
 // ---------------------------------------------------------------- body a texty
 
@@ -2788,7 +3543,21 @@ void zoomAtCursor( ccGLWindowInterface* win, const QPoint& pos, float wheelDelta
 	}
 	CCVector3d P;
 	const bool ok = cam.unproject( CCVector3d( g.x(), g.y(), depth ), P );
-	win->onWheelEvent( wheelDeltaDeg );
+	// rychlost: násobek přiblížení na jeden zub kolečka (15°), nastavitelné
+	const double step = std::max( 1.02, std::min( 3.0, QSettings().value( QStringLiteral( "qRezy/zoomStep" ), 1.25 ).toDouble() ) );
+	const ccViewportParameters& vp = win->getViewportParameters();
+	if ( !vp.perspectiveView )
+	{
+		const double fd = vp.getFocalDistance();
+		const double f = std::pow( step, wheelDeltaDeg / 15.0 );
+		CCVector3d v( 0.0, 0.0, -( fd - fd / f ) );
+		win->moveCamera( v );
+	}
+	else
+	{
+		// perspektiva: CC krok × poměr k jeho výchozím ~5 %
+		win->onWheelEvent( static_cast<float>( wheelDeltaDeg * ( step - 1.0 ) / 0.05 ) );
+	}
 	if ( !ok )
 	{
 		return;

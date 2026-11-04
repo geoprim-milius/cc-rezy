@@ -26,15 +26,19 @@ Rozbalte zip do nové složky a spusťte `CloudCompare.exe`.
 | Ikona | Nástroj | Klávesa | Postup |
 |---|---|---|---|
 | tužka | kreslení zap/vyp | | |
+| šipka | Výběr | 1 | klik = vybrat, Ctrl+klik = přidat/ubrat, okno tažením (zleva = jen uvnitř, zprava = i křížem), Ctrl+A = vše; modré úchopy na koncích = přesun konce; s výběrem Del/8 smaže, 3→1/3→2 kopie/přesun celého výběru, F1–F4 / hladina a F5 změní hladinu / zakrytí |
 | čára | Čára | Q | body, pravé kliknutí ukončí |
 | kříž šipek | Přesun | 3 → 2 | čára → výchozí bod → cíl (nebo vzdálenost) |
 | dvě čáry | Kopie | 3 → 1 | čára → výchozí bod → cíle |
 | rovnoběžky | Rovnoběžně | 3 → 9 | čára → strana; vzdálenost z pole vedle nebo napsat + Enter |
+| čára s úchopem | Upravit prvek | 7 → 1 | klik u konce čáry (chytí bližší konec), pak nové místo nebo délka; mění jen tu jednu čáru |
 | přerušená čára | Rozdělit | 7 → 2 | 2 body na čáře → část mezi nimi se smaže; stejný bod 2× = jen rozdělit |
 | prodloužení | Prodloužit/zkrátit | 7 → 3 | klik u konce → nový konec nebo celková délka |
 | roh | Roh | 7 → 4 | dvě čáry do průsečíku (klik na části, které zůstanou) |
 | hranice | Oříznout k prvku | 7 → 5 | hraniční čára, pak čáry k oříznutí / prodloužení (klik na část, která zůstane) |
-| křížek | Mazat | 8 / Del | klik na čáru |
+| vrchol + | Vložit vrchol | 7 → 7 | klik na čáru, pak umístit nový vrchol (čára se zlomí) |
+| vrchol × | Smazat vrchol | 7 → 8 | klik na spoj dvou čar → jedna rovná čára |
+| křížek | Mazat | 8 / Del | klik na čáru (s výběrem smaže hned výběr) |
 | metr | Měřit | D | dva body → délka, vodorovně/výškově (ΔX/ΔY), úhel |
 | A | Vložit text | | klik a napsat (např. naměřenou výšku); přesun, kopie, mazání jako u čar; do DGN na hladinu z okna Uložit |
 | šipka zpět | Zpět | Ctrl+Z | |
@@ -50,11 +54,14 @@ Rozbalte zip do nové složky a spusťte `CloudCompare.exe`.
 | křížky 1 2 | Změřené body | | načíst seznam (číslo Y X [Z] [kód], S-JTSK), zobrazit/skrýt body (i uchopování), kódy |
 | dům | Nový pohled (fasáda) | | rovina před objektem: 2 body, pak strana pohledu; vidět je vše za rovinou do *Hloubky* |
 | kostka | 3D náhled | | |
+| složka | Uložit rozdělanou práci | | projekt CloudCompare (.bin): mračno, kresba, řezy, patra, body, nastavení panelu i pohled |
 | disketa | Uložit V7 | | seed, hladiny, umístění řezů, výšky |
 
 **Klávesy jako MicroStation:** horní řada čísel otevírá menu (3 = Manipulace, 7 = Úpravy),
 v menu se volí opět číslem horní řady. Funguje podle polohy klávesy, na české klávesnici tedy
 + ě š č ř ž ý á í é. **Vzdálenost** se píše na numerické klávesnici (nebo Shift + horní řada) a Enter.
+
+Esc = zrušit krok, bez rozdělané práce přepne na Výběr. Rychlost zoomu kolečkem: panel *Zoom kolečkem* (1,25× na zub ≈ MicroStation).
 
 Myš: **levé** = bod, **pravé** = reset, **Shift + tažení** nebo **tažení kolečkem** = posun, **kolečko** = zoom k myši,
 **prostřední kliknutí** = ukázat místo ve 3D náhledu. Esc = zrušit (2× = zpět na čáru).
@@ -85,10 +92,17 @@ Natáhněte čáru v půdorysu a klikněte na stranu pohledu. Otevře se samosta
 s pravoúhlým řezem (tloušťka = posuvník Hloubka). Levé kliknutí 2 body = vodorovně / svisle / šikmo,
 u kurzoru výška nad ±0,000 a v Bpv. Pravé tažení = posun, kolečko = zoom.
 
+## Rozdělaná práce
+Ikona složky uloží projekt CloudCompare (.bin) – mračno, kresbu, řezy, patra, body i nastavení
+panelu a pohled. Pokračování: *File → Open* projekt, *Plugins → Řezy*, vybrat mračno – vše se obnoví.
+(Uložit lze i přes *File → Save project*, jen se nezapamatuje přiblížení pohledu.)
+
 ## Výstup V7
 V okně Uložit zaškrtnete soubory: **každé patro zvlášť** (název_1NP.dgn, název_2NP.dgn …) a **řezy
 s pohledy společně** (název_rezy.dgn – řezy v řadě, pohledy pod nimi, umístění jde upravit v tabulce).
 Pokud je jen jeden půdorys bez řezů, uloží se jeden soubor pod zadaným názvem.
+Velké souřadnice (S-JTSK) se do V7 vejdou díky automatickému posunu globálního počátku výkresu
+(souřadnice v MicroStationu zůstanou skutečné).
 
 Ikona diskety: **seed** (existující výkres – převezmou se jednotky a nastavení, nemění se),
 **Hladiny a barvy**, umístění řezů/pohledů ve výkresu (X/Y = levý konec, ±0,000),

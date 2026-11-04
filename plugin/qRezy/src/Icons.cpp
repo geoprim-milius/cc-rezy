@@ -209,6 +209,75 @@ namespace Icons
 				p.drawLine( QPointF( 24, 6 ), QPointF( 18, 1 ) );
 				arrowHead( p, QPointF( 17, 0 ), QPointF( 24, 6 ), 6 );
 			}
+			else if ( n == "project" )
+			{
+				// složka s mračnem (rozdělaná práce)
+				p.setPen( QPen( Ink, 1.6 ) );
+				p.setBrush( QColor( 250, 210, 110 ) );
+				QPainterPath path;
+				path.moveTo( 3, 9 );
+				path.lineTo( 12, 9 );
+				path.lineTo( 14, 6 );
+				path.lineTo( 29, 6 );
+				path.lineTo( 29, 27 );
+				path.lineTo( 3, 27 );
+				path.closeSubpath();
+				p.drawPath( path );
+				p.setBrush( Qt::NoBrush );
+				p.setPen( QPen( Blue, 2.2 ) );
+				for ( const QPointF& c : { QPointF( 10, 17 ), QPointF( 15, 21 ), QPointF( 20, 15 ), QPointF( 23, 21 ), QPointF( 12, 22 ) } )
+				{
+					p.drawPoint( c );
+				}
+			}
+			else if ( n == "select" )
+			{
+				// šipka výběru
+				QPainterPath path;
+				path.moveTo( 8, 3 );
+				path.lineTo( 8, 25 );
+				path.lineTo( 13, 20 );
+				path.lineTo( 17, 29 );
+				path.lineTo( 20, 27.5 );
+				path.lineTo( 16, 19 );
+				path.lineTo( 23, 19 );
+				path.closeSubpath();
+				p.setPen( QPen( Ink, 1.6 ) );
+				p.setBrush( Qt::white );
+				p.drawPath( path );
+				p.setBrush( Qt::NoBrush );
+			}
+			else if ( n == "modify" )
+			{
+				// čára, konec se přesouvá na nové místo
+				p.drawLine( QPointF( 4, 26 ), QPointF( 16, 14 ) );
+				p.setPen( QPen( Blue, 2.2, Qt::DashLine ) );
+				p.drawLine( QPointF( 4, 26 ), QPointF( 27, 22 ) );
+				p.setPen( QPen( Accent, 2 ) );
+				p.drawRect( QRectF( 13.5, 11.5, 5, 5 ) );
+				p.setPen( QPen( Blue, 2 ) );
+				arrowHead( p, QPointF( 27, 21 ), QPointF( 18, 16 ), 6 );
+			}
+			else if ( n == "insvertex" )
+			{
+				p.drawLine( QPointF( 3, 24 ), QPointF( 16, 8 ) );
+				p.drawLine( QPointF( 16, 8 ), QPointF( 29, 24 ) );
+				p.setPen( QPen( Ink, 1.2, Qt::DashLine ) );
+				p.drawLine( QPointF( 3, 24 ), QPointF( 29, 24 ) );
+				p.setPen( QPen( QColor( 40, 160, 60 ), 2.2 ) );
+				p.drawRect( QRectF( 13, 5, 6, 6 ) );
+			}
+			else if ( n == "delvertex" )
+			{
+				p.setPen( QPen( Ink, 1.2, Qt::DashLine ) );
+				p.drawLine( QPointF( 3, 24 ), QPointF( 16, 8 ) );
+				p.drawLine( QPointF( 16, 8 ), QPointF( 29, 24 ) );
+				p.setPen( QPen( Ink, 2.2 ) );
+				p.drawLine( QPointF( 3, 24 ), QPointF( 29, 24 ) );
+				p.setPen( QPen( Accent, 2.2 ) );
+				p.drawLine( QPointF( 12, 4 ), QPointF( 20, 12 ) );
+				p.drawLine( QPointF( 20, 4 ), QPointF( 12, 12 ) );
+			}
 			else if ( n == "newfloor" )
 			{
 				// dvě patra nad sebou + plus
