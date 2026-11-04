@@ -1842,7 +1842,7 @@ void RezDock::openSaveDialog()
 				ids.push_back( fc.first );
 			}
 		}
-		exportV7( ids, secCheck->isVisible() && secCheck->isChecked() );
+		exportV7( ids, !secCheck->isHidden() && secCheck->isChecked() ); // isVisible() je po zavření okna vždy false
 	}
 }
 
