@@ -660,7 +660,7 @@ void RezDock::buildToolbar()
 	const ToolDef tools[] = {
 		{ DrawTool::Mode::Select, "select", "Výběr", "Klik, Ctrl+klik, okno tažením (zleva = uvnitř, zprava = křížem); úchopy na koncích. S výběrem: F1–F4/F5 změní hladinu/zakrytí, Del smaže, 3→1 / 3→2 kopie / přesun." },
 		{ DrawTool::Mode::Line, "line", "Čára", "Body levým tlačítkem, pravé ukončí. Délka: čísla + Enter. Enter bez čísla = další úsek kolmo na předchozí." },
-		{ DrawTool::Mode::Arc, "arc", "Oblouk", "Tři body podle metody vedle: začátek–střed–konec, začátek–konec–střed nebo tři body. Do DGN jako skutečný oblouk." },
+		{ DrawTool::Mode::Arc, "arc", "Oblouk", "Tři body podle metody vedle: začátek–střed oblouku–konec, začátek–konec–střed oblouku, nebo se středem kružnice. Do DGN jako skutečný oblouk." },
 		{ DrawTool::Mode::CloudLine, "cloudline", "Čára\nz mračna", "Klik k bodům řezu (na líc zdi) → čára proložená body; klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a další, pravé = zahodit. Navazující čára se napojí v rohu." },
 		{ DrawTool::Mode::Move, "move", "Přesun", "Čára (nebo výběr), výchozí bod, cíl nebo vzdálenost." },
 		{ DrawTool::Mode::Copy, "copy", "Kopie", "Čára (nebo výběr), výchozí bod, cíle nebo vzdálenost." },
@@ -704,7 +704,10 @@ void RezDock::buildToolbar()
 	auto* arcCombo = new QComboBox;
 	arcCombo->addItem( QStringLiteral( "začátek–střed–konec" ) );
 	arcCombo->addItem( QStringLiteral( "začátek–konec–střed" ) );
-	arcCombo->addItem( QStringLiteral( "tři body" ) );
+	arcCombo->addItem( QStringLiteral( "střed kružnice" ) );
+	arcCombo->setItemData( 0, QStringLiteral( "Začátek, bod uprostřed oblouku, konec – oblouk prochází všemi třemi body" ), Qt::ToolTipRole );
+	arcCombo->setItemData( 1, QStringLiteral( "Začátek, konec, pak bod uprostřed oblouku" ), Qt::ToolTipRole );
+	arcCombo->setItemData( 2, QStringLiteral( "Začátek, střed kružnice, konec (směr podle pohybu myši) – jako Place Arc Center v MicroStationu" ), Qt::ToolTipRole );
 	arcCombo->setToolTip( QStringLiteral( "Metoda oblouku" ) );
 	arcCombo->setCurrentIndex( m_draw->arcMethod() );
 	connect( arcCombo, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this]( int i ) { m_draw->setArcMethod( i ); if ( m_draw->isActive() ) m_draw->setMode( DrawTool::Mode::Arc ); focusView(); } );

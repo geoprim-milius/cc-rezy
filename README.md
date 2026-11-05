@@ -40,7 +40,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | tužka | Kreslit (zap/vyp) | | |
 | šipka | Výběr | 1 | klik = vybrat, Ctrl+klik = přidat/ubrat, okno tažením (zleva = jen uvnitř, zprava = i křížem), Ctrl+A = vše; modré úchopy na koncích = přesun konce; s výběrem Del/8 smaže, 3→1/3→2 kopie/přesun celého výběru, F1–F4 / hladina a F5 změní hladinu / zakrytí |
 | čára | Čára | Q | body, pravé kliknutí ukončí; **Enter bez čísla = další úsek kolmo na předchozí** (jen ten jeden úsek, pro další kolmici zase Enter) |
-| oblouk | Oblouk | E | tři body podle metody v pásu: *začátek–střed–konec* (směr podle pohybu myši), *začátek–konec–střed* (menší oblouk, střed na ose tětivy), *tři body* (začátek–bod na oblouku–konec); do DGN jako skutečný oblouk; lze vybrat, přesunout, kopírovat, smazat, změnit hladinu |
+| oblouk | Oblouk | E | tři body podle metody v pásu: *začátek–střed–konec* (střed = bod uprostřed oblouku, oblouk jde přes všechny tři body), *začátek–konec–střed* (třetí bod uprostřed oblouku), *střed kružnice* (začátek–střed kružnice–konec, směr podle pohybu myši); do DGN jako skutečný oblouk; lze vybrat, přesunout, kopírovat, smazat, změnit hladinu |
 | čára s body | Čára z mračna | | klik k bodům řezu (na líc zdi) → čára proložená body (náhled modře); klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a hned další, pravé = zahodit. Navazující čára se napojí v rohu, téměř kolmá se srovná na 90°. *Mezera* = kolik bodů smí chybět (dveře/okna = konec čáry), *tol.* = rozptyl líce |
 | kříž šipek | Přesun | 3 → 2 | čára → výchozí bod → cíl (nebo vzdálenost) |
 | dvě čáry | Kopie | 3 → 1 | čára → výchozí bod → cíle |

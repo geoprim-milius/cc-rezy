@@ -1608,43 +1608,24 @@ bool DrawTool::arcPreview( std::vector<CCVector2d>& pts ) const
 	double sweep = 0.0;
 	switch ( m_arcMethod )
 	{
-	case 0: // začátek – střed – konec
+	case 0: // začátek – střed oblouku – konec (oblouk prochází všemi třemi body)
+		if ( !arcFrom3( S, P1, Q, C, r, a0, sweep ) )
+		{
+			return false;
+		}
+		break;
+	case 1: // začátek – konec – střed oblouku (třetí bod leží na oblouku)
+		if ( !arcFrom3( S, Q, P1, C, r, a0, sweep ) )
+		{
+			return false;
+		}
+		break;
+	default: // začátek – střed kružnice – konec (směr podle pohybu myši)
 	{
 		C = P1;
 		r = dist( S, C );
 		a0 = std::atan2( S.y - C.y, S.x - C.x );
 		sweep = m_arcSweep;
-		break;
-	}
-	case 1: // začátek – konec – střed (střed na ose tětivy, menší oblouk)
-	{
-		const CCVector2d E = P1;
-		CCVector2d u = E - S;
-		const double L = u.norm();
-		if ( L < 1e-9 )
-		{
-			return false;
-		}
-		u /= L;
-		const CCVector2d n( -u.y, u.x );
-		const CCVector2d M = ( S + E ) * 0.5;
-		const double h = ( Q - M ).dot( n );
-		if ( std::abs( h ) < 1e-9 )
-		{
-			return false;
-		}
-		C = M + n * h;
-		r = dist( S, C );
-		a0 = std::atan2( S.y - C.y, S.x - C.x );
-		sweep = wrapPi( std::atan2( E.y - C.y, E.x - C.x ) - a0 );
-		break;
-	}
-	default: // tři body: začátek – bod na oblouku – konec
-	{
-		if ( !arcFrom3( S, P1, Q, C, r, a0, sweep ) )
-		{
-			return false;
-		}
 		break;
 	}
 	}
@@ -2027,7 +2008,7 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			if ( m_arcPts.empty() || dist( P, m_arcPts.back() ) > 1e-6 )
 			{
 				m_arcPts.push_back( P );
-				if ( m_arcPts.size() == 2 && m_arcMethod == 0 )
+				if ( m_arcPts.size() == 2 && m_arcMethod == 2 )
 				{
 					// sledování směru oblouku pohybem myši od začátku
 					m_arcSweep = 0.0;
@@ -3006,7 +2987,7 @@ void DrawTool::updateTip()
 			}
 			else
 			{
-				if ( m_arcMethod == 0 )
+				if ( m_arcMethod == 2 )
 				{
 					segment( m_arcPts[1], m_arcPts[0], white, 1.0f ); // poloměr
 					segment( m_arcPts[1], m_cursor, white, 1.0f );
@@ -3472,14 +3453,14 @@ void DrawTool::updateStatus()
 		break;
 	case Mode::Arc:
 	{
-		static const char* names[] = { "začátek – střed – konec", "začátek – konec – střed", "tři body" };
+		static const char* names[] = { "začátek – střed oblouku – konec", "začátek – konec – střed oblouku", "začátek – střed kružnice – konec" };
 		const QString n = QStringLiteral( "Oblouk (%1)" ).arg( QString::fromUtf8( names[m_arcMethod] ) );
 		if ( m_arcPts.empty() )
 			prompt = n + QStringLiteral( ": začátek" );
 		else if ( m_arcPts.size() == 1 )
-			prompt = n + ( m_arcMethod == 0 ? QStringLiteral( ": střed" ) : m_arcMethod == 1 ? QStringLiteral( ": konec" ) : QStringLiteral( ": bod na oblouku" ) );
+			prompt = n + ( m_arcMethod == 0 ? QStringLiteral( ": bod na oblouku (střed oblouku)" ) : m_arcMethod == 1 ? QStringLiteral( ": konec" ) : QStringLiteral( ": střed kružnice" ) );
 		else
-			prompt = n + ( m_arcMethod == 0 ? QStringLiteral( ": konec (směr podle pohybu myši)" ) : m_arcMethod == 1 ? QStringLiteral( ": střed" ) : QStringLiteral( ": konec" ) );
+			prompt = n + ( m_arcMethod == 0 ? QStringLiteral( ": konec" ) : m_arcMethod == 1 ? QStringLiteral( ": bod na oblouku (střed oblouku)" ) : QStringLiteral( ": konec (směr podle pohybu myši)" ) );
 		std::vector<CCVector2d> pts;
 		if ( arcPreview( pts ) && pts.size() >= 3 )
 		{
@@ -3754,7 +3735,7 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		}
 		m_trackLines.clear();
 		m_cursor = cursorPoint( e->pos(), st, from, &m_trackLines );
-		if ( m_mode == Mode::Arc && m_arcMethod == 0 && m_arcPts.size() == 2 && dist( m_cursor, m_arcPts[1] ) > 1e-9 )
+		if ( m_mode == Mode::Arc && m_arcMethod == 2 && m_arcPts.size() == 2 && dist( m_cursor, m_arcPts[1] ) > 1e-9 )
 		{
 			// směr oblouku podle pohybu myši kolem středu
 			const double ang = std::atan2( m_cursor.y - m_arcPts[1].y, m_cursor.x - m_arcPts[1].x );
