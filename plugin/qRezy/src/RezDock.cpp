@@ -52,6 +52,7 @@
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTextCodec>
+#include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QMenu>
@@ -355,7 +356,7 @@ void RezDock::buildPanel()
 	auto* scroll = new QScrollArea;
 	scroll->setWidgetResizable( true );
 	scroll->setFrameShape( QFrame::NoFrame );
-	scroll->setHorizontalScrollBarPolicy( Qt::ScrollBarAlwaysOff );
+	scroll->setHorizontalScrollBarPolicy( Qt::ScrollBarAsNeeded );
 	scroll->setWidget( w );
 	setWidget( scroll );
 
@@ -526,6 +527,7 @@ void RezDock::setTheme( const QString& theme )
 		m_status->setStyleSheet( theme.isEmpty() ? QStringLiteral( "color: #333; background: #f3f3f3; padding: 4px; border-radius: 3px;" ) : QString() );
 	}
 	refreshIcons();
+	QTimer::singleShot( 0, this, [this]() { fitPanelWidth(); } );
 	if ( m_bgDarkAct )
 	{
 		const QSignalBlocker b1( m_bgDarkAct );
@@ -1334,6 +1336,20 @@ void RezDock::showEvent( QShowEvent* event )
 		m_toolbar->show();
 	}
 	QDockWidget::showEvent( event );
+	fitPanelWidth();
+}
+
+void RezDock::fitPanelWidth()
+{
+	// panel nesmí být užší než jeho obsah (jinak se pravá část ořízne) – podle písma a vzhledu
+	auto* sa = qobject_cast<QScrollArea*>( widget() );
+	if ( !sa || !sa->widget() )
+	{
+		return;
+	}
+	sa->widget()->ensurePolished();
+	const int need = sa->widget()->minimumSizeHint().width() + sa->verticalScrollBar()->sizeHint().width() + 4;
+	sa->setMinimumWidth( need );
 }
 
 void RezDock::closeEvent( QCloseEvent* event )

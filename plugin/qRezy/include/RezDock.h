@@ -90,6 +90,7 @@ private:
 	QAction* mkAct( const char* icon, const QString& label, const QString& tip, bool checkable = false );
 	void refreshIcons();
 	void refreshCatCombo();
+	void fitPanelWidth(); //!< šířka panelu podle obsahu
 	std::vector<std::array<double, 4>> slicePlanes() const; //!< roviny aktuálního řezu (pro čáru z mračna)
 	void renameView();
 
