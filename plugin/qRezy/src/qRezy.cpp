@@ -1,7 +1,10 @@
 #include "qRezy.h"
 #include "RezDock.h"
+#include "Theme.h"
 
+#include <QApplication>
 #include <QMainWindow>
+#include <QSettings>
 #include <QToolBar>
 
 qRezy::qRezy( QObject* parent )
@@ -39,10 +42,20 @@ void qRezy::showDock()
 
 	if ( !m_dock )
 	{
+		// vzhled (qRezy/theme) – stylesheet celé aplikace + pás karet
+		Theme::apply( Theme::current() );
+		if ( !Theme::current().isEmpty() && !QSettings().contains( QStringLiteral( "qRezy/darkBackground" ) ) )
+		{
+			Theme::applyBackground( true, m_app );
+		}
 		m_dock = new RezDock( m_app, m_app->getMainWindow() );
 		m_app->getMainWindow()->addDockWidget( Qt::RightDockWidgetArea, m_dock );
 		m_app->getMainWindow()->addToolBarBreak( Qt::TopToolBarArea );
 		m_app->getMainWindow()->addToolBar( Qt::TopToolBarArea, m_dock->toolBar() );
+		if ( QSettings().value( QStringLiteral( "qRezy/workMode" ), false ).toBool() )
+		{
+			m_dock->setWorkMode( true );
+		}
 	}
 
 	m_dock->show();

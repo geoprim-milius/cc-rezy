@@ -5,6 +5,8 @@
 #include "DrawTool.h"
 #include "ccHObject.h"
 
+#include <QByteArray>
+
 #include <vector>
 
 class ccMainAppInterface;
@@ -21,6 +23,7 @@ class QToolBar;
 class QAction;
 class QActionGroup;
 class View3D;
+class Ribbon;
 
 //! Panel „Řezy“: pohled (půdorys / řezy / pohledy), výška a tloušťka řezu.
 //! Kreslicí nástroje jsou v liště s ikonami, ukládání v samostatném okně.
@@ -82,6 +85,15 @@ private:
 
 	void buildPanel();
 	void buildToolbar();
+	QAction* mkAct( const char* icon, const QString& label, const QString& tip, bool checkable = false );
+	void refreshIcons();
+	void renameView();
+
+public:
+	void setTheme( const QString& theme );
+	void setWorkMode( bool on );
+
+private:
 
 	ccGenericPointCloud* cloud() const;
 	void setCloud( ccGenericPointCloud* cloud );
@@ -163,6 +175,12 @@ private:
 	QAction* m_hiddenAct = nullptr;
 	QComboBox* m_catCombo = nullptr;
 	QDoubleSpinBox* m_offsetSpin = nullptr;
+	Ribbon* m_ribbon = nullptr;
+	std::vector<std::pair<QAction*, QString>> m_iconActs;
+	QAction* m_bgDarkAct = nullptr;
+	QAction* m_bgLightAct = nullptr;
+	QAction* m_workAct = nullptr;
+	QByteArray m_savedLayout;
 
 	DrawTool* m_draw = nullptr;
 	View3D* m_view3D = nullptr;

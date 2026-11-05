@@ -3,6 +3,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
+#include <QSettings>
 
 #include <cmath>
 
@@ -10,10 +11,37 @@ namespace Icons
 {
 	namespace
 	{
-		const QColor Ink( 40, 40, 40 );
-		const QColor Accent( 220, 50, 40 );
-		const QColor Blue( 30, 110, 220 );
-		const QColor Green( 30, 150, 60 );
+		// barvy ikon podle vzhledu (qRezy/theme: "", "acad", "geoprim")
+		QColor Ink( 40, 40, 40 );
+		QColor Accent( 220, 50, 40 );
+		QColor Blue( 30, 110, 220 );
+		QColor Green( 30, 150, 60 );
+
+		void applyTheme()
+		{
+			const QString t = QSettings().value( QStringLiteral( "qRezy/theme" ) ).toString();
+			if ( t == QLatin1String( "acad" ) )
+			{
+				Ink = QColor( 220, 226, 234 );
+				Accent = QColor( 240, 90, 80 );
+				Blue = QColor( 80, 165, 255 );
+				Green = QColor( 90, 200, 120 );
+			}
+			else if ( t == QLatin1String( "geoprim" ) )
+			{
+				Ink = QColor( 236, 231, 223 );
+				Accent = QColor( 214, 120, 90 );
+				Blue = QColor( 201, 164, 106 );
+				Green = QColor( 168, 190, 140 );
+			}
+			else
+			{
+				Ink = QColor( 40, 40, 40 );
+				Accent = QColor( 220, 50, 40 );
+				Blue = QColor( 30, 110, 220 );
+				Green = QColor( 30, 150, 60 );
+			}
+		}
 
 		void arrowHead( QPainter& p, QPointF tip, QPointF from, double size )
 		{
@@ -230,6 +258,79 @@ namespace Icons
 					p.drawPoint( c );
 				}
 			}
+			else if ( n == "open" )
+			{
+				// otevřít složku (šipka nahoru)
+				p.setPen( QPen( Ink, 1.8 ) );
+				QPainterPath path;
+				path.moveTo( 3, 9 );
+				path.lineTo( 12, 9 );
+				path.lineTo( 14, 12 );
+				path.lineTo( 29, 12 );
+				path.lineTo( 29, 27 );
+				path.lineTo( 3, 27 );
+				path.closeSubpath();
+				p.drawPath( path );
+				p.setPen( QPen( Blue, 2.4, Qt::SolidLine, Qt::RoundCap ) );
+				p.drawLine( QPointF( 16, 24 ), QPointF( 16, 15 ) );
+				p.drawLine( QPointF( 12.5, 18.5 ), QPointF( 16, 15 ) );
+				p.drawLine( QPointF( 19.5, 18.5 ), QPointF( 16, 15 ) );
+			}
+			else if ( n == "layers" )
+			{
+				p.setPen( QPen( Ink, 1.8 ) );
+				for ( int i = 2; i >= 0; --i )
+				{
+					QPolygonF g;
+					g << QPointF( 16, 5 + i * 6 ) << QPointF( 28, 11 + i * 6 ) << QPointF( 16, 17 + i * 6 ) << QPointF( 4, 11 + i * 6 );
+					p.setBrush( i == 0 ? QBrush( Blue ) : QBrush( Qt::NoBrush ) );
+					p.drawPolygon( g );
+				}
+				p.setBrush( Qt::NoBrush );
+			}
+			else if ( n == "theme" )
+			{
+				p.setPen( QPen( Ink, 2 ) );
+				p.drawEllipse( QRectF( 5, 5, 22, 22 ) );
+				p.setBrush( Ink );
+				p.drawPie( QRectF( 5, 5, 22, 22 ), 90 * 16, 180 * 16 );
+				p.setBrush( Qt::NoBrush );
+			}
+			else if ( n == "bgdark" || n == "bglight" )
+			{
+				const bool dk = n == "bgdark";
+				p.setPen( QPen( Ink, 1.6 ) );
+				p.setBrush( dk ? QColor( 25, 30, 38 ) : QColor( 245, 245, 245 ) );
+				p.drawRect( QRectF( 3.5, 6.5, 25, 19 ) );
+				p.setPen( Qt::NoPen );
+				p.setBrush( dk ? QColor( 230, 230, 230 ) : QColor( 40, 40, 40 ) );
+				const QPointF pts[] = { { 8, 11 }, { 13, 19 }, { 18, 13 }, { 23, 20 }, { 11, 15 }, { 21, 10 }, { 16, 22 }, { 25, 15 } };
+				for ( const QPointF& c : pts )
+				{
+					p.drawEllipse( c, 1.3, 1.3 );
+				}
+				p.setBrush( Qt::NoBrush );
+			}
+			else if ( n == "workmode" )
+			{
+				p.setPen( QPen( Ink, 1.8 ) );
+				p.drawRect( QRectF( 3.5, 5.5, 25, 21 ) );
+				p.setPen( Qt::NoPen );
+				p.setBrush( Blue );
+				p.drawRect( QRectF( 4.5, 6.5, 23, 5 ) );
+				p.setBrush( Qt::NoBrush );
+				p.setPen( QPen( Ink, 1.4, Qt::DashLine ) );
+				p.drawLine( QPointF( 9, 21 ), QPointF( 23, 16 ) );
+			}
+			else if ( n == "rename" )
+			{
+				p.setPen( QPen( Ink, 1.6 ) );
+				p.drawRect( QRectF( 3.5, 10.5, 25, 12 ) );
+				p.setPen( QPen( Blue, 2.2 ) );
+				p.drawLine( QPointF( 9, 8 ), QPointF( 9, 25 ) );
+				p.drawLine( QPointF( 6.5, 8 ), QPointF( 11.5, 8 ) );
+				p.drawLine( QPointF( 6.5, 25 ), QPointF( 11.5, 25 ) );
+			}
 			else if ( n == "select" )
 			{
 				// šipka výběru
@@ -424,6 +525,7 @@ namespace Icons
 
 	QIcon get( const QString& name )
 	{
+		applyTheme();
 		QIcon icon;
 		for ( int size : { 32, 64 } )
 		{

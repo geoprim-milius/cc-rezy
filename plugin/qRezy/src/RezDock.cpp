@@ -4,6 +4,8 @@
 #include "Drawing.h"
 #include "Icons.h"
 #include "RezLine.h"
+#include "Ribbon.h"
+#include "Theme.h"
 #include "View3D.h"
 
 #include "ccGLUtils.h"
@@ -54,6 +56,8 @@
 #include <QToolButton>
 #include <QMenu>
 #include <QVBoxLayout>
+#include <QLineEdit>
+#include <map>
 
 #include <algorithm>
 #include <cmath>
@@ -327,7 +331,11 @@ void RezDock::buildPanel()
 
 	m_status = new QLabel;
 	m_status->setWordWrap( true );
-	m_status->setStyleSheet( QStringLiteral( "color: #333; background: #f3f3f3; padding: 4px; border-radius: 3px;" ) );
+	m_status->setObjectName( QStringLiteral( "rezyStatus" ) );
+	if ( QSettings().value( QStringLiteral( "qRezy/theme" ) ).toString().isEmpty() )
+	{
+		m_status->setStyleSheet( QStringLiteral( "color: #333; background: #f3f3f3; padding: 4px; border-radius: 3px;" ) );
+	}
 	m_status->setMinimumHeight( 48 );
 	m_status->setAlignment( Qt::AlignTop | Qt::AlignLeft );
 	lay->addWidget( m_status );
@@ -419,66 +427,198 @@ void RezDock::buildPanel()
 	syncThicknessSlider();
 }
 
+QAction* RezDock::mkAct( const char* icon, const QString& label, const QString& tip, bool checkable )
+{
+	auto* a = new QAction( Icons::get( QString::fromLatin1( icon ) ), label, this );
+	a->setToolTip( tip.isEmpty() ? label : QStringLiteral( "<b>%1</b><br>%2" ).arg( label, tip ) );
+	a->setCheckable( checkable );
+	m_iconActs.push_back( { a, QString::fromLatin1( icon ) } );
+	return a;
+}
+
+void RezDock::refreshIcons()
+{
+	for ( const auto& ia : m_iconActs )
+	{
+		ia.first->setIcon( Icons::get( ia.second ) );
+	}
+	refreshViewCombo();
+	if ( m_upBtn )
+	{
+		m_upBtn->setIcon( Icons::get( QStringLiteral( "up" ) ) );
+		m_downBtn->setIcon( Icons::get( QStringLiteral( "down" ) ) );
+	}
+}
+
+void RezDock::setTheme( const QString& theme )
+{
+	const bool wasDark = !Theme::current().isEmpty();
+	Theme::apply( theme );
+	const bool dark = !theme.isEmpty();
+	if ( dark != wasDark || dark )
+	{
+		// s tmavým vzhledem tmavé pozadí kresby (lze přepnout na světlé)
+		Theme::applyBackground( dark ? ( wasDark ? Theme::darkBackground() : true ) : false, m_app );
+	}
+	if ( m_status )
+	{
+		m_status->setStyleSheet( theme.isEmpty() ? QStringLiteral( "color: #333; background: #f3f3f3; padding: 4px; border-radius: 3px;" ) : QString() );
+	}
+	refreshIcons();
+	if ( m_bgDarkAct )
+	{
+		const QSignalBlocker b1( m_bgDarkAct );
+		const QSignalBlocker b2( m_bgLightAct );
+		m_bgDarkAct->setChecked( Theme::darkBackground() );
+		m_bgLightAct->setChecked( !Theme::darkBackground() );
+	}
+}
+
+void RezDock::setWorkMode( bool on )
+{
+	auto* mw = qobject_cast<QMainWindow*>( parentWidget() );
+	if ( !mw )
+	{
+		return;
+	}
+	QSettings().setValue( QStringLiteral( "qRezy/workMode" ), on );
+	if ( on )
+	{
+		if ( m_savedLayout.isEmpty() )
+		{
+			m_savedLayout = mw->saveState();
+		}
+		for ( QToolBar* tb : mw->findChildren<QToolBar*>( QString(), Qt::FindDirectChildrenOnly ) )
+		{
+			if ( tb != m_toolbar )
+			{
+				tb->hide();
+			}
+		}
+		for ( QDockWidget* dw : mw->findChildren<QDockWidget*>( QString(), Qt::FindDirectChildrenOnly ) )
+		{
+			if ( dw != this && dw->windowTitle() != QStringLiteral( "Řezy – 3D" ) )
+			{
+				dw->hide();
+			}
+		}
+	}
+	else
+	{
+		if ( !m_savedLayout.isEmpty() )
+		{
+			mw->restoreState( m_savedLayout );
+			m_savedLayout.clear();
+		}
+		else
+		{
+			for ( QToolBar* tb : mw->findChildren<QToolBar*>( QString(), Qt::FindDirectChildrenOnly ) )
+			{
+				tb->show();
+			}
+		}
+		show();
+		m_toolbar->show();
+	}
+	if ( m_workAct )
+	{
+		const QSignalBlocker b( m_workAct );
+		m_workAct->setChecked( on );
+	}
+}
+
+void RezDock::renameView()
+{
+	if ( !cloud() )
+	{
+		return;
+	}
+	FloorInfo fi;
+	SectionInfo si;
+	const bool plan = isPlanView( m_activeView );
+	if ( plan ? !floorById( m_activeView, fi ) : !sectionById( m_activeView, si ) )
+	{
+		return;
+	}
+	bool ok = false;
+	const QString old = plan ? fi.name : si.name;
+	const QString name = QInputDialog::getText( this, QStringLiteral( "Přejmenovat" ), plan ? QStringLiteral( "Název patra (použije se i v názvu souboru):" ) : QStringLiteral( "Název řezu / pohledu:" ), QLineEdit::Normal, old, &ok ).trimmed();
+	if ( !ok || name.isEmpty() || name == old )
+	{
+		return;
+	}
+	if ( plan )
+	{
+		std::vector<FloorInfo> floors = loadFloors();
+		for ( FloorInfo& f : floors )
+		{
+			if ( f.id == m_activeView )
+			{
+				f.name = name;
+			}
+		}
+		saveFloors( floors );
+	}
+	else if ( si.poly )
+	{
+		si.poly->setMetaData( "qRezy.secName", name );
+		si.poly->setName( name );
+	}
+	refreshViewCombo();
+	refreshRefCombo();
+	updateLabels();
+	m_draw->refreshDisplay();
+}
+
 void RezDock::buildToolbar()
 {
-	m_toolbar = new QToolBar( QStringLiteral( "Řezy – kreslení" ), parentWidget() );
+	m_toolbar = new QToolBar( QStringLiteral( "Řezy – pás karet" ), parentWidget() );
 	m_toolbar->setObjectName( QStringLiteral( "qRezyToolbar" ) );
-	m_toolbar->setIconSize( QSize( 24, 24 ) );
+	m_toolbar->setMovable( false );
+	m_toolbar->setFloatable( false );
+	m_ribbon = new Ribbon;
+	m_toolbar->addWidget( m_ribbon );
 
-	m_drawAct = m_toolbar->addAction( Icons::get( QStringLiteral( "draw" ) ), QStringLiteral( "Kreslit (zapnout/vypnout)" ) );
-	m_drawAct->setCheckable( true );
+	m_drawAct = mkAct( "draw", QStringLiteral( "Kreslit" ), QStringLiteral( "Zapnout / vypnout kreslení (zapne se i výběrem nástroje)" ), true );
 	connect( m_drawAct, &QAction::toggled, this, &RezDock::setDrawing );
-	m_toolbar->addSeparator();
+	m_ribbon->setAppAction( m_drawAct );
 
-	// nástroje
+	// --- nástroje kreslení
 	m_toolGroup = new QActionGroup( this );
 	m_toolGroup->setExclusive( true );
+	std::map<int, QAction*> tool;
 	struct ToolDef
 	{
 		DrawTool::Mode mode;
 		const char* icon;
+		const char* label;
 		const char* tip;
 	};
 	const ToolDef tools[] = {
-		{ DrawTool::Mode::Select, "select", "Výběr (1) – klik, Ctrl+klik, okno tažením; úchopy na koncích; s výběrem F1–F4/F5 změní hladinu/zakrytí, Del smaže, 3→1/3→2 kopie/přesun" },
-		{ DrawTool::Mode::Line, "line", "Čára (Q) – body, pravé kliknutí ukončí" },
-		{ DrawTool::Mode::Move, "move", "Přesun (3 → 2) – čára, výchozí bod, cíl nebo vzdálenost" },
-		{ DrawTool::Mode::Copy, "copy", "Kopie (3 → 1) – čára, výchozí bod, cíle nebo vzdálenost" },
-		{ DrawTool::Mode::Offset, "offset", "Rovnoběžně (3 → 9) – čára, strana; vzdálenost z pole vedle nebo napsat + Enter" },
-		{ DrawTool::Mode::Modify, "modify", "Upravit prvek (7 → 1) – klik u konce čáry, pak nové místo konce" },
-		{ DrawTool::Mode::Break, "break", "Rozdělit (7 → 2) – 2 body na čáře, část mezi nimi se smaže; stejný bod 2× = jen rozdělit" },
-		{ DrawTool::Mode::Extend, "extend", "Prodloužit / zkrátit (7 → 3) – klik u konce čáry, nový konec nebo celková délka" },
-		{ DrawTool::Mode::Corner, "corner", "Roh (7 → 4) – dvě čáry do průsečíku; klikejte na části, které zůstanou" },
-		{ DrawTool::Mode::InsertVertex, "insvertex", "Vložit vrchol (7 → 7) – klik na čáru, pak umístit nový vrchol" },
-		{ DrawTool::Mode::DeleteVertex, "delvertex", "Smazat vrchol (7 → 8) – klik na spoj dvou čar → jedna čára" },
-		{ DrawTool::Mode::Trim, "trim", "Oříznout k prvku (7 → 5) – hraniční čára, pak čáry k oříznutí/prodloužení" },
-		{ DrawTool::Mode::Delete, "delete", "Mazat (8 nebo Del) – klik na čáru" },
-		{ DrawTool::Mode::Measure, "measure", "Měřit vzdálenost (D) – dva body" },
-		{ DrawTool::Mode::Text, "text", "Vložit text – klik a napsat (např. naměřenou výšku); přesun, kopie a mazání jako u čar" },
+		{ DrawTool::Mode::Select, "select", "Výběr", "Klik, Ctrl+klik, okno tažením (zleva = uvnitř, zprava = křížem); úchopy na koncích. S výběrem: F1–F4/F5 změní hladinu/zakrytí, Del smaže, 3→1 / 3→2 kopie / přesun." },
+		{ DrawTool::Mode::Line, "line", "Čára", "Body levým tlačítkem, pravé ukončí. Délka: čísla + Enter." },
+		{ DrawTool::Mode::Move, "move", "Přesun", "Čára (nebo výběr), výchozí bod, cíl nebo vzdálenost." },
+		{ DrawTool::Mode::Copy, "copy", "Kopie", "Čára (nebo výběr), výchozí bod, cíle nebo vzdálenost." },
+		{ DrawTool::Mode::Offset, "offset", "Rovnoběžka", "Čára, strana; vzdálenost z pole vedle nebo napsat + Enter." },
+		{ DrawTool::Mode::Modify, "modify", "Upravit prvek", "Klik u konce čáry, pak nové místo konce." },
+		{ DrawTool::Mode::Break, "break", "Rozdělit", "2 body na čáře, část mezi nimi se smaže; stejný bod 2× = jen rozdělit." },
+		{ DrawTool::Mode::Extend, "extend", "Prodloužit", "Klik u konce čáry, nový konec nebo celková délka." },
+		{ DrawTool::Mode::Corner, "corner", "Roh", "Dvě čáry do průsečíku; klikejte na části, které zůstanou." },
+		{ DrawTool::Mode::Trim, "trim", "Oříznout", "Hraniční čára, pak čáry k oříznutí / prodloužení." },
+		{ DrawTool::Mode::InsertVertex, "insvertex", "Vložit vrchol", "Klik na čáru, pak umístit nový vrchol." },
+		{ DrawTool::Mode::DeleteVertex, "delvertex", "Smazat vrchol", "Klik na spoj dvou čar → jedna čára." },
+		{ DrawTool::Mode::Delete, "delete", "Smazat", "Klik na čáru (s výběrem smaže výběr)." },
+		{ DrawTool::Mode::Measure, "measure", "Měřit", "Vzdálenost mezi dvěma body." },
+		{ DrawTool::Mode::Text, "text", "Text", "Klik a napsat (např. naměřenou výšku); přesun, kopie a mazání jako u čar." },
 	};
 	for ( const ToolDef& t : tools )
 	{
-		QAction* a = m_toolbar->addAction( Icons::get( QString::fromUtf8( t.icon ) ), QString::fromUtf8( t.tip ) );
-		a->setCheckable( true );
+		QAction* a = mkAct( t.icon, QString::fromUtf8( t.label ), QString::fromUtf8( t.tip ), true );
 		a->setData( static_cast<int>( t.mode ) );
 		m_toolGroup->addAction( a );
-		if ( t.mode == DrawTool::Mode::Offset )
-		{
-			m_offsetSpin = makeSpin( 0.0, 1000.0, 0.0, 0.05, 3, QStringLiteral( " m" ) );
-			m_offsetSpin->setSpecialValueText( QStringLiteral( "myší" ) );
-			m_offsetSpin->setToolTip( QStringLiteral( "Vzdálenost rovnoběžky (0 = určit myší)" ) );
-			m_offsetSpin->setMaximumWidth( 90 );
-			m_toolbar->addWidget( m_offsetSpin );
-			connect( m_offsetSpin, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]( double v ) { m_draw->setOffsetDistance( v ); } );
-		}
+		tool[static_cast<int>( t.mode )] = a;
 	}
-	for ( QAction* a : m_toolGroup->actions() )
-	{
-		if ( a->data().toInt() == static_cast<int>( DrawTool::Mode::Line ) )
-		{
-			a->setChecked( true );
-		}
-	}
+	tool[static_cast<int>( DrawTool::Mode::Line )]->setChecked( true );
 	connect( m_toolGroup, &QActionGroup::triggered, this, [this]( QAction* a )
 	{
 		if ( !m_draw->isActive() )
@@ -488,63 +628,37 @@ void RezDock::buildToolbar()
 		m_draw->setMode( static_cast<DrawTool::Mode>( a->data().toInt() ) );
 		focusView();
 	} );
+	auto T = [&tool]( DrawTool::Mode m ) { return tool[static_cast<int>( m )]; };
 
-	QAction* undo = m_toolbar->addAction( Icons::get( QStringLiteral( "undo" ) ), QStringLiteral( "Zpět (Ctrl+Z)" ) );
+	m_offsetSpin = makeSpin( 0.0, 1000.0, 0.0, 0.05, 3, QStringLiteral( " m" ) );
+	m_offsetSpin->setSpecialValueText( QStringLiteral( "myší" ) );
+	m_offsetSpin->setToolTip( QStringLiteral( "Vzdálenost rovnoběžky (0 = určit myší)" ) );
+	m_offsetSpin->setFixedWidth( 86 );
+	connect( m_offsetSpin, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]( double v ) { m_draw->setOffsetDistance( v ); } );
+
+	QAction* undo = mkAct( "undo", QStringLiteral( "Zpět" ), QStringLiteral( "Vrátit poslední krok (Ctrl+Z)" ) );
 	connect( undo, &QAction::triggered, this, [this]() { m_draw->undo(); focusView(); } );
-	m_toolbar->addSeparator();
 
-	// přepínače
-	m_orthoAct = m_toolbar->addAction( Icons::get( QStringLiteral( "ortho" ) ), QStringLiteral( "Ortogonálně podle pohledu (F8)" ) );
-	m_orthoAct->setCheckable( true );
+	m_orthoAct = mkAct( "ortho", QStringLiteral( "Ortho" ), QStringLiteral( "Ortogonálně podle pohledu (F8)" ), true );
 	connect( m_orthoAct, &QAction::toggled, this, [this]( bool b ) { m_draw->setOrtho( b ); focusView(); } );
-	m_trackAct = m_toolbar->addAction( Icons::get( QStringLiteral( "tracking" ) ), QStringLiteral( "Trasování (F11) – podržte kurzor na konci/středu čáry, pak se ukážou pomocné čáry" ) );
-	m_trackAct->setCheckable( true );
+	m_trackAct = mkAct( "tracking", QStringLiteral( "Trasování" ), QStringLiteral( "Podržte kurzor na konci / středu čáry, pak se ukážou pomocné čáry (F11)" ), true );
 	m_trackAct->setChecked( true );
 	connect( m_trackAct, &QAction::toggled, this, [this]( bool b ) { m_draw->setTracking( b ); focusView(); } );
-	m_hiddenAct = m_toolbar->addAction( Icons::get( QStringLiteral( "hidden" ) ), QStringLiteral( "Zakrytá čára / nad řezem (F5)" ) );
-	m_hiddenAct->setCheckable( true );
+	m_hiddenAct = mkAct( "hidden", QStringLiteral( "Zakrytá čára" ), QStringLiteral( "Zakrytá čára / nad řezem (F5); s výběrem změní vybrané" ), true );
 	connect( m_hiddenAct, &QAction::toggled, this, [this]( bool b ) { m_draw->setHidden( b ); focusView(); } );
 
 	m_catCombo = new QComboBox;
-	m_catCombo->setToolTip( QStringLiteral( "Hladina (F1–F4)" ) );
+	m_catCombo->setToolTip( QStringLiteral( "Hladina (F1–F4); s výběrem změní vybrané" ) );
+	m_catCombo->setMinimumWidth( 150 );
 	for ( int c = 0; c < Drawing::CategoryCount; ++c )
 	{
-		m_catCombo->addItem( Icons::colorSwatch( Drawing::displayColor( c, false ), false ), QStringLiteral( "F%1 %2" ).arg( c + 1 ).arg( Drawing::categoryName( c ) ) );
+		m_catCombo->addItem( Icons::colorSwatch( Drawing::displayColor( c, false ), false ), QStringLiteral( "F%1  %2" ).arg( c + 1 ).arg( Drawing::categoryName( c ) ) );
 	}
-	m_toolbar->addWidget( m_catCombo );
 	connect( m_catCombo, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this]( int i ) { m_draw->setCategory( i ); focusView(); } );
-	m_toolbar->addSeparator();
+	QAction* symb = mkAct( "layers", QStringLiteral( "Hladiny a barvy…" ), QStringLiteral( "Hladina, barva, tloušťka a styl čar ve výstupním DGN" ) );
+	connect( symb, &QAction::triggered, this, &RezDock::editSymbology );
 
-	// pohled
-	QAction* rot = m_toolbar->addAction( Icons::get( QStringLiteral( "rotate" ) ), QStringLiteral( "Natočit pohled – 2 body (směr 1. → 2. bod bude vodorovně doprava)" ) );
-	connect( rot, &QAction::triggered, this, [this]()
-	{
-		if ( !isPlanView( m_activeView ) )
-		{
-			activateView( m_lastPlan );
-		}
-		if ( !m_draw->isActive() )
-		{
-			m_drawAct->setChecked( true );
-		}
-		m_draw->setMode( DrawTool::Mode::RotateView );
-		focusView();
-	} );
-	QAction* north = m_toolbar->addAction( Icons::get( QStringLiteral( "north" ) ), QStringLiteral( "Sever nahoru (zrušit natočení)" ) );
-	connect( north, &QAction::triggered, this, [this]()
-	{
-		m_viewAngle = 0.0;
-		if ( isPlanView( m_activeView ) )
-		{
-			topView();
-		}
-		focusView();
-	} );
-
-	QAction* nf = m_toolbar->addAction( Icons::get( QStringLiteral( "newfloor" ) ), QStringLiteral( "Nové patro – samostatný půdorys (předchozí patro se nabídne jako reference)" ) );
-	connect( nf, &QAction::triggered, this, [this]() { newFloor(); focusView(); } );
-	QAction* sec = m_toolbar->addAction( Icons::get( QStringLiteral( "section" ) ), QStringLiteral( "Nový svislý řez (S) – 2 body v půdorysu, pak strana pohledu" ) );
-	QAction* fac = m_toolbar->addAction( Icons::get( QStringLiteral( "facade" ) ), QStringLiteral( "Nový pohled (fasáda) – rovina před objektem: 2 body, pak strana pohledu" ) );
+	// --- pohledy a řezy
 	auto startDef = [this]( int kind )
 	{
 		if ( !isPlanView( m_activeView ) )
@@ -558,28 +672,77 @@ void RezDock::buildToolbar()
 		m_draw->startSectionDef( kind );
 		focusView();
 	};
+	QAction* sec = mkAct( "section", QStringLiteral( "Řez" ), QStringLiteral( "Nový svislý řez (S) – 2 body v půdorysu, pak strana pohledu" ) );
 	connect( sec, &QAction::triggered, this, [startDef]() { startDef( 0 ); } );
+	QAction* fac = mkAct( "facade", QStringLiteral( "Pohled" ), QStringLiteral( "Nový pohled (fasáda) – rovina před objektem: 2 body, pak strana pohledu" ) );
 	connect( fac, &QAction::triggered, this, [startDef]() { startDef( 1 ); } );
-	QAction* aux = m_toolbar->addAction( Icons::get( QStringLiteral( "auxsec" ) ), QStringLiteral( "Pomocný řez – 2 body v půdorysu a strana; otevře okno pro měření výšek (nic se neukládá)" ) );
+	QAction* aux = mkAct( "auxsec", QStringLiteral( "Pomocný\nřez" ), QStringLiteral( "2 body v půdorysu a strana; otevře okno pro měření výšek (nic se neukládá)" ) );
 	connect( aux, &QAction::triggered, this, [startDef]() { startDef( 2 ); } );
-	m_toolbar->addSeparator();
+	QAction* rot = mkAct( "rotate", QStringLiteral( "Otočit pohled" ), QStringLiteral( "2 body – směr 1. → 2. bod bude vodorovně doprava" ) );
+	connect( rot, &QAction::triggered, this, [this]()
+	{
+		if ( !isPlanView( m_activeView ) )
+		{
+			activateView( m_lastPlan );
+		}
+		if ( !m_draw->isActive() )
+		{
+			m_drawAct->setChecked( true );
+		}
+		m_draw->setMode( DrawTool::Mode::RotateView );
+		focusView();
+	} );
+	QAction* north = mkAct( "north", QStringLiteral( "Sever nahoru" ), QStringLiteral( "Zrušit natočení půdorysu" ) );
+	connect( north, &QAction::triggered, this, [this]()
+	{
+		m_viewAngle = 0.0;
+		if ( isPlanView( m_activeView ) )
+		{
+			topView();
+		}
+		focusView();
+	} );
+	QAction* rename = mkAct( "rename", QStringLiteral( "Přejmenovat" ), QStringLiteral( "Přejmenovat aktivní patro / řez / pohled" ) );
+	connect( rename, &QAction::triggered, this, &RezDock::renameView );
+	QAction* upA = mkAct( "up", QStringLiteral( "Řez výš / dál" ), QStringLiteral( "Posunout řez o krok (PgUp)" ) );
+	connect( upA, &QAction::triggered, this, [this]() { step( +1 ); focusView(); } );
+	QAction* downA = mkAct( "down", QStringLiteral( "Řez níž / blíž" ), QStringLiteral( "Posunout řez o krok (PgDn)" ) );
+	connect( downA, &QAction::triggered, this, [this]() { step( -1 ); focusView(); } );
+	QAction* thPlus = mkAct( "plus", QStringLiteral( "Silnější řez" ), QStringLiteral( "Tloušťka řezu + (Ctrl + kolečko)" ) );
+	connect( thPlus, &QAction::triggered, this, [this]() { thicknessStep( +1 ); focusView(); } );
+	QAction* thMinus = mkAct( "minus", QStringLiteral( "Tenčí řez" ), QStringLiteral( "Tloušťka řezu − (Ctrl + kolečko)" ) );
+	connect( thMinus, &QAction::triggered, this, [this]() { thicknessStep( -1 ); focusView(); } );
 
-	// změřené body
-	auto* ptBtn = new QToolButton;
-	ptBtn->setIcon( Icons::get( QStringLiteral( "points" ) ) );
-	ptBtn->setToolTip( QStringLiteral( "Změřené body (S-JTSK): načíst, zobrazit, kódy" ) );
-	ptBtn->setPopupMode( QToolButton::InstantPopup );
-	auto* ptMenu = new QMenu( ptBtn );
-	QAction* ptLoad = ptMenu->addAction( QStringLiteral( "Načíst body… (číslo Y X [Z] [kód])" ) );
-	QAction* ptShow = ptMenu->addAction( QStringLiteral( "Zobrazit body (a uchopovat na ně)" ) );
-	ptShow->setCheckable( true );
+	QAction* v3 = mkAct( "3d", QStringLiteral( "3D náhled" ), QStringLiteral( "3D náhled kolem středu okna (klik kolečkem do výkresu ukáže místo)" ) );
+	connect( v3, &QAction::triggered, this, [this]()
+	{
+		CCVector3d P;
+		if ( m_draw->isActive() && m_draw->viewCenter( P ) )
+		{
+			show3DAt( P.x, P.y, isPlanView( m_activeView ) ? std::numeric_limits<double>::quiet_NaN() : P.z );
+		}
+		else if ( ccGenericPointCloud* c = cloud() )
+		{
+			const CCVector3 C = c->getOwnBB().getCenter();
+			show3DAt( C.x, C.y, std::numeric_limits<double>::quiet_NaN() );
+		}
+	} );
+
+	// --- patra
+	QAction* nf = mkAct( "newfloor", QStringLiteral( "Nové patro" ), QStringLiteral( "Samostatný půdorys (předchozí patro se nabídne jako reference)" ) );
+	connect( nf, &QAction::triggered, this, [this]() { newFloor(); focusView(); } );
+	QAction* floorEst = mkAct( "floor", QStringLiteral( "±0 z mračna" ), QStringLiteral( "Odhadnout výšku podlahy 1. patra (±0,000) z mračna" ) );
+	connect( floorEst, &QAction::triggered, this, &RezDock::zeroFromFloor );
+	QAction* topA = mkAct( "north", QStringLiteral( "Půdorys" ), QStringLiteral( "Přepnout na půdorys aktuálního patra" ) );
+	connect( topA, &QAction::triggered, this, [this]() { activateView( m_lastPlan ); focusView(); } );
+
+	// --- změřené body
+	QAction* ptLoad = mkAct( "points", QStringLiteral( "Načíst\nbody" ), QStringLiteral( "Seznam souřadnic S-JTSK: číslo Y X [Z] [kód]" ) );
+	QAction* ptShow = mkAct( "points", QStringLiteral( "Zobrazit body" ), QStringLiteral( "Zobrazit body a uchopovat na ně" ), true );
 	ptShow->setChecked( true );
-	QAction* ptCodes = ptMenu->addAction( QStringLiteral( "Zobrazit kódy" ) );
-	ptCodes->setCheckable( true );
+	QAction* ptCodes = mkAct( "text", QStringLiteral( "Kódy bodů" ), QStringLiteral( "Zobrazit kódy bodů" ), true );
 	ptCodes->setChecked( true );
-	ptMenu->addSeparator();
-	QAction* ptColors = ptMenu->addAction( QStringLiteral( "Barvy bodů…" ) );
-	ptBtn->setMenu( ptMenu );
+	QAction* ptColors = mkAct( "theme", QStringLiteral( "Barvy bodů…" ), QStringLiteral( "Barva značky, čísla a kódu" ) );
 	connect( ptColors, &QAction::triggered, this, [this]()
 	{
 		QSettings st;
@@ -635,7 +798,6 @@ void RezDock::buildToolbar()
 		}
 		focusView();
 	} );
-	m_toolbar->addWidget( ptBtn );
 	connect( ptLoad, &QAction::triggered, this, [this, ptShow]()
 	{
 		if ( !cloud() )
@@ -668,27 +830,150 @@ void RezDock::buildToolbar()
 	} );
 	connect( ptShow, &QAction::toggled, this, [this]( bool on ) { m_draw->setShowPoints( on ); focusView(); } );
 	connect( ptCodes, &QAction::toggled, this, [this]( bool on ) { m_draw->setShowCodes( on ); focusView(); } );
-	m_toolbar->addSeparator();
 
-	QAction* v3 = m_toolbar->addAction( Icons::get( QStringLiteral( "3d" ) ), QStringLiteral( "3D náhled (prostřední klik do řezu ukáže místo)" ) );
-	connect( v3, &QAction::triggered, this, [this]()
+	// --- výstup
+	QAction* proj = mkAct( "project", QStringLiteral( "Uložit\npráci" ), QStringLiteral( "Projekt CloudCompare (.bin) s mračnem, kresbou, řezy, patry, body, nastavením i pohledem" ) );
+	connect( proj, &QAction::triggered, this, &RezDock::saveProject );
+	QAction* openA = mkAct( "open", QStringLiteral( "Otevřít" ), QStringLiteral( "Otevřít mračno nebo uloženou práci (.bin)" ) );
+	connect( openA, &QAction::triggered, this, [this]()
 	{
-		// 3D náhled kolem středu okna (nebo středu mračna)
-		CCVector3d P;
-		if ( m_draw->isActive() && m_draw->viewCenter( P ) )
+		if ( QAction* a = parentWidget() ? parentWidget()->findChild<QAction*>( QStringLiteral( "actionOpen" ) ) : nullptr )
 		{
-			show3DAt( P.x, P.y, isPlanView( m_activeView ) ? std::numeric_limits<double>::quiet_NaN() : P.z );
-		}
-		else if ( ccGenericPointCloud* c = cloud() )
-		{
-			const CCVector3 C = c->getOwnBB().getCenter();
-			show3DAt( C.x, C.y, std::numeric_limits<double>::quiet_NaN() );
+			a->trigger();
 		}
 	} );
-	QAction* proj = m_toolbar->addAction( Icons::get( QStringLiteral( "project" ) ), QStringLiteral( "Uložit rozdělanou práci – projekt CloudCompare (.bin) s mračnem, kresbou, řezy, patry, body, nastavením i pohledem; otevře se přes File → Open" ) );
-	connect( proj, &QAction::triggered, this, &RezDock::saveProject );
-	QAction* save = m_toolbar->addAction( Icons::get( QStringLiteral( "save" ) ), QStringLiteral( "Uložit výkres V7 a nastavení výstupu" ) );
+	QAction* save = mkAct( "save", QStringLiteral( "Uložit V7" ), QStringLiteral( "Uložit výkres MicroStation V7 (patra, řezy a pohledy) a nastavení výstupu" ) );
 	connect( save, &QAction::triggered, this, &RezDock::openSaveDialog );
+
+	// --- zobrazení
+	auto* themeCombo = new QComboBox;
+	themeCombo->addItem( QStringLiteral( "Světlý (původní)" ), QString() );
+	themeCombo->addItem( QStringLiteral( "AutoCAD tmavý" ), QStringLiteral( "acad" ) );
+	themeCombo->addItem( QStringLiteral( "Geoprim" ), QStringLiteral( "geoprim" ) );
+	themeCombo->setCurrentIndex( std::max( 0, themeCombo->findData( Theme::current() ) ) );
+	themeCombo->setMinimumWidth( 150 );
+	connect( themeCombo, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this, themeCombo]( int i ) { setTheme( themeCombo->itemData( i ).toString() ); } );
+	auto* bgGroup = new QActionGroup( this );
+	m_bgDarkAct = mkAct( "bgdark", QStringLiteral( "Tmavé" ), QStringLiteral( "Tmavé pozadí okna s mračnem" ), true );
+	m_bgLightAct = mkAct( "bglight", QStringLiteral( "Světlé" ), QStringLiteral( "Světlé pozadí okna s mračnem (když mračno na tmavém není dobře vidět)" ), true );
+	bgGroup->addAction( m_bgDarkAct );
+	bgGroup->addAction( m_bgLightAct );
+	m_bgDarkAct->setChecked( Theme::darkBackground() );
+	m_bgLightAct->setChecked( !Theme::darkBackground() );
+	connect( m_bgDarkAct, &QAction::triggered, this, [this]() { Theme::applyBackground( true, m_app ); m_draw->refreshDisplay(); } );
+	connect( m_bgLightAct, &QAction::triggered, this, [this]() { Theme::applyBackground( false, m_app ); m_draw->refreshDisplay(); } );
+	m_workAct = mkAct( "workmode", QStringLiteral( "Pracovní\nrežim" ), QStringLiteral( "Schovat lišty a panely CloudCompare (DB Tree, vlastnosti, konzole); znovu kliknout = vrátit" ), true );
+	connect( m_workAct, &QAction::toggled, this, &RezDock::setWorkMode );
+	QAction* panelA = mkAct( "draw", QStringLiteral( "Panel Řezy" ), QStringLiteral( "Zobrazit panel Řezy (pohled, výška a tloušťka řezu)" ) );
+	connect( panelA, &QAction::triggered, this, [this]() { show(); raise(); } );
+
+	// ================= karty
+	Ribbon* r = m_ribbon;
+	const int pDraw = r->addPage( QStringLiteral( "Kreslení" ) );
+	{
+		r->addGroup( pDraw, QStringLiteral( "Výběr" ) ).big( T( DrawTool::Mode::Select ), QStringLiteral( "1" ) );
+		RibbonGroup g = r->addGroup( pDraw, QStringLiteral( "Kreslení" ) );
+		g.big( T( DrawTool::Mode::Line ), QStringLiteral( "Q" ) );
+		RibbonColumn c = g.column();
+		c.small( T( DrawTool::Mode::Text ) );
+		c.small( T( DrawTool::Mode::Measure ), QStringLiteral( "D" ) );
+		RibbonGroup m = r->addGroup( pDraw, QStringLiteral( "Manipulace · 3" ) );
+		RibbonColumn mc = m.column();
+		mc.small( T( DrawTool::Mode::Copy ), QStringLiteral( "3·1" ) );
+		mc.small( T( DrawTool::Mode::Move ), QStringLiteral( "3·2" ) );
+		mc.small( T( DrawTool::Mode::Offset ), QStringLiteral( "3·9" ) );
+		RibbonColumn mc2 = m.column();
+		for ( int i = 0; i < 2; ++i )
+		{
+			auto* gap = new QWidget;
+			gap->setFixedHeight( 24 );
+			mc2.widget( gap );
+		}
+		mc2.widget( m_offsetSpin );
+		RibbonGroup u = r->addGroup( pDraw, QStringLiteral( "Úpravy · 7" ) );
+		RibbonColumn u1 = u.column();
+		u1.small( T( DrawTool::Mode::Modify ), QStringLiteral( "7·1" ) );
+		u1.small( T( DrawTool::Mode::Break ), QStringLiteral( "7·2" ) );
+		u1.small( T( DrawTool::Mode::Extend ), QStringLiteral( "7·3" ) );
+		RibbonColumn u2 = u.column();
+		u2.small( T( DrawTool::Mode::Corner ), QStringLiteral( "7·4" ) );
+		u2.small( T( DrawTool::Mode::Trim ), QStringLiteral( "7·5" ) );
+		u2.small( T( DrawTool::Mode::InsertVertex ), QStringLiteral( "7·7" ) );
+		RibbonColumn u3 = u.column();
+		u3.small( T( DrawTool::Mode::DeleteVertex ), QStringLiteral( "7·8" ) );
+		r->addGroup( pDraw, QStringLiteral( "Smazat" ) ).big( T( DrawTool::Mode::Delete ), QStringLiteral( "8" ) );
+		RibbonGroup h = r->addGroup( pDraw, QStringLiteral( "Hladina" ) );
+		RibbonColumn hc = h.column();
+		hc.widget( m_catCombo );
+		hc.small( m_hiddenAct, QStringLiteral( "F5" ) );
+		hc.small( symb );
+		RibbonGroup p = r->addGroup( pDraw, QStringLiteral( "Pomůcky" ) );
+		RibbonColumn pc = p.column();
+		pc.small( m_orthoAct, QStringLiteral( "F8" ) );
+		pc.small( m_trackAct, QStringLiteral( "F11" ) );
+		pc.small( undo, QStringLiteral( "Ctrl+Z" ) );
+	}
+	const int pSec = r->addPage( QStringLiteral( "Řezy a pohledy" ) );
+	{
+		RibbonGroup g = r->addGroup( pSec, QStringLiteral( "Nový" ) );
+		g.big( sec, QStringLiteral( "S" ) );
+		g.big( fac );
+		g.big( aux );
+		RibbonGroup n = r->addGroup( pSec, QStringLiteral( "Pohled" ) );
+		RibbonColumn nc = n.column();
+		nc.small( rot );
+		nc.small( north );
+		nc.small( rename );
+		RibbonGroup s = r->addGroup( pSec, QStringLiteral( "Poloha a tloušťka řezu" ) );
+		RibbonColumn s1 = s.column();
+		s1.small( upA, QStringLiteral( "PgUp" ) );
+		s1.small( downA, QStringLiteral( "PgDn" ) );
+		RibbonColumn s2 = s.column();
+		s2.small( thPlus );
+		s2.small( thMinus );
+		r->addGroup( pSec, QStringLiteral( "3D" ) ).big( v3 );
+	}
+	const int pFloor = r->addPage( QStringLiteral( "Patra" ) );
+	{
+		RibbonGroup g = r->addGroup( pFloor, QStringLiteral( "Patro" ) );
+		g.big( nf );
+		RibbonColumn c = g.column();
+		c.small( topA );
+		c.small( rename );
+		c.small( floorEst );
+	}
+	const int pPts = r->addPage( QStringLiteral( "Body" ) );
+	{
+		RibbonGroup g = r->addGroup( pPts, QStringLiteral( "Změřené body" ) );
+		g.big( ptLoad );
+		RibbonColumn c = g.column();
+		c.small( ptShow );
+		c.small( ptCodes );
+		c.small( ptColors );
+	}
+	const int pOut = r->addPage( QStringLiteral( "Výstup" ) );
+	{
+		RibbonGroup g = r->addGroup( pOut, QStringLiteral( "Rozdělaná práce" ) );
+		g.big( proj );
+		g.big( openA );
+		RibbonGroup d = r->addGroup( pOut, QStringLiteral( "MicroStation V7" ) );
+		d.big( save );
+		d.column().small( symb );
+	}
+	const int pView = r->addPage( QStringLiteral( "Zobrazení" ) );
+	{
+		RibbonGroup g = r->addGroup( pView, QStringLiteral( "Vzhled" ) );
+		RibbonColumn c = g.column();
+		c.widget( themeCombo );
+		RibbonGroup b = r->addGroup( pView, QStringLiteral( "Pozadí kresby" ) );
+		RibbonColumn bc = b.column();
+		bc.small( m_bgDarkAct );
+		bc.small( m_bgLightAct );
+		RibbonGroup w = r->addGroup( pView, QStringLiteral( "Okno" ) );
+		w.big( m_workAct );
+		w.column().small( panelA );
+	}
+	r->finishPages();
 }
 
 // ================================================================ patra
@@ -2064,6 +2349,10 @@ std::vector<RezDock::SectionInfo> RezDock::loadSections() const
 		si.id = ch->getMetaData( KSecId ).toInt();
 		si.kind = ch->getMetaData( "qRezy.secKind" ).toInt();
 		si.name = sectionName( si.kind, ch->hasMetaData( "qRezy.secNo" ) ? ch->getMetaData( "qRezy.secNo" ).toInt() : si.id );
+		if ( ch->hasMetaData( "qRezy.secName" ) )
+		{
+			si.name = ch->getMetaData( "qRezy.secName" ).toString();
+		}
 		si.A = CCVector2d( ch->getMetaData( "qRezy.secAx" ).toDouble(), ch->getMetaData( "qRezy.secAy" ).toDouble() );
 		si.B = CCVector2d( ch->getMetaData( "qRezy.secBx" ).toDouble(), ch->getMetaData( "qRezy.secBy" ).toDouble() );
 		si.N = CCVector2d( ch->getMetaData( "qRezy.secNx" ).toDouble(), ch->getMetaData( "qRezy.secNy" ).toDouble() );

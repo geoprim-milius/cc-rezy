@@ -9,4 +9,6 @@ target_sources( ${PROJECT_NAME}
 		${CMAKE_CURRENT_LIST_DIR}/RezLayer.cpp
 		${CMAKE_CURRENT_LIST_DIR}/View3D.cpp
 		${CMAKE_CURRENT_LIST_DIR}/Icons.cpp
+		${CMAKE_CURRENT_LIST_DIR}/Ribbon.cpp
+		${CMAKE_CURRENT_LIST_DIR}/Theme.cpp
 )

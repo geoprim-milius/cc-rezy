@@ -9,6 +9,8 @@ target_sources( ${PROJECT_NAME}
 		${CMAKE_CURRENT_LIST_DIR}/RezLayer.h
 		${CMAKE_CURRENT_LIST_DIR}/View3D.h
 		${CMAKE_CURRENT_LIST_DIR}/Icons.h
+		${CMAKE_CURRENT_LIST_DIR}/Ribbon.h
+		${CMAKE_CURRENT_LIST_DIR}/Theme.h
 )
 
 target_include_directories( ${PROJECT_NAME}

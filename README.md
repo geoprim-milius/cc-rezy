@@ -9,7 +9,7 @@ Rozbalte zip do nové složky a spusťte `CloudCompare.exe`.
 
 ## Začátek
 1. Otevřete mračno (LAS), vyberte ho v seznamu a zvolte *Plugins → Řezy*.
-2. Vpravo se otevře panel **Řezy**, nahoře přibude **lišta s ikonami** (popis se ukáže po najetí myší).
+2. Vpravo se otevře panel **Řezy**, nahoře přibude **pás karet** (popis nástroje se ukáže po najetí myší).
 3. Řez se nastaví 1 m nad odhadnutou podlahu. **Posuvník** pod údajem nebo **PgUp / PgDn** posouvá řez, **Ctrl + kolečko** mění tloušťku.
 
 ## Panel Řezy
@@ -22,10 +22,22 @@ Rozbalte zip do nové složky a spusťte `CloudCompare.exe`.
 - **Podlaha patra** (jen vyšší patra): výšky v patře se počítají od ní, ve 3D na ní leží kresba
 - **Reference**: jiné patro šedě pod kresbou (kontrola, zda jsou zdi nad sebou), *uchopit* = uchopovat i na jeho čáry
 
-## Lišta nástrojů
+## Pás karet
+Karty **Kreslení**, **Řezy a pohledy**, **Patra**, **Body**, **Výstup**, **Zobrazení**; vlevo tlačítko **Kreslit**
+(zapnout/vypnout kreslení – zapne se samo i výběrem nástroje). U tlačítek je drobně klávesa (Q, 3·1 = 3 a pak 1 …).
+Dvojklik na kartu pás sbalí / rozbalí.
+
+- **Zobrazení → Vzhled**: *Světlý (původní)*, *AutoCAD tmavý*, *Geoprim* – přebarví celý CloudCompare.
+- **Zobrazení → Pozadí kresby**: *Tmavé / Světlé* – když mračno na tmavém pozadí není dobře vidět.
+- **Zobrazení → Pracovní režim**: schová lišty a panely CloudCompare (DB Tree, vlastnosti, konzole); znovu kliknout = vrátit. Pamatuje si to i po dalším spuštění.
+- **Řezy a pohledy / Patra → Přejmenovat**: přejmenuje aktivní patro (i v názvu souboru) nebo řez/pohled.
+- **Patra → ±0 z mračna**: odhad výšky podlahy 1. patra.
+- **Výstup → Otevřít**: otevřít mračno nebo uloženou práci (.bin).
+
+## Nástroje
 | Ikona | Nástroj | Klávesa | Postup |
 |---|---|---|---|
-| tužka | kreslení zap/vyp | | |
+| tužka | Kreslit (zap/vyp) | | |
 | šipka | Výběr | 1 | klik = vybrat, Ctrl+klik = přidat/ubrat, okno tažením (zleva = jen uvnitř, zprava = i křížem), Ctrl+A = vše; modré úchopy na koncích = přesun konce; s výběrem Del/8 smaže, 3→1/3→2 kopie/přesun celého výběru, F1–F4 / hladina a F5 změní hladinu / zakrytí |
 | čára | Čára | Q | body, pravé kliknutí ukončí |
 | kříž šipek | Přesun | 3 → 2 | čára → výchozí bod → cíl (nebo vzdálenost) |

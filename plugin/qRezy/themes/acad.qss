@@ -1,0 +1,45 @@
+
+* { font-family: "Segoe UI"; font-size: 9.5pt; }
+QMainWindow, QDialog, QWidget { background: #2B313B; color: #E3E8EF; }
+QMainWindow::separator { background: #4A5361; width: 1px; height: 1px; }
+QMenuBar { background: #3B4453; color: #E3E8EF; border-bottom: 1px solid #4A5361; }
+QMenuBar::item:selected { background: #4A5566; }
+QMenu { background: #252B34; color: #E3E8EF; border: 1px solid #4A5361; }
+QMenu::item:selected { background: #3D8EE6; color: #FFFFFF; }
+QMenu::item:disabled { color: #7B8592; }
+QToolBar { background: #3B4453; border: none; border-bottom: 1px solid #4A5361; spacing: 2px; padding: 3px; }
+QToolBar::separator { background: #4A5361; width: 1px; margin: 4px 6px; }
+QToolButton { background: transparent; border: 1px solid transparent; border-radius: 2px; padding: 3px; color: #E3E8EF; }
+QToolButton:hover { background: #4A5566; border-color: #4A5361; }
+QToolButton:checked { background: #2C4F7A; border-color: #3D8EE6; }
+QDockWidget { color: #E3E8EF; titlebar-close-icon: none; }
+QDockWidget::title { background: #3B4453; padding: 5px 8px; border-bottom: 1px solid #4A5361; text-transform: uppercase; }
+QTreeView, QListView, QTableView, QTableWidget { background: #252B34; alternate-background-color: #2F3641; color: #E3E8EF; border: 1px solid #4A5361; selection-background-color: #3D8EE6; selection-color: #FFFFFF; gridline-color: #4A5361; }
+QHeaderView::section { background: #3B4453; color: #B9C2CE; border: none; border-right: 1px solid #4A5361; padding: 4px; }
+QTextEdit, QPlainTextEdit { background: #252B34; color: #B9C2CE; border: 1px solid #4A5361; }
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background: #1E232B; color: #E3E8EF; border: 1px solid #4A5361; border-radius: 2px; padding: 3px 6px; selection-background-color: #3D8EE6; }
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border-color: #3D8EE6; }
+QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled { color: #7B8592; background: #2B313B; }
+QComboBox QAbstractItemView { background: #252B34; color: #E3E8EF; selection-background-color: #3D8EE6; }
+QComboBox::drop-down, QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { border: none; background: transparent; width: 14px; }
+QPushButton { background: #3B4453; color: #E3E8EF; border: 1px solid #4A5361; border-radius: 2px; padding: 5px 12px; }
+QPushButton:hover { border-color: #3D8EE6; }
+QPushButton:default { background: #3D8EE6; color: #FFFFFF; border-color: #3D8EE6; }
+QCheckBox { color: #E3E8EF; spacing: 6px; }
+QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #7B8592; border-radius: 2px; background: #1E232B; }
+QCheckBox::indicator:checked { background: #3D8EE6; border-color: #3D8EE6; }
+QSlider::groove:horizontal { height: 3px; background: #4A5361; border-radius: 1px; }
+QSlider::sub-page:horizontal { background: #3D8EE6; border-radius: 1px; }
+QSlider::handle:horizontal { background: #E3E8EF; width: 12px; height: 12px; margin: -5px 0; border-radius: 6px; }
+QGroupBox { border: 1px solid #4A5361; border-radius: 2px; margin-top: 14px; padding-top: 6px; color: #B9C2CE; }
+QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; color: #3D8EE6; }
+QScrollBar:vertical { background: #2B313B; width: 10px; }
+QScrollBar::handle:vertical { background: #4A5361; border-radius: 4px; min-height: 24px; }
+QScrollBar:horizontal { background: #2B313B; height: 10px; }
+QScrollBar::handle:horizontal { background: #4A5361; border-radius: 4px; min-width: 24px; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+QTabBar::tab { background: #3B4453; color: #B9C2CE; padding: 5px 12px; border: 1px solid #4A5361; }
+QTabBar::tab:selected { background: #252B34; color: #E3E8EF; border-bottom: 2px solid #3D8EE6; }
+QToolTip { background: #252B34; color: #E3E8EF; border: 1px solid #3D8EE6; padding: 4px; }
+QLabel#rezyStatus { background: #2F3641; color: #B9C2CE; border-left: 3px solid #3D8EE6; padding: 6px; }
+QStatusBar { background: #3B4453; color: #B9C2CE; }
