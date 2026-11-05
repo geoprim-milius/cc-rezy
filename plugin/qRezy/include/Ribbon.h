@@ -23,7 +23,7 @@ public:
 		: m_layout( l )
 	{
 	}
-	QToolButton* small( QAction* a, const QString& key = QString() );
+	QToolButton* addSmall( QAction* a, const QString& key = QString() );
 	void widget( QWidget* w, const QString& label = QString() );
 
 private:
@@ -37,7 +37,7 @@ public:
 		: m_layout( l )
 	{
 	}
-	QToolButton* big( QAction* a, const QString& key = QString() );
+	QToolButton* addBig( QAction* a, const QString& key = QString() );
 	RibbonColumn column();
 
 private:

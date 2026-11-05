@@ -871,17 +871,17 @@ void RezDock::buildToolbar()
 	Ribbon* r = m_ribbon;
 	const int pDraw = r->addPage( QStringLiteral( "Kreslení" ) );
 	{
-		r->addGroup( pDraw, QStringLiteral( "Výběr" ) ).big( T( DrawTool::Mode::Select ), QStringLiteral( "1" ) );
+		r->addGroup( pDraw, QStringLiteral( "Výběr" ) ).addBig( T( DrawTool::Mode::Select ), QStringLiteral( "1" ) );
 		RibbonGroup g = r->addGroup( pDraw, QStringLiteral( "Kreslení" ) );
-		g.big( T( DrawTool::Mode::Line ), QStringLiteral( "Q" ) );
+		g.addBig( T( DrawTool::Mode::Line ), QStringLiteral( "Q" ) );
 		RibbonColumn c = g.column();
-		c.small( T( DrawTool::Mode::Text ) );
-		c.small( T( DrawTool::Mode::Measure ), QStringLiteral( "D" ) );
+		c.addSmall( T( DrawTool::Mode::Text ) );
+		c.addSmall( T( DrawTool::Mode::Measure ), QStringLiteral( "D" ) );
 		RibbonGroup m = r->addGroup( pDraw, QStringLiteral( "Manipulace · 3" ) );
 		RibbonColumn mc = m.column();
-		mc.small( T( DrawTool::Mode::Copy ), QStringLiteral( "3·1" ) );
-		mc.small( T( DrawTool::Mode::Move ), QStringLiteral( "3·2" ) );
-		mc.small( T( DrawTool::Mode::Offset ), QStringLiteral( "3·9" ) );
+		mc.addSmall( T( DrawTool::Mode::Copy ), QStringLiteral( "3·1" ) );
+		mc.addSmall( T( DrawTool::Mode::Move ), QStringLiteral( "3·2" ) );
+		mc.addSmall( T( DrawTool::Mode::Offset ), QStringLiteral( "3·9" ) );
 		RibbonColumn mc2 = m.column();
 		for ( int i = 0; i < 2; ++i )
 		{
@@ -892,73 +892,73 @@ void RezDock::buildToolbar()
 		mc2.widget( m_offsetSpin );
 		RibbonGroup u = r->addGroup( pDraw, QStringLiteral( "Úpravy · 7" ) );
 		RibbonColumn u1 = u.column();
-		u1.small( T( DrawTool::Mode::Modify ), QStringLiteral( "7·1" ) );
-		u1.small( T( DrawTool::Mode::Break ), QStringLiteral( "7·2" ) );
-		u1.small( T( DrawTool::Mode::Extend ), QStringLiteral( "7·3" ) );
+		u1.addSmall( T( DrawTool::Mode::Modify ), QStringLiteral( "7·1" ) );
+		u1.addSmall( T( DrawTool::Mode::Break ), QStringLiteral( "7·2" ) );
+		u1.addSmall( T( DrawTool::Mode::Extend ), QStringLiteral( "7·3" ) );
 		RibbonColumn u2 = u.column();
-		u2.small( T( DrawTool::Mode::Corner ), QStringLiteral( "7·4" ) );
-		u2.small( T( DrawTool::Mode::Trim ), QStringLiteral( "7·5" ) );
-		u2.small( T( DrawTool::Mode::InsertVertex ), QStringLiteral( "7·7" ) );
+		u2.addSmall( T( DrawTool::Mode::Corner ), QStringLiteral( "7·4" ) );
+		u2.addSmall( T( DrawTool::Mode::Trim ), QStringLiteral( "7·5" ) );
+		u2.addSmall( T( DrawTool::Mode::InsertVertex ), QStringLiteral( "7·7" ) );
 		RibbonColumn u3 = u.column();
-		u3.small( T( DrawTool::Mode::DeleteVertex ), QStringLiteral( "7·8" ) );
-		r->addGroup( pDraw, QStringLiteral( "Smazat" ) ).big( T( DrawTool::Mode::Delete ), QStringLiteral( "8" ) );
+		u3.addSmall( T( DrawTool::Mode::DeleteVertex ), QStringLiteral( "7·8" ) );
+		r->addGroup( pDraw, QStringLiteral( "Smazat" ) ).addBig( T( DrawTool::Mode::Delete ), QStringLiteral( "8" ) );
 		RibbonGroup h = r->addGroup( pDraw, QStringLiteral( "Hladina" ) );
 		RibbonColumn hc = h.column();
 		hc.widget( m_catCombo );
-		hc.small( m_hiddenAct, QStringLiteral( "F5" ) );
-		hc.small( symb );
+		hc.addSmall( m_hiddenAct, QStringLiteral( "F5" ) );
+		hc.addSmall( symb );
 		RibbonGroup p = r->addGroup( pDraw, QStringLiteral( "Pomůcky" ) );
 		RibbonColumn pc = p.column();
-		pc.small( m_orthoAct, QStringLiteral( "F8" ) );
-		pc.small( m_trackAct, QStringLiteral( "F11" ) );
-		pc.small( undo, QStringLiteral( "Ctrl+Z" ) );
+		pc.addSmall( m_orthoAct, QStringLiteral( "F8" ) );
+		pc.addSmall( m_trackAct, QStringLiteral( "F11" ) );
+		pc.addSmall( undo, QStringLiteral( "Ctrl+Z" ) );
 	}
 	const int pSec = r->addPage( QStringLiteral( "Řezy a pohledy" ) );
 	{
 		RibbonGroup g = r->addGroup( pSec, QStringLiteral( "Nový" ) );
-		g.big( sec, QStringLiteral( "S" ) );
-		g.big( fac );
-		g.big( aux );
+		g.addBig( sec, QStringLiteral( "S" ) );
+		g.addBig( fac );
+		g.addBig( aux );
 		RibbonGroup n = r->addGroup( pSec, QStringLiteral( "Pohled" ) );
 		RibbonColumn nc = n.column();
-		nc.small( rot );
-		nc.small( north );
-		nc.small( rename );
+		nc.addSmall( rot );
+		nc.addSmall( north );
+		nc.addSmall( rename );
 		RibbonGroup s = r->addGroup( pSec, QStringLiteral( "Poloha a tloušťka řezu" ) );
 		RibbonColumn s1 = s.column();
-		s1.small( upA, QStringLiteral( "PgUp" ) );
-		s1.small( downA, QStringLiteral( "PgDn" ) );
+		s1.addSmall( upA, QStringLiteral( "PgUp" ) );
+		s1.addSmall( downA, QStringLiteral( "PgDn" ) );
 		RibbonColumn s2 = s.column();
-		s2.small( thPlus );
-		s2.small( thMinus );
-		r->addGroup( pSec, QStringLiteral( "3D" ) ).big( v3 );
+		s2.addSmall( thPlus );
+		s2.addSmall( thMinus );
+		r->addGroup( pSec, QStringLiteral( "3D" ) ).addBig( v3 );
 	}
 	const int pFloor = r->addPage( QStringLiteral( "Patra" ) );
 	{
 		RibbonGroup g = r->addGroup( pFloor, QStringLiteral( "Patro" ) );
-		g.big( nf );
+		g.addBig( nf );
 		RibbonColumn c = g.column();
-		c.small( topA );
-		c.small( rename );
-		c.small( floorEst );
+		c.addSmall( topA );
+		c.addSmall( rename );
+		c.addSmall( floorEst );
 	}
 	const int pPts = r->addPage( QStringLiteral( "Body" ) );
 	{
 		RibbonGroup g = r->addGroup( pPts, QStringLiteral( "Změřené body" ) );
-		g.big( ptLoad );
+		g.addBig( ptLoad );
 		RibbonColumn c = g.column();
-		c.small( ptShow );
-		c.small( ptCodes );
-		c.small( ptColors );
+		c.addSmall( ptShow );
+		c.addSmall( ptCodes );
+		c.addSmall( ptColors );
 	}
 	const int pOut = r->addPage( QStringLiteral( "Výstup" ) );
 	{
 		RibbonGroup g = r->addGroup( pOut, QStringLiteral( "Rozdělaná práce" ) );
-		g.big( proj );
-		g.big( openA );
+		g.addBig( proj );
+		g.addBig( openA );
 		RibbonGroup d = r->addGroup( pOut, QStringLiteral( "MicroStation V7" ) );
-		d.big( save );
-		d.column().small( symb );
+		d.addBig( save );
+		d.column().addSmall( symb );
 	}
 	const int pView = r->addPage( QStringLiteral( "Zobrazení" ) );
 	{
@@ -967,11 +967,11 @@ void RezDock::buildToolbar()
 		c.widget( themeCombo );
 		RibbonGroup b = r->addGroup( pView, QStringLiteral( "Pozadí kresby" ) );
 		RibbonColumn bc = b.column();
-		bc.small( m_bgDarkAct );
-		bc.small( m_bgLightAct );
+		bc.addSmall( m_bgDarkAct );
+		bc.addSmall( m_bgLightAct );
 		RibbonGroup w = r->addGroup( pView, QStringLiteral( "Okno" ) );
-		w.big( m_workAct );
-		w.column().small( panelA );
+		w.addBig( m_workAct );
+		w.column().addSmall( panelA );
 	}
 	r->finishPages();
 }

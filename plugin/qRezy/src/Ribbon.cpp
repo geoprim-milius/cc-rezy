@@ -19,7 +19,7 @@ namespace
 	constexpr int BodyH = 104;
 }
 
-QToolButton* RibbonColumn::small( QAction* a, const QString& key )
+QToolButton* RibbonColumn::addSmall( QAction* a, const QString& key )
 {
 	auto* row = new QWidget;
 	auto* h = new QHBoxLayout( row );
@@ -61,7 +61,7 @@ void RibbonColumn::widget( QWidget* w, const QString& label )
 	m_layout->addWidget( row );
 }
 
-QToolButton* RibbonGroup::big( QAction* a, const QString& key )
+QToolButton* RibbonGroup::addBig( QAction* a, const QString& key )
 {
 	auto* b = new QToolButton;
 	b->setObjectName( QStringLiteral( "rezyBig" ) );
