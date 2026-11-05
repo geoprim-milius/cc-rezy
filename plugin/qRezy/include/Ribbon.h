@@ -59,6 +59,10 @@ public:
 	void setCurrentPage( int page );
 	int currentPage() const;
 
+	//! pás se nesmí roztahovat přes okno – šířku určí okno, obsah se případně posouvá
+	QSize sizeHint() const override;
+	QSize minimumSizeHint() const override;
+
 private:
 	QTabBar* m_tabs = nullptr;
 	QStackedWidget* m_stack = nullptr;

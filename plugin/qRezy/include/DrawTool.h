@@ -15,6 +15,7 @@
 
 #include <ccColorTypes.h>
 
+#include <array>
 #include <functional>
 #include <vector>
 
@@ -77,7 +78,9 @@ public:
 		Select,     //!< výběr (klik, Ctrl+klik, okno), úchopy na koncích
 		Modify,     //!< upravit prvek: posun bližšího konce čáry
 		InsertVertex, //!< vložit vrchol (rozdělí čáru, vrchol se umístí)
-		DeleteVertex  //!< smazat vrchol (sloučí dvě navazující čáry)
+		DeleteVertex, //!< smazat vrchol (sloučí dvě navazující čáry)
+		Arc,          //!< oblouk (3 body, metoda podle setArcMethod)
+		CloudLine     //!< čára z mračna: klik u bodů řezu → proložená čára, potvrdit / zahodit
 	};
 
 	enum class SnapType
@@ -112,6 +115,20 @@ public:
 	bool tracking() const { return m_trackingOn; }
 	//! druh nové roviny pro SectionDef: 0 = řez, 1 = pohled (fasáda)
 	void startSectionDef( int kind );
+	//! oblouk: 0 = začátek–střed–konec, 1 = začátek–konec–střed, 2 = tři body (začátek–bod na oblouku–konec)
+	void setArcMethod( int m );
+	int arcMethod() const { return m_arcMethod; }
+	//! čára z mračna: roviny aktuálního řezu (a·x + b·y + c·z + d ≥ 0, lokálně)
+	using SliceProvider = std::function<std::vector<std::array<double, 4>>()>;
+	void setSliceProvider( SliceProvider p ) { m_sliceProvider = std::move( p ); }
+	void setCloudLineParams( double gap, double tol, bool square );
+	//! změřené body s výškou v dosahu dané roviny (lokální 3D poloha, číslo) – pro výstup
+	std::vector<std::pair<CCVector3d, QString>> pointsInFrame( const DrawFrame& f ) const;
+	//! přesune čáry z hladiny na jinou (smazání hladiny); vrací počet
+	int moveCategory( int fromId, int toId );
+	int countCategory( int id ) const;
+	//! obnoví barvy a názvy čar (po změně hladin)
+	void refreshLooks();
 
 	void resetTool();
 	void undo();
@@ -181,6 +198,7 @@ private:
 		CCVector2d b;
 		ccPolyline* poly;
 		bool ref = false; //!< čára referenčního výkresu (jen uchopení)
+		bool arc = false; //!< úsek oblouku
 	};
 
 	struct Action
@@ -198,6 +216,7 @@ private:
 		ccPolyline* poly = nullptr; //!< u smazaných držíme objekt
 		CCVector2d a;               //!< původní body (Modify)
 		CCVector2d b;
+		std::vector<CCVector2d> pts; //!< původní vrcholy oblouku (Modify)
 	};
 	using UndoItem = std::vector<Action>;
 
@@ -218,6 +237,19 @@ private:
 
 	// úpravy
 	ccPolyline* addLine( const CCVector2d& a, const CCVector2d& b, int cat, bool hidden, UndoItem* undo );
+	ccPolyline* addPolyline( const std::vector<CCVector2d>& pts, int cat, bool hidden, bool arc, UndoItem* undo );
+	static bool isArc( const ccHObject* obj );
+	std::vector<CCVector2d> polyPoints( ccPolyline* poly ) const;
+	void setPolyPoints( ccPolyline* poly, const std::vector<CCVector2d>& pts, UndoItem* undo );
+	//! posun prvku (čára, oblouk, text) o d; copy = vytvořit kopii
+	void translateItem( ccPolyline* poly, const CCVector2d& d, bool copy, UndoItem* undo );
+	bool rejectArc( ccPolyline* poly );
+	// oblouk
+	std::vector<CCVector2d> arcPoints( const CCVector2d& C, double r, double a0, double sweep ) const;
+	bool arcPreview( std::vector<CCVector2d>& pts ) const;
+	// čára z mračna
+	bool detectCloudLine( const CCVector2d& click );
+	void acceptCloudLine();
 	void setLine( ccPolyline* poly, const CCVector2d& a, const CCVector2d& b, UndoItem* undo );
 	void removeLine( ccPolyline* poly, UndoItem* undo );
 	void pushUndo( UndoItem&& u );
@@ -271,6 +303,7 @@ private:
 		QString code;
 	};
 	std::vector<VisPoint> visiblePoints() const;
+	std::vector<VisPoint> framePoints( const DrawFrame& f, std::vector<CCVector3d>* local = nullptr ) const;
 	void refreshLayer();
 	ccPolyline* addText( const CCVector2d& P, const QString& text, UndoItem* undo );
 	static bool isText( const ccHObject* obj );
@@ -343,9 +376,34 @@ private:
 	CCVector2d m_far2;                 //!< vložit vrchol: druhý konec
 	bool m_refSnap = false;
 	QString m_lastText;
+	QString m_flash; //!< jednorázová zpráva ve stavovém řádku
 
 	// náhledy (2D prvky v okně) – zásobník znovu používaných čar
 	std::vector<ccPolyline*> m_overlayPool;
 
 	std::vector<UndoItem> m_undo;
+
+	// kolmo na předchozí úsek (Enter při kreslení čáry) – platí pro jeden úsek
+	bool m_perpLock = false;
+	CCVector2d m_perpDir;
+
+	// oblouk
+	int m_arcMethod = 0;
+	std::vector<CCVector2d> m_arcPts; //!< zadané body
+	double m_arcSweep = 0.0;          //!< začátek–střed–konec: úhel sledovaný pohybem myši
+	double m_arcPrevAng = 0.0;
+
+	// čára z mračna
+	SliceProvider m_sliceProvider;
+	double m_clGap = 0.10;
+	double m_clTol = 0.02;
+	bool m_clSquare = true;
+	bool m_clHas = false;           //!< náhled k potvrzení
+	CCVector2d m_clA;
+	CCVector2d m_clB;
+	ccPolyline* m_clPrev = nullptr; //!< naposledy vytvořená čára (napojení v rohu)
+	bool m_clJoin = false;
+	int m_clPrevEnd = 0;            //!< který konec předchozí čáry se posune
+	CCVector2d m_clPrevA;           //!< předchozí čára po napojení
+	CCVector2d m_clPrevB;
 };

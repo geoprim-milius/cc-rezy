@@ -39,7 +39,9 @@ Dvojklik na kartu pás sbalí / rozbalí.
 |---|---|---|---|
 | tužka | Kreslit (zap/vyp) | | |
 | šipka | Výběr | 1 | klik = vybrat, Ctrl+klik = přidat/ubrat, okno tažením (zleva = jen uvnitř, zprava = i křížem), Ctrl+A = vše; modré úchopy na koncích = přesun konce; s výběrem Del/8 smaže, 3→1/3→2 kopie/přesun celého výběru, F1–F4 / hladina a F5 změní hladinu / zakrytí |
-| čára | Čára | Q | body, pravé kliknutí ukončí |
+| čára | Čára | Q | body, pravé kliknutí ukončí; **Enter bez čísla = další úsek kolmo na předchozí** (jen ten jeden úsek, pro další kolmici zase Enter) |
+| oblouk | Oblouk | E | tři body podle metody v pásu: *začátek–střed–konec* (směr podle pohybu myši), *začátek–konec–střed* (menší oblouk, střed na ose tětivy), *tři body* (začátek–bod na oblouku–konec); do DGN jako skutečný oblouk; lze vybrat, přesunout, kopírovat, smazat, změnit hladinu |
+| čára s body | Čára z mračna | | klik k bodům řezu (na líc zdi) → čára proložená body (náhled modře); klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a hned další, pravé = zahodit. Navazující čára se napojí v rohu, téměř kolmá se srovná na 90°. *Mezera* = kolik bodů smí chybět (dveře/okna = konec čáry), *tol.* = rozptyl líce |
 | kříž šipek | Přesun | 3 → 2 | čára → výchozí bod → cíl (nebo vzdálenost) |
 | dvě čáry | Kopie | 3 → 1 | čára → výchozí bod → cíle |
 | rovnoběžky | Rovnoběžně | 3 → 9 | čára → strana; vzdálenost z pole vedle nebo napsat + Enter |
@@ -57,7 +59,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | pravý úhel | Orto | F8 | podle natočení pohledu |
 | zelený kříž | Trasování | F11 | podržte kurzor na konci/středu čáry → bod se „získá“ (zelené +); pomocné čáry vodorovně/svisle od získaných bodů i od posledního bodu, uchopí se na ně, na jejich průsečíky i na průsečík s čarou; napsané číslo = vzdálenost od získaného bodu |
 | čárkovaná | Zakrytá čára | F5 | |
-| hladina | Zdi / Překlady / Trámy / Drobné prvky | F1–F4 | |
+| hladina | Zdi / Překlady / Trámy / Drobné prvky (+ vlastní) | F1–F4 | hladiny jde přidávat, mazat a řadit v *Hladiny a barvy…* (F1–F4 = první čtyři) |
 | otočení | Natočit pohled | | 2 body: směr 1. → 2. bod bude vodorovně doprava |
 | S se šipkou | Sever nahoru | | |
 | dvě patra + | Nové patro | | samostatný půdorys; podlaha se odhadne z mračna, předchozí patro se zapne jako reference |
@@ -95,7 +97,8 @@ Levé tažení = otáčení, kolečko = zoom.
 ## Změřené body
 Soubor „číslo Y X [Z] [kód]“ v S-JTSK (mezery, tabulátory nebo středníky). Body se ukážou v půdorysu
 se značkou, číslem a kódem a dá se na ně uchopit. Body s výškou se v řezu (±1 m od roviny)
-a v pohledu (do hloubky pohledu) samy sklopí do roviny. Body se do DGN neukládají.
+a v pohledu (do hloubky pohledu) samy sklopí do roviny. Do DGN řezů a pohledů se ukládají jako
+malý křížek s číslem na vlastní hladině (okno Uložit, výchozí hladina 16); do půdorysu ne.
 Jednotlivé soubory jdou vypnout zaškrtnutím v seznamu objektů (skupina *Výkres (Řezy)*).
 Barvy značky, čísla a kódu a tmavý podklad pod textem: menu bodů → *Barvy bodů…*
 
@@ -121,6 +124,10 @@ Ikona diskety: **seed** (existující výkres – převezmou se jednotky a nasta
 výšky relativně nebo absolutně (Bpv), výška popisů. Řezy a pohledy jsou ve výkresu 2D
 s popisem „Řez A-A'“ a „±0,000 = … m n. m. Bpv“ (hladina 14). Vložené texty mají vlastní
 výšku a hladinu (výchozí 15) v okně Uložit.
+
+**Hladiny a barvy** (manažer hladin): název, barva na obrazovce, hladina/barva/tloušťka/styl pro plnou
+i zakrytou čáru; *Přidat*, *Smazat* (čáry ze smazané hladiny se přesunou na zvolenou), *Nahoru/Dolů*.
+Oblouky se ukládají jako oblouk (typ 16).
 
 Nakreslené čáry jsou v seznamu objektů pod mračnem ve skupině *Výkres (Řezy)*
 a uloží se s projektem CloudCompare (.bin).

@@ -5,6 +5,8 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QStackedWidget>
 #include <QTabBar>
@@ -122,7 +124,10 @@ Ribbon::Ribbon( QWidget* parent )
 	v->addWidget( tabRow );
 
 	m_stack = new QStackedWidget;
-	m_stack->setFixedHeight( BodyH );
+	m_stack->setFixedHeight( BodyH + 6 );
+	m_stack->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Fixed );
+	setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Fixed );
+	setMinimumWidth( 200 );
 	v->addWidget( m_stack );
 
 	connect( m_tabs, &QTabBar::currentChanged, this, [this]( int i )
@@ -150,11 +155,21 @@ void Ribbon::setAppAction( QAction* a )
 
 int Ribbon::addPage( const QString& title )
 {
+	// stránka v posuvné oblasti: na úzké obrazovce jde pás posunout (kolečkem nebo posuvníkem), okno se nerozšiřuje
 	auto* page = new QWidget;
 	auto* h = new QHBoxLayout( page );
 	h->setContentsMargins( 4, 4, 4, 0 );
 	h->setSpacing( 0 );
-	m_stack->addWidget( page );
+	auto* sa = new QScrollArea;
+	sa->setWidget( page );
+	sa->setWidgetResizable( true );
+	sa->setFrameShape( QFrame::NoFrame );
+	sa->setVerticalScrollBarPolicy( Qt::ScrollBarAlwaysOff );
+	sa->setHorizontalScrollBarPolicy( Qt::ScrollBarAsNeeded );
+	sa->horizontalScrollBar()->setFixedHeight( 6 );
+	sa->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Fixed );
+	sa->setMinimumWidth( 100 );
+	m_stack->addWidget( sa );
 	m_pages.push_back( h );
 	return m_tabs->addTab( title );
 }
@@ -205,4 +220,14 @@ void Ribbon::setCurrentPage( int page )
 int Ribbon::currentPage() const
 {
 	return m_tabs->currentIndex();
+}
+
+QSize Ribbon::sizeHint() const
+{
+	return QSize( 600, QWidget::sizeHint().height() );
+}
+
+QSize Ribbon::minimumSizeHint() const
+{
+	return QSize( 200, QWidget::minimumSizeHint().height() );
 }

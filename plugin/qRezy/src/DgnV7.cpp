@@ -295,11 +295,83 @@ namespace DgnV7
 		return true;
 	}
 
+	void Writer::appendLineStyle( std::vector<uint8_t>& out, const Symbology& sym ) const
+	{
+		if ( !sym.hasLineStyle )
+		{
+			return;
+		}
+		static const uint8_t tail[] = { 0x01, 0x00, 0x00, 0x00, 0x4c, 0x3e, 0xcc, 0xcc, 0xcc, 0xcc, 0xd0, 0xcc, 0x00, 0x00, 0x00, 0x00 };
+		putU16( out, 0x100B ); // uživatelská linkage, 11 slov za hlavičkou
+		putU16( out, 0x79F9 ); // id: styl čáry
+		const uint32_t id = static_cast<uint32_t>( sym.lineStyleId );
+		out.push_back( static_cast<uint8_t>( id & 0xFF ) );
+		out.push_back( static_cast<uint8_t>( ( id >> 8 ) & 0xFF ) );
+		out.push_back( static_cast<uint8_t>( ( id >> 16 ) & 0xFF ) );
+		out.push_back( static_cast<uint8_t>( ( id >> 24 ) & 0xFF ) );
+		out.insert( out.end(), std::begin( tail ), std::end( tail ) );
+	}
+
+	bool Writer::appendArc( std::vector<uint8_t>& out, const Element& e, std::string& error ) const
+	{
+		const double cx = e.center.x * m_uorPerMaster + m_origin[0];
+		const double cy = e.center.y * m_uorPerMaster + m_origin[1];
+		const double r = e.radius * m_uorPerMaster;
+		int32_t lo[2];
+		int32_t hi[2];
+		if ( !toUOR( e.center.x - e.radius, 0, lo[0] ) || !toUOR( e.center.y - e.radius, 1, lo[1] ) || !toUOR( e.center.x + e.radius, 0, hi[0] ) || !toUOR( e.center.y + e.radius, 1, hi[1] ) )
+		{
+			error = "Souřadnice oblouku jsou mimo rozsah výkresu V7.";
+			return false;
+		}
+		double a0 = std::fmod( e.startDeg, 360.0 );
+		if ( a0 < 0 )
+		{
+			a0 += 360.0;
+		}
+		const size_t start = out.size();
+		out.push_back( static_cast<uint8_t>( clampi( e.sym.level, 1, 63 ) ) );
+		out.push_back( 16 );
+		putU16( out, 0 );
+		putRange( out, lo[0] );
+		putRange( out, lo[1] );
+		putRange( out, 0 );
+		putRange( out, hi[0] );
+		putRange( out, hi[1] );
+		putRange( out, 0 );
+		putU16( out, 0 ); // grafická skupina
+		const size_t attIndexPos = out.size();
+		putU16( out, 0 );
+		putU16( out, e.sym.hasLineStyle ? 0x0A00 : 0x0200 );
+		out.push_back( static_cast<uint8_t>( ( clampi( e.sym.weight, 0, 31 ) << 3 ) | clampi( e.sym.style, 0, 7 ) ) );
+		out.push_back( static_cast<uint8_t>( clampi( e.sym.color, 0, 255 ) ) );
+		// úhly v 1/360000 stupně, rozsah vždy kladný (proti směru hodinových ručiček)
+		putI32( out, static_cast<int32_t>( std::round( a0 * 360000.0 ) ) );
+		putI32( out, static_cast<int32_t>( std::round( std::min( 360.0, std::abs( e.sweepDeg ) ) * 360000.0 ) ) );
+		uint8_t buf[8];
+		doubleToVax( r, buf );
+		out.insert( out.end(), buf, buf + 8 ); // hlavní poloosa
+		out.insert( out.end(), buf, buf + 8 ); // vedlejší poloosa
+		putI32( out, 0 );                      // natočení
+		doubleToVax( cx, buf );
+		out.insert( out.end(), buf, buf + 8 );
+		doubleToVax( cy, buf );
+		out.insert( out.end(), buf, buf + 8 );
+		setU16( out, attIndexPos, static_cast<uint16_t>( ( out.size() - start - 32 ) / 2 ) );
+		appendLineStyle( out, e.sym );
+		setU16( out, start + 2, static_cast<uint16_t>( ( out.size() - start - 4 ) / 2 ) );
+		return true;
+	}
+
 	bool Writer::appendElement( std::vector<uint8_t>& out, const Element& e, std::string& error ) const
 	{
 		if ( e.isText )
 		{
 			return appendText( out, e, error );
+		}
+		if ( e.isArc && !m_is3D && e.radius > 0.0 )
+		{
+			return appendArc( out, e, error );
 		}
 		if ( e.pts.size() < 2 )
 		{
@@ -390,18 +462,7 @@ namespace DgnV7
 		setU16( out, attIndexPos, static_cast<uint16_t>( ( out.size() - start - 32 ) / 2 ) );
 
 		// vlastní styl čáry (stejný zápis, jaký používá MicroStation)
-		if ( e.sym.hasLineStyle )
-		{
-			static const uint8_t tail[] = { 0x01, 0x00, 0x00, 0x00, 0x4c, 0x3e, 0xcc, 0xcc, 0xcc, 0xcc, 0xd0, 0xcc, 0x00, 0x00, 0x00, 0x00 };
-			putU16( out, 0x100B ); // uživatelská linkage, 11 slov za hlavičkou
-			putU16( out, 0x79F9 ); // id: styl čáry
-			const uint32_t id = static_cast<uint32_t>( e.sym.lineStyleId );
-			out.push_back( static_cast<uint8_t>( id & 0xFF ) );
-			out.push_back( static_cast<uint8_t>( ( id >> 8 ) & 0xFF ) );
-			out.push_back( static_cast<uint8_t>( ( id >> 16 ) & 0xFF ) );
-			out.push_back( static_cast<uint8_t>( ( id >> 24 ) & 0xFF ) );
-			out.insert( out.end(), std::begin( tail ), std::end( tail ) );
-		}
+		appendLineStyle( out, e.sym );
 
 		// délka prvku ve slovech (bez prvních dvou slov)
 		const size_t total = out.size() - start;

@@ -60,6 +60,7 @@
 #include <map>
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -157,7 +158,8 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 
 	// signály kreslení
 	connect( m_draw, &DrawTool::statusChanged, this, &RezDock::onStatus );
-	connect( m_draw, &DrawTool::categoryChanged, this, [this]( int c ) { const QSignalBlocker b( m_catCombo ); m_catCombo->setCurrentIndex( c ); } );
+	connect( m_draw, &DrawTool::categoryChanged, this, [this]( int c ) { const QSignalBlocker b( m_catCombo ); m_catCombo->setCurrentIndex( std::max( 0, m_catCombo->findData( c ) ) ); } );
+	m_draw->setSliceProvider( [this]() { return slicePlanes(); } );
 	connect( m_draw, &DrawTool::hiddenChanged, this, [this]( bool h ) { const QSignalBlocker b( m_hiddenAct ); m_hiddenAct->setChecked( h ); } );
 	connect( m_draw, &DrawTool::orthoChanged, this, [this]( bool o ) { const QSignalBlocker b( m_orthoAct ); m_orthoAct->setChecked( o ); } );
 	connect( m_draw, &DrawTool::trackingChanged, this, [this]( bool o ) { const QSignalBlocker b( m_trackAct ); m_trackAct->setChecked( o ); } );
@@ -450,6 +452,65 @@ void RezDock::refreshIcons()
 	}
 }
 
+void RezDock::refreshCatCombo()
+{
+	const int cur = m_draw ? m_draw->category() : 0;
+	const QSignalBlocker b( m_catCombo );
+	m_catCombo->clear();
+	const std::vector<Drawing::Layer>& ls = Drawing::layers();
+	for ( size_t i = 0; i < ls.size(); ++i )
+	{
+		const QString key = i < 4 ? QStringLiteral( "F%1  " ).arg( i + 1 ) : QStringLiteral( "      " );
+		m_catCombo->addItem( Icons::colorSwatch( ls[i].color, false ), key + ls[i].name, ls[i].id );
+	}
+	m_catCombo->setCurrentIndex( std::max( 0, m_catCombo->findData( cur ) ) );
+}
+
+std::vector<std::array<double, 4>> RezDock::slicePlanes() const
+{
+	// stejné roviny jako applyClip (i když je ořez mračna vypnutý)
+	std::vector<std::array<double, 4>> out;
+	ccGenericPointCloud* c = cloud();
+	if ( !c )
+	{
+		return out;
+	}
+	const double sc = c->getGlobalScale();
+	SectionInfo si;
+	if ( m_activeView != 0 && sectionById( m_activeView, si ) )
+	{
+		const DrawFrame f = frameFor( m_activeView );
+		const double d = f.O.dot( f.N ) - si.offset * sc;
+		if ( si.kind == 1 )
+		{
+			// pohled: jen pás kolem líce fasády (jinak by se míchaly hloubky)
+			double hiN = d;
+			double loN = d - std::min( si.depth, 3.0 ) * sc;
+			if ( si.face >= 0.0 )
+			{
+				const double faceN = f.O.dot( f.N ) - si.face * sc;
+				hiN = faceN + 0.3 * sc;
+				loN = faceN - 0.3 * sc;
+			}
+			out.push_back( { -f.N.x, -f.N.y, -f.N.z, hiN } );
+			out.push_back( { f.N.x, f.N.y, f.N.z, -loN } );
+		}
+		else
+		{
+			const double half = m_thickness->value() * sc / 2.0;
+			out.push_back( { f.N.x, f.N.y, f.N.z, -( d - half ) } );
+			out.push_back( { -f.N.x, -f.N.y, -f.N.z, d + half } );
+		}
+		return out;
+	}
+	const double half = m_thickness->value() / 2.0;
+	const double zLo = c->toLocal3d( CCVector3d( 0, 0, m_height->value() - half ) ).z;
+	const double zHi = c->toLocal3d( CCVector3d( 0, 0, m_height->value() + half ) ).z;
+	out.push_back( { 0.0, 0.0, 1.0, -zLo } );
+	out.push_back( { 0.0, 0.0, -1.0, zHi } );
+	return out;
+}
+
 void RezDock::setTheme( const QString& theme )
 {
 	const bool wasDark = !Theme::current().isEmpty();
@@ -596,7 +657,9 @@ void RezDock::buildToolbar()
 	};
 	const ToolDef tools[] = {
 		{ DrawTool::Mode::Select, "select", "Výběr", "Klik, Ctrl+klik, okno tažením (zleva = uvnitř, zprava = křížem); úchopy na koncích. S výběrem: F1–F4/F5 změní hladinu/zakrytí, Del smaže, 3→1 / 3→2 kopie / přesun." },
-		{ DrawTool::Mode::Line, "line", "Čára", "Body levým tlačítkem, pravé ukončí. Délka: čísla + Enter." },
+		{ DrawTool::Mode::Line, "line", "Čára", "Body levým tlačítkem, pravé ukončí. Délka: čísla + Enter. Enter bez čísla = další úsek kolmo na předchozí." },
+		{ DrawTool::Mode::Arc, "arc", "Oblouk", "Tři body podle metody vedle: začátek–střed–konec, začátek–konec–střed nebo tři body. Do DGN jako skutečný oblouk." },
+		{ DrawTool::Mode::CloudLine, "cloudline", "Čára\nz mračna", "Klik k bodům řezu (na líc zdi) → čára proložená body; klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a další, pravé = zahodit. Navazující čára se napojí v rohu." },
 		{ DrawTool::Mode::Move, "move", "Přesun", "Čára (nebo výběr), výchozí bod, cíl nebo vzdálenost." },
 		{ DrawTool::Mode::Copy, "copy", "Kopie", "Čára (nebo výběr), výchozí bod, cíle nebo vzdálenost." },
 		{ DrawTool::Mode::Offset, "offset", "Rovnoběžka", "Čára, strana; vzdálenost z pole vedle nebo napsat + Enter." },
@@ -636,6 +699,34 @@ void RezDock::buildToolbar()
 	m_offsetSpin->setFixedWidth( 86 );
 	connect( m_offsetSpin, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]( double v ) { m_draw->setOffsetDistance( v ); } );
 
+	auto* arcCombo = new QComboBox;
+	arcCombo->addItem( QStringLiteral( "začátek–střed–konec" ) );
+	arcCombo->addItem( QStringLiteral( "začátek–konec–střed" ) );
+	arcCombo->addItem( QStringLiteral( "tři body" ) );
+	arcCombo->setToolTip( QStringLiteral( "Metoda oblouku" ) );
+	arcCombo->setCurrentIndex( m_draw->arcMethod() );
+	connect( arcCombo, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this]( int i ) { m_draw->setArcMethod( i ); if ( m_draw->isActive() ) m_draw->setMode( DrawTool::Mode::Arc ); focusView(); } );
+	QSettings clSt;
+	auto* clGap = makeSpin( 0.01, 1.0, clSt.value( QStringLiteral( "qRezy/clGap" ), 0.10 ).toDouble(), 0.01, 2, QStringLiteral( " m" ) );
+	clGap->setToolTip( QStringLiteral( "Čára z mračna: největší mezera v bodech, kterou čára přeskočí (dveře, okna = konec čáry)" ) );
+	clGap->setFixedWidth( 86 );
+	auto* clTol = makeSpin( 0.005, 0.2, clSt.value( QStringLiteral( "qRezy/clTol" ), 0.02 ).toDouble(), 0.005, 3, QStringLiteral( " m" ) );
+	clTol->setToolTip( QStringLiteral( "Čára z mračna: tolerance – jak daleko od čáry smí body ležet (rozptyl lící zdi)" ) );
+	clTol->setFixedWidth( 86 );
+	QAction* clSquare = mkAct( "corner", QStringLiteral( "Pravý úhel" ), QStringLiteral( "Čára z mračna: téměř kolmé napojení (do 3°) srovnat na přesně 90°" ), true );
+	clSquare->setChecked( clSt.value( QStringLiteral( "qRezy/clSquare" ), true ).toBool() );
+	auto applyCl = [this, clGap, clTol, clSquare]()
+	{
+		QSettings st;
+		st.setValue( QStringLiteral( "qRezy/clGap" ), clGap->value() );
+		st.setValue( QStringLiteral( "qRezy/clTol" ), clTol->value() );
+		st.setValue( QStringLiteral( "qRezy/clSquare" ), clSquare->isChecked() );
+		m_draw->setCloudLineParams( clGap->value(), clTol->value(), clSquare->isChecked() );
+	};
+	connect( clGap, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, applyCl );
+	connect( clTol, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, applyCl );
+	connect( clSquare, &QAction::toggled, this, applyCl );
+
 	QAction* undo = mkAct( "undo", QStringLiteral( "Zpět" ), QStringLiteral( "Vrátit poslední krok (Ctrl+Z)" ) );
 	connect( undo, &QAction::triggered, this, [this]() { m_draw->undo(); focusView(); } );
 
@@ -650,11 +741,8 @@ void RezDock::buildToolbar()
 	m_catCombo = new QComboBox;
 	m_catCombo->setToolTip( QStringLiteral( "Hladina (F1–F4); s výběrem změní vybrané" ) );
 	m_catCombo->setMinimumWidth( 150 );
-	for ( int c = 0; c < Drawing::CategoryCount; ++c )
-	{
-		m_catCombo->addItem( Icons::colorSwatch( Drawing::displayColor( c, false ), false ), QStringLiteral( "F%1  %2" ).arg( c + 1 ).arg( Drawing::categoryName( c ) ) );
-	}
-	connect( m_catCombo, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this]( int i ) { m_draw->setCategory( i ); focusView(); } );
+	refreshCatCombo();
+	connect( m_catCombo, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this]( int i ) { m_draw->setCategory( m_catCombo->itemData( i ).toInt() ); focusView(); } );
 	QAction* symb = mkAct( "layers", QStringLiteral( "Hladiny a barvy…" ), QStringLiteral( "Hladina, barva, tloušťka a styl čar ve výstupním DGN" ) );
 	connect( symb, &QAction::triggered, this, &RezDock::editSymbology );
 
@@ -874,9 +962,17 @@ void RezDock::buildToolbar()
 		r->addGroup( pDraw, QStringLiteral( "Výběr" ) ).addBig( T( DrawTool::Mode::Select ), QStringLiteral( "1" ) );
 		RibbonGroup g = r->addGroup( pDraw, QStringLiteral( "Kreslení" ) );
 		g.addBig( T( DrawTool::Mode::Line ), QStringLiteral( "Q" ) );
+		g.addBig( T( DrawTool::Mode::Arc ), QStringLiteral( "E" ) );
 		RibbonColumn c = g.column();
+		c.widget( arcCombo );
 		c.addSmall( T( DrawTool::Mode::Text ) );
 		c.addSmall( T( DrawTool::Mode::Measure ), QStringLiteral( "D" ) );
+		RibbonGroup cg = r->addGroup( pDraw, QStringLiteral( "Z mračna" ) );
+		cg.addBig( T( DrawTool::Mode::CloudLine ) );
+		RibbonColumn cc = cg.column();
+		cc.widget( clGap, QStringLiteral( "mezera" ) );
+		cc.widget( clTol, QStringLiteral( "tol." ) );
+		cc.addSmall( clSquare );
 		RibbonGroup m = r->addGroup( pDraw, QStringLiteral( "Manipulace · 3" ) );
 		RibbonColumn mc = m.column();
 		mc.addSmall( T( DrawTool::Mode::Copy ), QStringLiteral( "3·1" ) );
@@ -901,7 +997,7 @@ void RezDock::buildToolbar()
 		u2.addSmall( T( DrawTool::Mode::InsertVertex ), QStringLiteral( "7·7" ) );
 		RibbonColumn u3 = u.column();
 		u3.addSmall( T( DrawTool::Mode::DeleteVertex ), QStringLiteral( "7·8" ) );
-		r->addGroup( pDraw, QStringLiteral( "Smazat" ) ).addBig( T( DrawTool::Mode::Delete ), QStringLiteral( "8" ) );
+		u3.addSmall( T( DrawTool::Mode::Delete ), QStringLiteral( "8" ) );
 		RibbonGroup h = r->addGroup( pDraw, QStringLiteral( "Hladina" ) );
 		RibbonColumn hc = h.column();
 		hc.widget( m_catCombo );
@@ -1840,7 +1936,7 @@ void RezDock::setDrawing( bool on )
 		return;
 	}
 	m_draw->setFrame( frameFor( m_activeView ) );
-	m_draw->setCategory( m_catCombo->currentIndex() );
+	m_draw->setCategory( m_catCombo->currentData().toInt() );
 	m_draw->setHidden( m_hiddenAct->isChecked() );
 	m_draw->setOrtho( m_orthoAct->isChecked() );
 	m_draw->setTracking( m_trackAct->isChecked() );
@@ -2095,6 +2191,22 @@ void RezDock::openSaveDialog()
 	secL->addLayout( tf );
 	l->addWidget( secBox );
 
+	// změřené body v řezech a pohledech
+	auto* ptBox = new QGroupBox( QStringLiteral( "Změřené body v řezech a pohledech (křížek + číslo; do půdorysu ne)" ) );
+	ptBox->setCheckable( true );
+	ptBox->setChecked( st.value( QStringLiteral( "qRezy/ptExport" ), true ).toBool() );
+	auto* pf = new QFormLayout( ptBox );
+	auto* ptLevel = new QSpinBox;
+	ptLevel->setRange( 1, 63 );
+	ptLevel->setValue( st.value( QStringLiteral( "qRezy/ptLevel" ), 16 ).toInt() );
+	pf->addRow( QStringLiteral( "Hladina:" ), ptLevel );
+	auto* ptCross = makeSpin( 0.005, 1.0, st.value( QStringLiteral( "qRezy/ptCross" ), 0.05 ).toDouble(), 0.01, 3, QStringLiteral( " m" ) );
+	pf->addRow( QStringLiteral( "Křížek – polovina ramene:" ), ptCross );
+	auto* ptTextH = makeSpin( 0.0, 5.0, st.value( QStringLiteral( "qRezy/ptTextH" ), 0.10 ).toDouble(), 0.05, 2, QStringLiteral( " m" ) );
+	ptTextH->setSpecialValueText( QStringLiteral( "bez čísla" ) );
+	pf->addRow( QStringLiteral( "Číslo bodu – výška:" ), ptTextH );
+	l->addWidget( ptBox );
+
 	auto* bb = new QDialogButtonBox;
 	auto* saveBtn = bb->addButton( QStringLiteral( "Uložit výkres…" ), QDialogButtonBox::AcceptRole );
 	saveBtn->setIcon( Icons::get( QStringLiteral( "save" ) ) );
@@ -2110,6 +2222,10 @@ void RezDock::openSaveDialog()
 	st.setValue( QStringLiteral( "qRezy/textHeight" ), textH->value() );
 	st.setValue( QStringLiteral( "qRezy/userTextHeight" ), uTextH->value() );
 	st.setValue( QStringLiteral( "qRezy/userTextLevel" ), uTextL->value() );
+	st.setValue( QStringLiteral( "qRezy/ptExport" ), ptBox->isChecked() );
+	st.setValue( QStringLiteral( "qRezy/ptLevel" ), ptLevel->value() );
+	st.setValue( QStringLiteral( "qRezy/ptCross" ), ptCross->value() );
+	st.setValue( QStringLiteral( "qRezy/ptTextH" ), ptTextH->value() );
 	for ( int i = 0; i < static_cast<int>( sections.size() ); ++i )
 	{
 		SectionInfo si = sections[i];
@@ -2264,6 +2380,43 @@ void RezDock::exportV7( const std::vector<int>& floorIds, bool withSections )
 			return false;
 		};
 		std::vector<DgnV7::Element> elements = m_draw->exportElements( table, map, userTextLevel, userTextH );
+		if ( t.sections && st.value( QStringLiteral( "qRezy/ptExport" ), true ).toBool() )
+		{
+			// změřené body sklopené do řezů a pohledů: malý křížek + číslo, vlastní hladina
+			const int ptLevel = st.value( QStringLiteral( "qRezy/ptLevel" ), 16 ).toInt();
+			const double cr = st.value( QStringLiteral( "qRezy/ptCross" ), 0.05 ).toDouble();
+			const double ptH = st.value( QStringLiteral( "qRezy/ptTextH" ), 0.10 ).toDouble();
+			QTextCodec* codec = QTextCodec::codecForName( "Windows-1250" );
+			for ( const SectionInfo& si : sections )
+			{
+				for ( const auto& pp : m_draw->pointsInFrame( frameFor( si.id ) ) )
+				{
+					DgnV7::Point2 o;
+					if ( !map( si.id, pp.first, o ) )
+					{
+						continue;
+					}
+					DgnV7::Element h;
+					h.sym.level = ptLevel;
+					h.pts = { { o.x - cr, o.y }, { o.x + cr, o.y } };
+					elements.push_back( h );
+					DgnV7::Element v = h;
+					v.pts = { { o.x, o.y - cr }, { o.x, o.y + cr } };
+					elements.push_back( v );
+					if ( !pp.second.isEmpty() && ptH > 0.0 )
+					{
+						DgnV7::Element tx;
+						tx.isText = true;
+						tx.sym.level = ptLevel;
+						tx.textHeight = ptH;
+						tx.pts.push_back( { o.x + cr * 0.6, o.y + cr * 0.6 } );
+						const QByteArray bytes = codec ? codec->fromUnicode( pp.second ) : pp.second.toLatin1();
+						tx.text = std::string( bytes.constData(), static_cast<size_t>( bytes.size() ) );
+						elements.push_back( tx );
+					}
+				}
+			}
+		}
 		if ( t.sections )
 		{
 			// popisy řezů a pohledů
@@ -2716,80 +2869,242 @@ void RezDock::activateView( int viewId )
 
 void RezDock::editSymbology()
 {
-	Drawing::SymbologyTable table = Drawing::SymbologyTable::load();
+	// manažer hladin: název, barva na obrazovce a výstup V7 (plná / zakrytá čára); přidat, smazat, pořadí (F1–F4)
+	std::vector<Drawing::Layer> work = Drawing::layers();
+	std::vector<int> removed;
 
 	QDialog dlg( this );
-	dlg.setWindowTitle( QStringLiteral( "Hladiny a barvy pro výstup V7" ) );
+	dlg.setWindowTitle( QStringLiteral( "Hladiny – manažer" ) );
 	auto* l = new QVBoxLayout( &dlg );
-	auto* tw = new QTableWidget( Drawing::CategoryCount * 2, 5 );
-	tw->setHorizontalHeaderLabels( { QStringLiteral( "Prvek" ), QStringLiteral( "Hladina" ), QStringLiteral( "Barva" ), QStringLiteral( "Tloušťka" ), QStringLiteral( "Styl čáry (id)" ) } );
-	tw->verticalHeader()->setVisible( false );
-
-	for ( int c = 0; c < Drawing::CategoryCount; ++c )
+	auto* row = new QHBoxLayout;
+	l->addLayout( row, 1 );
+	auto* tw = new QTableWidget( 0, 10 );
+	tw->setHorizontalHeaderLabels( { QStringLiteral( "Název" ), QStringLiteral( "Barva" ),
+	                                 QStringLiteral( "Hladina" ), QStringLiteral( "Barva V7" ), QStringLiteral( "Tl." ), QStringLiteral( "Styl" ),
+	                                 QStringLiteral( "Zakr. hladina" ), QStringLiteral( "Zakr. barva" ), QStringLiteral( "Zakr. tl." ), QStringLiteral( "Zakr. styl" ) } );
+	tw->verticalHeader()->setVisible( true );
+	tw->setSelectionBehavior( QAbstractItemView::SelectRows );
+	tw->setSelectionMode( QAbstractItemView::SingleSelection );
+	row->addWidget( tw, 1 );
+	auto* side = new QVBoxLayout;
+	auto* addB = new QPushButton( QStringLiteral( "Přidat" ) );
+	auto* delB = new QPushButton( QStringLiteral( "Smazat" ) );
+	auto* upB = new QPushButton( QStringLiteral( "Nahoru" ) );
+	auto* downB = new QPushButton( QStringLiteral( "Dolů" ) );
+	auto* defB = new QPushButton( QStringLiteral( "Výchozí" ) );
+	for ( QPushButton* b : { addB, delB, upB, downB, defB } )
 	{
-		for ( int h = 0; h < 2; ++h )
-		{
-			const int row = c * 2 + h;
-			const DgnV7::Symbology& y = table.get( c, h == 1 );
-			auto* name = new QTableWidgetItem( Drawing::categoryName( c ) + ( h ? QStringLiteral( " – zakrytá" ) : QStringLiteral( " – plná" ) ) );
-			name->setFlags( Qt::ItemIsEnabled );
-			tw->setItem( row, 0, name );
-			auto spin = [&]( int col, int min, int max, int v )
-			{
-				auto* sb = new QSpinBox;
-				sb->setRange( min, max );
-				sb->setValue( v );
-				tw->setCellWidget( row, col, sb );
-			};
-			spin( 1, 1, 63, y.level );
-			spin( 2, 0, 255, y.color );
-			spin( 3, 0, 31, y.weight );
-			spin( 4, -1000, 1000, y.hasLineStyle ? y.lineStyleId : 0 );
-		}
+		side->addWidget( b );
 	}
-	tw->resizeColumnsToContents();
-	tw->setMinimumWidth( 520 );
-	tw->setMinimumHeight( 300 );
-	l->addWidget( tw );
-	l->addWidget( new QLabel( QStringLiteral( "<small>Styl čáry: -1 plná, -2 přerušovaná, -3 zakrytá (podle vašeho seedu); 0 = bez vlastního stylu.</small>" ) ) );
-	auto* bb = new QDialogButtonBox( QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::RestoreDefaults );
+	side->addStretch( 1 );
+	row->addLayout( side );
+
+	auto spinAt = [tw]( int r, int c ) { return static_cast<QSpinBox*>( tw->cellWidget( r, c ) ); };
+	// tabulka → seznam
+	auto sync = [&]()
+	{
+		for ( int r = 0; r < tw->rowCount() && r < static_cast<int>( work.size() ); ++r )
+		{
+			Drawing::Layer& L = work[static_cast<size_t>( r )];
+			if ( QTableWidgetItem* it = tw->item( r, 0 ) )
+			{
+				const QString n = it->text().trimmed();
+				if ( !n.isEmpty() )
+				{
+					L.name = n;
+				}
+			}
+			L.color = QColor( static_cast<QPushButton*>( tw->cellWidget( r, 1 ) )->property( "col" ).toString() );
+			for ( int h = 0; h < 2; ++h )
+			{
+				DgnV7::Symbology& y = L.sym[static_cast<size_t>( h )];
+				y.level = spinAt( r, 2 + 4 * h )->value();
+				y.color = spinAt( r, 3 + 4 * h )->value();
+				y.weight = spinAt( r, 4 + 4 * h )->value();
+				const int ls = spinAt( r, 5 + 4 * h )->value();
+				y.hasLineStyle = ( ls != 0 );
+				y.lineStyleId = ls;
+			}
+		}
+	};
+	// seznam → tabulka
+	std::function<void( int )> fill = [&]( int selRow )
+	{
+		tw->setRowCount( static_cast<int>( work.size() ) );
+		QStringList vh;
+		for ( int r = 0; r < static_cast<int>( work.size() ); ++r )
+		{
+			const Drawing::Layer& L = work[static_cast<size_t>( r )];
+			vh << ( r < 4 ? QStringLiteral( "F%1" ).arg( r + 1 ) : QString() );
+			tw->setItem( r, 0, new QTableWidgetItem( L.name ) );
+			auto* cb = new QPushButton;
+			cb->setProperty( "col", L.color.name() );
+			cb->setIcon( Icons::colorSwatch( L.color, false ) );
+			cb->setToolTip( QStringLiteral( "Barva čáry na obrazovce" ) );
+			connect( cb, &QPushButton::clicked, &dlg, [cb, &dlg]()
+			{
+				const QColor c = QColorDialog::getColor( QColor( cb->property( "col" ).toString() ), &dlg );
+				if ( c.isValid() )
+				{
+					cb->setProperty( "col", c.name() );
+					cb->setIcon( Icons::colorSwatch( c, false ) );
+				}
+			} );
+			tw->setCellWidget( r, 1, cb );
+			for ( int h = 0; h < 2; ++h )
+			{
+				const DgnV7::Symbology& y = L.sym[static_cast<size_t>( h )];
+				auto spin = [&]( int col, int mn, int mx, int v )
+				{
+					auto* sb = new QSpinBox;
+					sb->setRange( mn, mx );
+					sb->setValue( v );
+					tw->setCellWidget( r, col, sb );
+				};
+				spin( 2 + 4 * h, 1, 63, y.level );
+				spin( 3 + 4 * h, 0, 255, y.color );
+				spin( 4 + 4 * h, 0, 31, y.weight );
+				spin( 5 + 4 * h, -1000, 1000, y.hasLineStyle ? y.lineStyleId : 0 );
+			}
+		}
+		tw->setVerticalHeaderLabels( vh );
+		tw->resizeColumnsToContents();
+		tw->setColumnWidth( 0, std::max( 140, tw->columnWidth( 0 ) ) );
+		if ( selRow >= 0 && selRow < tw->rowCount() )
+		{
+			tw->selectRow( selRow );
+		}
+	};
+	fill( 0 );
+	tw->setMinimumWidth( 860 );
+	tw->setMinimumHeight( 260 );
+
+	connect( addB, &QPushButton::clicked, &dlg, [&]()
+	{
+		sync();
+		Drawing::Layer L;
+		L.id = Drawing::newLayerId();
+		for ( const Drawing::Layer& x : work )
+		{
+			L.id = std::max( L.id, x.id + 1 );
+		}
+		for ( int id : removed )
+		{
+			L.id = std::max( L.id, id + 1 );
+		}
+		L.name = QStringLiteral( "Nová hladina" );
+		L.color = QColor( 255, 160, 0 );
+		int lvl = 7;
+		for ( const Drawing::Layer& x : work )
+		{
+			lvl = std::max( lvl, x.sym[0].level + 1 );
+		}
+		L.sym[0].level = std::min( 63, lvl );
+		L.sym[0].hasLineStyle = true;
+		L.sym[0].lineStyleId = -1;
+		L.sym[1] = L.sym[0];
+		L.sym[1].lineStyleId = -3;
+		work.push_back( L );
+		fill( static_cast<int>( work.size() ) - 1 );
+		tw->editItem( tw->item( static_cast<int>( work.size() ) - 1, 0 ) );
+	} );
+	connect( delB, &QPushButton::clicked, &dlg, [&]()
+	{
+		const int r = tw->currentRow();
+		if ( r < 0 || r >= static_cast<int>( work.size() ) )
+		{
+			return;
+		}
+		if ( work.size() <= 1 )
+		{
+			QMessageBox::information( &dlg, QStringLiteral( "Hladiny" ), QStringLiteral( "Musí zůstat aspoň jedna hladina." ) );
+			return;
+		}
+		sync();
+		removed.push_back( work[static_cast<size_t>( r )].id );
+		work.erase( work.begin() + r );
+		fill( std::min( r, static_cast<int>( work.size() ) - 1 ) );
+	} );
+	auto moveRow = [&]( int dir )
+	{
+		const int r = tw->currentRow();
+		const int t = r + dir;
+		if ( r < 0 || t < 0 || t >= static_cast<int>( work.size() ) )
+		{
+			return;
+		}
+		sync();
+		std::swap( work[static_cast<size_t>( r )], work[static_cast<size_t>( t )] );
+		fill( t );
+	};
+	connect( upB, &QPushButton::clicked, &dlg, [&]() { moveRow( -1 ); } );
+	connect( downB, &QPushButton::clicked, &dlg, [&]() { moveRow( +1 ); } );
+	connect( defB, &QPushButton::clicked, &dlg, [&]()
+	{
+		if ( QMessageBox::question( &dlg, QStringLiteral( "Hladiny" ), QStringLiteral( "Vrátit výchozí čtyři hladiny (Zdi, Překlady, Trámy, Drobné prvky)? Přidané hladiny se smažou." ) ) != QMessageBox::Yes )
+		{
+			return;
+		}
+		for ( const Drawing::Layer& x : work )
+		{
+			if ( x.id > Drawing::Details )
+			{
+				removed.push_back( x.id );
+			}
+		}
+		work = Drawing::defaultLayers();
+		fill( 0 );
+	} );
+
+	l->addWidget( new QLabel( QStringLiteral( "<small>Pořadí = klávesy F1–F4. Styl čáry: -1 plná, -2 přerušovaná, -3 zakrytá (podle vašeho seedu); 0 = bez vlastního stylu. "
+	                                          "Barva V7 = číslo barvy MicroStationu (0–255), Barva = jen zobrazení zde.</small>" ) ) );
+	auto* bb = new QDialogButtonBox( QDialogButtonBox::Ok | QDialogButtonBox::Cancel );
 	l->addWidget( bb );
 	connect( bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept );
 	connect( bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject );
-	connect( bb->button( QDialogButtonBox::RestoreDefaults ), &QPushButton::clicked, &dlg, [&]()
-	{
-		const Drawing::SymbologyTable d = Drawing::SymbologyTable::defaults();
-		for ( int c = 0; c < Drawing::CategoryCount; ++c )
-		{
-			for ( int h = 0; h < 2; ++h )
-			{
-				const int row = c * 2 + h;
-				const DgnV7::Symbology& y = d.get( c, h == 1 );
-				static_cast<QSpinBox*>( tw->cellWidget( row, 1 ) )->setValue( y.level );
-				static_cast<QSpinBox*>( tw->cellWidget( row, 2 ) )->setValue( y.color );
-				static_cast<QSpinBox*>( tw->cellWidget( row, 3 ) )->setValue( y.weight );
-				static_cast<QSpinBox*>( tw->cellWidget( row, 4 ) )->setValue( y.lineStyleId );
-			}
-		}
-	} );
 
 	if ( dlg.exec() != QDialog::Accepted )
 	{
 		return;
 	}
-	for ( int c = 0; c < Drawing::CategoryCount; ++c )
+	sync();
+
+	// smazané hladiny s nakreslenými čarami → přesunout jinam (názvy ještě ze starého seznamu)
+	struct Gone
 	{
-		for ( int h = 0; h < 2; ++h )
+		int id;
+		QString name;
+		int count;
+	};
+	std::vector<Gone> gone;
+	for ( int id : removed )
+	{
+		if ( std::any_of( work.begin(), work.end(), [id]( const Drawing::Layer& x ) { return x.id == id; } ) )
 		{
-			const int row = c * 2 + h;
-			DgnV7::Symbology& y = table.get( c, h == 1 );
-			y.level = static_cast<QSpinBox*>( tw->cellWidget( row, 1 ) )->value();
-			y.color = static_cast<QSpinBox*>( tw->cellWidget( row, 2 ) )->value();
-			y.weight = static_cast<QSpinBox*>( tw->cellWidget( row, 3 ) )->value();
-			const int ls = static_cast<QSpinBox*>( tw->cellWidget( row, 4 ) )->value();
-			y.hasLineStyle = ( ls != 0 );
-			y.lineStyleId = ls;
+			continue; // vrácená výchozí hladina
+		}
+		const int n = m_draw->countCategory( id );
+		if ( n > 0 )
+		{
+			gone.push_back( { id, Drawing::categoryName( id ), n } );
 		}
 	}
-	table.save();
+	Drawing::setLayers( work );
+	for ( const Gone& g : gone )
+	{
+		QStringList names;
+		for ( const Drawing::Layer& x : work )
+		{
+			names << x.name;
+		}
+		bool ok = false;
+		const QString pick = QInputDialog::getItem( this, QStringLiteral( "Smazaná hladina" ),
+		                                            QStringLiteral( "Na smazané hladině „%1“ je %2 čar. Přesunout je na hladinu:" ).arg( g.name ).arg( g.count ),
+		                                            names, 0, false, &ok );
+		const int idx = ok ? names.indexOf( pick ) : 0;
+		m_draw->moveCategory( g.id, work[static_cast<size_t>( std::max( 0, idx ) )].id );
+	}
+	refreshCatCombo();
+	m_draw->refreshLooks();
+	refresh3DLines();
 }

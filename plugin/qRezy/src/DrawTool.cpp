@@ -105,6 +105,56 @@ namespace
 		return l2 > 0.0 ? ( P - A ).dot( AB ) / l2 : 0.0;
 	}
 
+	constexpr double TwoPi = 6.283185307179586;
+
+	//! úhel do intervalu (−π, π]
+	double wrapPi( double a )
+	{
+		while ( a > TwoPi / 2 )
+			a -= TwoPi;
+		while ( a <= -TwoPi / 2 )
+			a += TwoPi;
+		return a;
+	}
+
+	//! kružnice třemi body
+	bool circleFrom3( const CCVector2d& A, const CCVector2d& B, const CCVector2d& C, CCVector2d& center )
+	{
+		const double d = 2.0 * ( A.x * ( B.y - C.y ) + B.x * ( C.y - A.y ) + C.x * ( A.y - B.y ) );
+		if ( std::abs( d ) < 1e-12 )
+		{
+			return false;
+		}
+		const double a2 = A.norm2();
+		const double b2 = B.norm2();
+		const double c2 = C.norm2();
+		center.x = ( a2 * ( B.y - C.y ) + b2 * ( C.y - A.y ) + c2 * ( A.y - B.y ) ) / d;
+		center.y = ( a2 * ( C.x - B.x ) + b2 * ( A.x - C.x ) + c2 * ( B.x - A.x ) ) / d;
+		return true;
+	}
+
+	//! oblouk ze začátku S přes M do konce E: střed, poloměr, počáteční úhel a rozsah (+ = proti směru hod. ručiček)
+	bool arcFrom3( const CCVector2d& S, const CCVector2d& M, const CCVector2d& E, CCVector2d& C, double& r, double& a0, double& sweep )
+	{
+		if ( !circleFrom3( S, M, E, C ) )
+		{
+			return false;
+		}
+		r = ( S - C ).norm();
+		a0 = std::atan2( S.y - C.y, S.x - C.x );
+		auto ccw = [a0]( double a )
+		{
+			double d = std::fmod( a - a0, TwoPi );
+			if ( d < 0 )
+				d += TwoPi;
+			return d;
+		};
+		const double dm = ccw( std::atan2( M.y - C.y, M.x - C.x ) );
+		const double de = ccw( std::atan2( E.y - C.y, E.x - C.x ) );
+		sweep = ( dm <= de ) ? de : de - TwoPi;
+		return true;
+	}
+
 	ccColor::Rgb toRgb( const QColor& c )
 	{
 		return ccColor::Rgb( static_cast<ColorCompType>( c.red() ), static_cast<ColorCompType>( c.green() ), static_cast<ColorCompType>( c.blue() ) );
@@ -252,6 +302,12 @@ DrawTool::DrawTool( ccMainAppInterface* app, QObject* parent )
 	m_hoverTimer->setSingleShot( true );
 	m_hoverTimer->setInterval( 450 );
 	connect( m_hoverTimer, &QTimer::timeout, this, &DrawTool::onHoverTimeout );
+	QSettings st;
+	m_arcMethod = std::max( 0, std::min( 2, st.value( QStringLiteral( "qRezy/arcMethod" ), 0 ).toInt() ) );
+	m_clGap = st.value( QStringLiteral( "qRezy/clGap" ), 0.10 ).toDouble();
+	m_clTol = st.value( QStringLiteral( "qRezy/clTol" ), 0.02 ).toDouble();
+	m_clSquare = st.value( QStringLiteral( "qRezy/clSquare" ), true ).toBool();
+	m_category = Drawing::layerIdAt( 0 );
 }
 
 DrawTool::~DrawTool()
@@ -339,6 +395,7 @@ bool DrawTool::start( ccGenericPointCloud* cloud )
 void DrawTool::setFrame( const DrawFrame& f )
 {
 	m_frame = f;
+	m_clPrev = nullptr;
 	if ( m_frame.plan )
 	{
 		m_frame.front = m_planFront - m_frame.O.z;
@@ -429,7 +486,7 @@ void DrawTool::stop()
 
 void DrawTool::setCategory( int cat )
 {
-	m_category = std::max( 0, std::min( Drawing::CategoryCount - 1, cat ) );
+	m_category = Drawing::layerById( cat ) ? cat : Drawing::layerIdAt( 0 );
 	pruneSelection();
 	if ( !m_selSet.empty() )
 	{
@@ -543,8 +600,29 @@ void DrawTool::setOrtho( bool on )
 	Q_EMIT orthoChanged( on );
 }
 
+void DrawTool::setArcMethod( int m )
+{
+	m_arcMethod = std::max( 0, std::min( 2, m ) );
+	QSettings().setValue( QStringLiteral( "qRezy/arcMethod" ), m_arcMethod );
+	if ( m_mode == Mode::Arc )
+	{
+		resetTool();
+	}
+}
+
+void DrawTool::setCloudLineParams( double gap, double tol, bool square )
+{
+	m_clGap = gap;
+	m_clTol = tol;
+	m_clSquare = square;
+}
+
 void DrawTool::resetTool()
 {
+	m_arcPts.clear();
+	m_arcSweep = 0.0;
+	m_perpLock = false;
+	m_clHas = false;
 	m_chain.clear();
 	m_typed.clear();
 	m_step = 0;
@@ -668,11 +746,12 @@ std::vector<DrawTool::Segment> DrawTool::collectSegments() const
 		}
 		auto* poly = static_cast<ccPolyline*>( ch );
 		const unsigned n = poly->size();
+		const bool arc = isArc( poly );
 		for ( unsigned k = 0; k + 1 < n; ++k )
 		{
 			const CCVector3* A = poly->getPoint( k );
 			const CCVector3* B = poly->getPoint( k + 1 );
-			segs.push_back( { m_frame.toUV( CCVector3d::fromArray( A->u ) ), m_frame.toUV( CCVector3d::fromArray( B->u ) ), poly, ref } );
+			segs.push_back( { m_frame.toUV( CCVector3d::fromArray( A->u ) ), m_frame.toUV( CCVector3d::fromArray( B->u ) ), poly, ref, arc } );
 		}
 	}
 	return segs;
@@ -740,12 +819,37 @@ CCVector2d DrawTool::snapPoint( const QPoint& pos, SnapType& type ) const
 	const std::vector<Segment> segs = collectSegments();
 
 	std::vector<CCVector2d> ends;
+	std::vector<CCVector2d> arcCenters; //!< středy oblouků a středy oblouků po délce
+	ccPolyline* lastArc = nullptr;
 	for ( const Segment& s : segs )
 	{
-		ends.push_back( s.a );
-		ends.push_back( s.b );
+		if ( !s.arc )
+		{
+			ends.push_back( s.a );
+			ends.push_back( s.b );
+		}
+		else if ( s.poly != lastArc )
+		{
+			lastArc = s.poly;
+			const unsigned n = s.poly->size();
+			if ( n >= 3 )
+			{
+				const CCVector2d A = m_frame.toUV( CCVector3d::fromArray( s.poly->getPoint( 0 )->u ) );
+				const CCVector2d M = m_frame.toUV( CCVector3d::fromArray( s.poly->getPoint( n / 2 )->u ) );
+				const CCVector2d B = m_frame.toUV( CCVector3d::fromArray( s.poly->getPoint( n - 1 )->u ) );
+				ends.push_back( A );
+				ends.push_back( B );
+				arcCenters.push_back( M );
+				CCVector2d C;
+				if ( circleFrom3( A, M, B, C ) )
+				{
+					arcCenters.push_back( C );
+				}
+			}
+		}
 	}
 	ends.insert( ends.end(), m_chain.begin(), m_chain.end() );
+	ends.insert( ends.end(), m_arcPts.begin(), m_arcPts.end() );
 	for ( const VisPoint& vp : visiblePoints() )
 	{
 		ends.push_back( vp.uv );
@@ -802,9 +906,23 @@ CCVector2d DrawTool::snapPoint( const QPoint& pos, SnapType& type ) const
 		return bestP;
 	}
 
-	// 3) středy
+	// 3) středy (oblouk: střed kružnice a střed oblouku)
+	for ( const CCVector2d& M : arcCenters )
+	{
+		const double d = dist( M, P );
+		if ( d < best )
+		{
+			best = d;
+			bestP = M;
+			type = SnapType::Mid;
+		}
+	}
 	for ( const Segment* s : nearSegs )
 	{
+		if ( s->arc )
+		{
+			continue;
+		}
 		const CCVector2d M = ( s->a + s->b ) * 0.5;
 		const double d = dist( M, P );
 		if ( d < best * 0.6 )
@@ -850,6 +968,42 @@ CCVector2d DrawTool::applyOrtho( const CCVector2d& from, const CCVector2d& to ) 
 CCVector2d DrawTool::cursorPoint( const QPoint& pos, SnapType& type, const CCVector2d* orthoFrom, TrackLines* lines ) const
 {
 	CCVector2d P = snapPoint( pos, type );
+	if ( m_perpLock && orthoFrom && m_mode == Mode::Line )
+	{
+		// kolmo na předchozí úsek: bod (uchopený nebo pod kurzorem) se promítne na kolmici
+		CCVector2d raw;
+		if ( !screenToLocal( pos, raw ) )
+		{
+			return P;
+		}
+		const bool fixedSnap = ( type == SnapType::End || type == SnapType::Mid || type == SnapType::Intersection );
+		const CCVector2d base = fixedSnap ? P : raw;
+		const CCVector2d Pc = *orthoFrom + m_perpDir * ( base - *orthoFrom ).dot( m_perpDir );
+		type = SnapType::None;
+		if ( !fixedSnap )
+		{
+			// průsečík kolmice s nakreslenou čarou poblíž
+			const double tol = SnapPixels * pixelSize();
+			double best = tol;
+			CCVector2d bestI = Pc;
+			for ( const Segment& s : collectSegments() )
+			{
+				CCVector2d I;
+				if ( lineIntersection( *orthoFrom, *orthoFrom + m_perpDir, s.a, s.b, I ) )
+				{
+					const double t = paramOn( s.a, s.b, I );
+					if ( t >= -1e-9 && t <= 1 + 1e-9 && dist( I, Pc ) < best )
+					{
+						best = dist( I, Pc );
+						bestI = I;
+						type = SnapType::Intersection;
+					}
+				}
+			}
+			return bestI;
+		}
+		return Pc;
+	}
 	if ( type == SnapType::End || type == SnapType::Mid || type == SnapType::Intersection )
 	{
 		return P; // pevné uchopení má přednost
@@ -1092,23 +1246,135 @@ void DrawTool::onHoverTimeout()
 
 ccPolyline* DrawTool::addLine( const CCVector2d& a, const CCVector2d& b, int cat, bool hidden, UndoItem* undo )
 {
+	if ( dist( a, b ) < 1e-6 )
+	{
+		return nullptr;
+	}
+	return addPolyline( { a, b }, cat, hidden, false, undo );
+}
+
+bool DrawTool::isArc( const ccHObject* obj )
+{
+	return obj && obj->hasMetaData( Drawing::MetaArc ) && obj->getMetaData( Drawing::MetaArc ).toBool();
+}
+
+std::vector<CCVector2d> DrawTool::polyPoints( ccPolyline* poly ) const
+{
+	std::vector<CCVector2d> out;
+	if ( !poly )
+	{
+		return out;
+	}
+	for ( unsigned k = 0; k < poly->size(); ++k )
+	{
+		out.push_back( m_frame.toUV( CCVector3d::fromArray( poly->getPoint( k )->u ) ) );
+	}
+	return out;
+}
+
+void DrawTool::setPolyPoints( ccPolyline* poly, const std::vector<CCVector2d>& pts, UndoItem* undo )
+{
+	auto* verts = poly ? dynamic_cast<ccPointCloud*>( poly->getAssociatedCloud() ) : nullptr;
+	if ( !verts || verts->size() != pts.size() || !lineExists( poly ) )
+	{
+		return;
+	}
+	if ( undo )
+	{
+		Action act;
+		act.kind = Action::Modify;
+		act.id = poly->getUniqueID();
+		act.pts = polyPoints( poly );
+		undo->push_back( act );
+	}
+	for ( unsigned k = 0; k < verts->size(); ++k )
+	{
+		setVertex( verts, k, m_frame.to3D( pts[k] ).toFloat() );
+	}
+	poly->setMetaData( "qRezy.fx", m_frame.N.x * m_frame.back );
+	poly->setMetaData( "qRezy.fy", m_frame.N.y * m_frame.back );
+	poly->setMetaData( "qRezy.fz", m_frame.N.z * m_frame.back );
+	verts->invalidateBoundingBox();
+	poly->prepareDisplayForRefresh();
+}
+
+void DrawTool::translateItem( ccPolyline* poly, const CCVector2d& d, bool copy, UndoItem* undo )
+{
+	if ( !lineExists( poly ) )
+	{
+		return;
+	}
+	std::vector<CCVector2d> pts = polyPoints( poly );
+	for ( CCVector2d& P : pts )
+	{
+		P += d;
+	}
+	if ( pts.empty() )
+	{
+		return;
+	}
+	if ( !copy )
+	{
+		if ( isArc( poly ) )
+		{
+			setPolyPoints( poly, pts, undo );
+		}
+		else
+		{
+			setLine( poly, pts.front(), pts.back(), undo );
+		}
+		return;
+	}
+	if ( isText( poly ) )
+	{
+		addText( pts.front(), poly->getMetaData( "qRezy.text" ).toString(), undo );
+		return;
+	}
+	int c0;
+	bool h0;
+	lineAttrs( poly, c0, h0 );
+	if ( isArc( poly ) )
+	{
+		addPolyline( pts, c0, h0, true, undo );
+	}
+	else
+	{
+		addLine( pts.front(), pts.back(), c0, h0, undo );
+	}
+}
+
+bool DrawTool::rejectArc( ccPolyline* poly )
+{
+	if ( !isArc( poly ) )
+	{
+		return false;
+	}
+	m_flash = QStringLiteral( "Oblouk tímto nástrojem upravit nejde – lze ho vybrat, přesunout, kopírovat, smazat a změnit hladinu." );
+	Q_EMIT statusChanged( m_flash );
+	return true;
+}
+
+ccPolyline* DrawTool::addPolyline( const std::vector<CCVector2d>& pts, int cat, bool hidden, bool arc, UndoItem* undo )
+{
 	ccHObject* group = drawingGroup( true );
-	if ( !group || dist( a, b ) < 1e-6 )
+	if ( !group || pts.size() < 2 )
 	{
 		return nullptr;
 	}
 
 	auto* verts = new ccPointCloud( "vertices" );
-	verts->reserve( 2 );
-	verts->addPoint( m_frame.to3D( a ).toFloat() );
-	verts->addPoint( m_frame.to3D( b ).toFloat() );
+	verts->reserve( static_cast<unsigned>( pts.size() ) );
+	for ( const CCVector2d& P : pts )
+	{
+		verts->addPoint( m_frame.to3D( P ).toFloat() );
+	}
 	verts->setEnabled( false );
 	verts->setGlobalShift( m_shift );
 	verts->setGlobalScale( m_scale );
 
 	auto* poly = new RezLine( verts );
 	poly->addChild( verts );
-	poly->addPointIndex( 0, 2 );
+	poly->addPointIndex( 0, static_cast<unsigned>( pts.size() ) );
 	poly->setClosed( false );
 	poly->setGlobalShift( m_shift );
 	poly->setGlobalScale( m_scale );
@@ -1116,10 +1382,14 @@ ccPolyline* DrawTool::addLine( const CCVector2d& a, const CCVector2d& b, int cat
 	poly->setColor( toRgb( Drawing::displayColor( cat, hidden ) ) );
 	poly->showColors( true );
 	poly->setWidth( 2 );
-	poly->setName( Drawing::categoryName( cat ) + ( hidden ? QStringLiteral( " (zakrytá)" ) : QString() ) );
+	poly->setName( Drawing::categoryName( cat ) + ( arc ? QStringLiteral( " – oblouk" ) : QString() ) + ( hidden ? QStringLiteral( " (zakrytá)" ) : QString() ) );
 	poly->setMetaData( Drawing::MetaCategory, cat );
 	poly->setMetaData( Drawing::MetaHidden, hidden );
 	poly->setMetaData( Drawing::MetaView, m_frame.viewId );
+	if ( arc )
+	{
+		poly->setMetaData( Drawing::MetaArc, true );
+	}
 	// posun čáry k pozorovateli (pro zobrazení ve 3D na skutečném místě)
 	poly->setMetaData( "qRezy.fx", m_frame.N.x * m_frame.back );
 	poly->setMetaData( "qRezy.fy", m_frame.N.y * m_frame.back );
@@ -1265,7 +1535,10 @@ void DrawTool::undo()
 			{
 				if ( obj->isA( CC_TYPES::POLY_LINE ) )
 				{
-					setLine( static_cast<ccPolyline*>( obj ), a.a, a.b, nullptr );
+					if ( !a.pts.empty() )
+						setPolyPoints( static_cast<ccPolyline*>( obj ), a.pts, nullptr );
+					else
+						setLine( static_cast<ccPolyline*>( obj ), a.a, a.b, nullptr );
 				}
 			}
 			break;
@@ -1296,6 +1569,352 @@ void DrawTool::undo()
 	updateStatus();
 }
 
+// ---------------------------------------------------------------- oblouk
+
+std::vector<CCVector2d> DrawTool::arcPoints( const CCVector2d& C, double r, double a0, double sweep ) const
+{
+	// krok podle odchylky tětivy od oblouku (~0,5 mm), sudý počet úseků → prostřední vrchol = střed oblouku
+	const double tol = 0.0005 * m_scale;
+	double stepAng = ( r > tol ) ? 2.0 * std::acos( std::max( -1.0, 1.0 - tol / r ) ) : 0.2;
+	stepAng = std::max( 0.5 / RadToDeg, std::min( 5.0 / RadToDeg, stepAng ) );
+	int n = static_cast<int>( std::ceil( std::abs( sweep ) / stepAng ) );
+	n = std::max( 8, std::min( 720, n ) );
+	if ( n % 2 )
+	{
+		++n;
+	}
+	std::vector<CCVector2d> pts;
+	pts.reserve( static_cast<size_t>( n ) + 1 );
+	for ( int i = 0; i <= n; ++i )
+	{
+		const double a = a0 + sweep * i / n;
+		pts.push_back( C + CCVector2d( std::cos( a ), std::sin( a ) ) * r );
+	}
+	return pts;
+}
+
+bool DrawTool::arcPreview( std::vector<CCVector2d>& pts ) const
+{
+	if ( m_mode != Mode::Arc || m_arcPts.size() != 2 || !m_hasCursor )
+	{
+		return false;
+	}
+	const CCVector2d S = m_arcPts[0];
+	const CCVector2d P1 = m_arcPts[1];
+	const CCVector2d Q = m_cursor;
+	CCVector2d C;
+	double r = 0.0;
+	double a0 = 0.0;
+	double sweep = 0.0;
+	switch ( m_arcMethod )
+	{
+	case 0: // začátek – střed – konec
+	{
+		C = P1;
+		r = dist( S, C );
+		a0 = std::atan2( S.y - C.y, S.x - C.x );
+		sweep = m_arcSweep;
+		break;
+	}
+	case 1: // začátek – konec – střed (střed na ose tětivy, menší oblouk)
+	{
+		const CCVector2d E = P1;
+		CCVector2d u = E - S;
+		const double L = u.norm();
+		if ( L < 1e-9 )
+		{
+			return false;
+		}
+		u /= L;
+		const CCVector2d n( -u.y, u.x );
+		const CCVector2d M = ( S + E ) * 0.5;
+		const double h = ( Q - M ).dot( n );
+		if ( std::abs( h ) < 1e-9 )
+		{
+			return false;
+		}
+		C = M + n * h;
+		r = dist( S, C );
+		a0 = std::atan2( S.y - C.y, S.x - C.x );
+		sweep = wrapPi( std::atan2( E.y - C.y, E.x - C.x ) - a0 );
+		break;
+	}
+	default: // tři body: začátek – bod na oblouku – konec
+	{
+		if ( !arcFrom3( S, P1, Q, C, r, a0, sweep ) )
+		{
+			return false;
+		}
+		break;
+	}
+	}
+	if ( r < 1e-6 || std::abs( sweep ) < 1e-4 )
+	{
+		return false;
+	}
+	pts = arcPoints( C, r, a0, sweep );
+	return true;
+}
+
+// ---------------------------------------------------------------- čára z mračna
+
+bool DrawTool::detectCloudLine( const CCVector2d& click )
+{
+	m_clHas = false;
+	m_clJoin = false;
+	ccGenericPointCloud* cloud = nullptr;
+	if ( m_app && m_app->dbRootObject() && m_cloudID )
+	{
+		cloud = ccHObjectCaster::ToGenericPointCloud( m_app->dbRootObject()->find( m_cloudID ) );
+	}
+	if ( !cloud )
+	{
+		m_flash = QStringLiteral( "Čára z mračna: není vybrané mračno" );
+		return false;
+	}
+	const std::vector<std::array<double, 4>> planes = m_sliceProvider ? m_sliceProvider() : std::vector<std::array<double, 4>>();
+	const double sc = m_scale;
+	const double R = 0.30 * sc;          // okolí kliknutí
+	const double tol = std::max( 0.003, m_clTol ) * sc;
+	const double gap = std::max( 0.01, m_clGap ) * sc;
+	const double reach = 40.0 * sc;      // max. délka hledání podél přímky
+
+	// body řezu v rovině kreslení (jen v dosahu)
+	std::vector<CCVector2d> nearPts;
+	std::vector<CCVector2d> all;
+	const unsigned n = cloud->size();
+	nearPts.reserve( 4096 );
+	all.reserve( 65536 );
+	for ( unsigned i = 0; i < n; ++i )
+	{
+		const CCVector3* P = cloud->getPoint( i );
+		bool in = true;
+		for ( const auto& e : planes )
+		{
+			if ( e[0] * P->x + e[1] * P->y + e[2] * P->z + e[3] < 0.0 )
+			{
+				in = false;
+				break;
+			}
+		}
+		if ( !in )
+		{
+			continue;
+		}
+		const CCVector2d uv = m_frame.toUV( CCVector3d( P->x, P->y, P->z ) );
+		const double d = dist( uv, click );
+		if ( d > reach )
+		{
+			continue;
+		}
+		all.push_back( uv );
+		if ( d <= R )
+		{
+			nearPts.push_back( uv );
+		}
+	}
+	if ( nearPts.size() < 12 )
+	{
+		m_flash = QStringLiteral( "Čára z mračna: u kliknutí je málo bodů řezu (%1) – klikněte blíž k bodům" ).arg( nearPts.size() );
+		return false;
+	}
+
+	// RANSAC: přímka s nejvíce body v toleranci (pevné „náhodné“ pořadí kvůli opakovatelnosti)
+	unsigned seed = 12345u;
+	auto rnd = [&seed]( size_t m ) { seed = seed * 1103515245u + 12345u; return static_cast<size_t>( ( seed >> 8 ) % m ); };
+	size_t bestCount = 0;
+	CCVector2d bestP;
+	CCVector2d bestD;
+	for ( int it = 0; it < 400; ++it )
+	{
+		const CCVector2d& A = nearPts[rnd( nearPts.size() )];
+		const CCVector2d& B = nearPts[rnd( nearPts.size() )];
+		CCVector2d d = B - A;
+		if ( d.norm() < 0.05 * sc )
+		{
+			continue;
+		}
+		d.normalize();
+		const CCVector2d nn( -d.y, d.x );
+		size_t cnt = 0;
+		for ( const CCVector2d& Q : nearPts )
+		{
+			if ( std::abs( ( Q - A ).dot( nn ) ) <= tol )
+			{
+				++cnt;
+			}
+		}
+		// při shodě přednost přímce blíž ke kliknutí
+		if ( cnt > bestCount || ( cnt == bestCount && cnt > 0 && std::abs( ( click - A ).dot( nn ) ) < std::abs( ( click - bestP ).dot( CCVector2d( -bestD.y, bestD.x ) ) ) ) )
+		{
+			bestCount = cnt;
+			bestP = A;
+			bestD = d;
+		}
+	}
+	if ( bestCount < 10 )
+	{
+		m_flash = QStringLiteral( "Čára z mračna: body u kliknutí netvoří přímku" );
+		return false;
+	}
+
+	// zpřesnění (nejmenší čtverce kolmo k přímce) přes body v pásu, růst podél přímky s max. mezerou
+	CCVector2d P0 = bestP;
+	CCVector2d D = bestD;
+	double tMin = 0.0;
+	double tMax = 0.0;
+	for ( int pass = 0; pass < 3; ++pass )
+	{
+		const CCVector2d nn( -D.y, D.x );
+		std::vector<std::pair<double, CCVector2d>> band;
+		for ( const CCVector2d& Q : all )
+		{
+			if ( std::abs( ( Q - P0 ).dot( nn ) ) <= tol )
+			{
+				band.push_back( { ( Q - P0 ).dot( D ), Q } );
+			}
+		}
+		if ( band.size() < 10 )
+		{
+			break;
+		}
+		std::sort( band.begin(), band.end(), []( const std::pair<double, CCVector2d>& x, const std::pair<double, CCVector2d>& y ) { return x.first < y.first; } );
+		const double t0 = ( click - P0 ).dot( D );
+		size_t k0 = std::lower_bound( band.begin(), band.end(), t0, []( const std::pair<double, CCVector2d>& x, double v ) { return x.first < v; } ) - band.begin();
+		if ( k0 >= band.size() )
+		{
+			k0 = band.size() - 1;
+		}
+		size_t lo = k0;
+		while ( lo > 0 && band[lo].first - band[lo - 1].first <= gap )
+		{
+			--lo;
+		}
+		size_t hi = k0;
+		while ( hi + 1 < band.size() && band[hi + 1].first - band[hi].first <= gap )
+		{
+			++hi;
+		}
+		if ( hi - lo + 1 < 10 )
+		{
+			m_flash = QStringLiteral( "Čára z mračna: příliš krátký úsek" );
+			return false;
+		}
+		// PCA přes vybraný úsek
+		CCVector2d m( 0, 0 );
+		for ( size_t k = lo; k <= hi; ++k )
+		{
+			m += band[k].second;
+		}
+		m /= static_cast<double>( hi - lo + 1 );
+		double sxx = 0.0;
+		double sxy = 0.0;
+		double syy = 0.0;
+		for ( size_t k = lo; k <= hi; ++k )
+		{
+			const CCVector2d q = band[k].second - m;
+			sxx += q.x * q.x;
+			sxy += q.x * q.y;
+			syy += q.y * q.y;
+		}
+		const double ang = 0.5 * std::atan2( 2.0 * sxy, sxx - syy );
+		CCVector2d Dn( std::cos( ang ), std::sin( ang ) );
+		if ( Dn.dot( D ) < 0 )
+		{
+			Dn = Dn * -1.0;
+		}
+		P0 = m;
+		D = Dn;
+		tMin = 1e300;
+		tMax = -1e300;
+		for ( size_t k = lo; k <= hi; ++k )
+		{
+			const double t = ( band[k].second - P0 ).dot( D );
+			tMin = std::min( tMin, t );
+			tMax = std::max( tMax, t );
+		}
+	}
+	if ( tMax - tMin < 0.05 * sc )
+	{
+		m_flash = QStringLiteral( "Čára z mračna: příliš krátký úsek" );
+		return false;
+	}
+
+	// napojení na předchozí čáru v rohu (a srovnání do pravého úhlu)
+	CCVector2d pa;
+	CCVector2d pb;
+	if ( m_clPrev && lineExists( m_clPrev ) && m_clPrev->getMetaData( Drawing::MetaView ).toInt() == m_frame.viewId && lineEnds( m_clPrev, pa, pb ) )
+	{
+		CCVector2d pd = pb - pa;
+		if ( pd.norm() > 1e-9 )
+		{
+			pd.normalize();
+			const double cosA = std::abs( pd.dot( D ) );
+			if ( cosA < std::cos( 20.0 / RadToDeg ) ) // jen různoběžné čáry
+			{
+				if ( m_clSquare && cosA < std::sin( 3.0 / RadToDeg ) )
+				{
+					// téměř kolmo → přesně kolmo, otočit kolem středu nové čáry
+					const CCVector2d mid = P0 + D * ( 0.5 * ( tMin + tMax ) );
+					const double half = 0.5 * ( tMax - tMin );
+					CCVector2d Dq( -pd.y, pd.x );
+					if ( Dq.dot( D ) < 0 )
+					{
+						Dq = Dq * -1.0;
+					}
+					D = Dq;
+					P0 = mid;
+					tMin = -half;
+					tMax = half;
+				}
+				CCVector2d I;
+				const CCVector2d A = P0 + D * tMin;
+				const CCVector2d B = P0 + D * tMax;
+				if ( lineIntersection( A, B, pa, pb, I ) )
+				{
+					const double reachJ = 0.6 * sc;
+					const double dNew = std::min( dist( I, A ), dist( I, B ) );
+					const double dOld = std::min( dist( I, pa ), dist( I, pb ) );
+					if ( dNew < reachJ && dOld < reachJ )
+					{
+						const double ti = ( I - P0 ).dot( D );
+						if ( dist( I, A ) < dist( I, B ) )
+							tMin = ti;
+						else
+							tMax = ti;
+						m_clJoin = true;
+						m_clPrevEnd = dist( I, pa ) < dist( I, pb ) ? 0 : 1;
+						m_clPrevA = m_clPrevEnd == 0 ? I : pa;
+						m_clPrevB = m_clPrevEnd == 0 ? pb : I;
+					}
+				}
+			}
+		}
+	}
+	m_clA = P0 + D * tMin;
+	m_clB = P0 + D * tMax;
+	m_clHas = true;
+	return true;
+}
+
+void DrawTool::acceptCloudLine()
+{
+	if ( !m_clHas )
+	{
+		return;
+	}
+	UndoItem u;
+	if ( m_clJoin && lineExists( m_clPrev ) )
+	{
+		setLine( m_clPrev, m_clPrevA, m_clPrevB, &u );
+	}
+	ccPolyline* p = addLine( m_clA, m_clB, m_category, m_hidden, &u );
+	pushUndo( std::move( u ) );
+	m_clPrev = p;
+	m_clHas = false;
+	m_clJoin = false;
+}
+
 // ---------------------------------------------------------------- režimy
 
 bool DrawTool::previewGeometry( CCVector2d& a, CCVector2d& b ) const
@@ -1322,7 +1941,7 @@ bool DrawTool::previewGeometry( CCVector2d& a, CCVector2d& b ) const
 	case Mode::Move:
 	case Mode::Copy:
 	{
-		if ( m_step != 2 )
+		if ( m_step != 2 || isArc( m_sel ) )
 		{
 			return false;
 		}
@@ -1397,6 +2016,58 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			pushUndo( std::move( u ) );
 		}
 		m_chain.push_back( P );
+		m_perpLock = false; // kolmice platí jen pro jeden úsek
+		break;
+	}
+	case Mode::Arc:
+	{
+		const CCVector2d P = cursorPoint( pos, st, m_arcPts.empty() ? nullptr : &m_arcPts.back() );
+		if ( m_arcPts.size() < 2 )
+		{
+			if ( m_arcPts.empty() || dist( P, m_arcPts.back() ) > 1e-6 )
+			{
+				m_arcPts.push_back( P );
+				if ( m_arcPts.size() == 2 && m_arcMethod == 0 )
+				{
+					// sledování směru oblouku pohybem myši od začátku
+					m_arcSweep = 0.0;
+					m_arcPrevAng = std::atan2( m_arcPts[0].y - P.y, m_arcPts[0].x - P.x );
+				}
+			}
+		}
+		else
+		{
+			m_cursor = P;
+			std::vector<CCVector2d> pts;
+			if ( arcPreview( pts ) )
+			{
+				UndoItem u;
+				addPolyline( pts, m_category, m_hidden, true, &u );
+				pushUndo( std::move( u ) );
+			}
+			m_arcPts.clear();
+			m_arcSweep = 0.0;
+		}
+		break;
+	}
+	case Mode::CloudLine:
+	{
+		CCVector2d click;
+		if ( !screenToLocal( pos, click ) )
+		{
+			break;
+		}
+		if ( m_clHas )
+		{
+			// klik na náhled = jen potvrdit; jinde = potvrdit a hledat další čáru
+			const bool onPreview = dist( closestOnSegment( m_clA, m_clB, click ), click ) < 10.0 * pixelSize();
+			acceptCloudLine();
+			if ( onPreview )
+			{
+				break;
+			}
+		}
+		detectCloudLine( click );
 		break;
 	}
 	case Mode::Delete:
@@ -1508,27 +2179,7 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			std::vector<ccPolyline*> created;
 			for ( ccPolyline* p : m_selSet )
 			{
-				CCVector2d a;
-				CCVector2d b;
-				if ( !lineEnds( p, a, b ) )
-				{
-					continue;
-				}
-				if ( m_mode == Mode::Move )
-				{
-					setLine( p, a + d, b + d, &u );
-				}
-				else if ( isText( p ) )
-				{
-					addText( a + d, p->getMetaData( "qRezy.text" ).toString(), &u );
-				}
-				else
-				{
-					int c0;
-					bool h0;
-					lineAttrs( p, c0, h0 );
-					addLine( a + d, b + d, c0, h0, &u );
-				}
+				translateItem( p, d, m_mode == Mode::Copy, &u );
 			}
 			pushUndo( std::move( u ) );
 			if ( m_mode == Mode::Move )
@@ -1539,31 +2190,15 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		else
 		{
 			m_cursor = cursorPoint( pos, st, &m_base );
-			CCVector2d a;
-			CCVector2d b;
-			if ( previewGeometry( a, b ) )
+			if ( lineExists( m_sel ) )
 			{
 				UndoItem u;
+				translateItem( m_sel, m_cursor - m_base, m_mode == Mode::Copy, &u );
+				pushUndo( std::move( u ) );
 				if ( m_mode == Mode::Move )
 				{
-					setLine( m_sel, a, b, &u );
-					pushUndo( std::move( u ) );
 					select( nullptr );
 					m_step = 0;
-				}
-				else
-				{
-					if ( isText( m_sel ) )
-					{
-						addText( a, m_sel->getMetaData( "qRezy.text" ).toString(), &u );
-					}
-					else
-					{
-						const int cat = m_sel->getMetaData( Drawing::MetaCategory ).toInt();
-						const bool hid = m_sel->getMetaData( Drawing::MetaHidden ).toBool();
-						addLine( a, b, cat, hid, &u );
-					}
-					pushUndo( std::move( u ) );
 				}
 			}
 		}
@@ -1580,7 +2215,8 @@ void DrawTool::onDataPoint( const QPoint& pos )
 				break; // výběr obsluhuje eventFilter
 			}
 			CCVector2d click;
-			if ( ccPolyline* p = pickLine( pos, &click ) )
+			ccPolyline* p = pickLine( pos, &click );
+			if ( p && !rejectArc( p ) )
 			{
 				CCVector2d a;
 				CCVector2d b;
@@ -1623,7 +2259,7 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			{
 				CCVector2d a;
 				CCVector2d b;
-				if ( !isText( p ) && lineEnds( p, a, b ) && dist( a, b ) > 1e-9 )
+				if ( !isText( p ) && !rejectArc( p ) && lineEnds( p, a, b ) && dist( a, b ) > 1e-9 )
 				{
 					select( p );
 					m_fixed = a;
@@ -1670,7 +2306,7 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		std::vector<EndRef> ends;
 		for ( const Segment& sg : collectSegments() )
 		{
-			if ( sg.ref || isText( sg.poly ) )
+			if ( sg.ref || sg.arc || isText( sg.poly ) )
 			{
 				continue;
 			}
@@ -1724,7 +2360,8 @@ void DrawTool::onDataPoint( const QPoint& pos )
 	{
 		if ( m_step == 0 )
 		{
-			if ( ccPolyline* p = pickLine( pos ) )
+			ccPolyline* p = pickLine( pos );
+			if ( p && !rejectArc( p ) )
 			{
 				select( p );
 				m_step = 1;
@@ -1751,7 +2388,8 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		if ( m_step == 0 )
 		{
 			CCVector2d click;
-			if ( ccPolyline* p = pickLine( pos, &click ) )
+			ccPolyline* p = pickLine( pos, &click );
+			if ( p && !rejectArc( p ) )
 			{
 				CCVector2d a;
 				CCVector2d b;
@@ -1781,9 +2419,9 @@ void DrawTool::onDataPoint( const QPoint& pos )
 	{
 		CCVector2d click;
 		ccPolyline* p = pickLine( pos, &click );
-		if ( !p )
+		if ( !p || rejectArc( p ) )
 		{
-			break;
+			return;
 		}
 		if ( m_step == 0 )
 		{
@@ -1842,7 +2480,8 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		// rozdělit: 2 body na čáře → část mezi nimi se smaže; dvakrát stejný bod = jen rozdělit
 		if ( m_step == 0 )
 		{
-			if ( ccPolyline* p = pickLine( pos ) )
+			ccPolyline* p = pickLine( pos );
+			if ( p && !rejectArc( p ) )
 			{
 				CCVector2d a;
 				CCVector2d b;
@@ -1917,9 +2556,9 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		// oříznout/prodloužit k prvku: 1. čára = hranice, pak libovolně čar k oříznutí
 		CCVector2d click;
 		ccPolyline* p = pickLine( pos, &click );
-		if ( !p )
+		if ( !p || rejectArc( p ) )
 		{
-			break;
+			return;
 		}
 		if ( m_step == 0 )
 		{
@@ -2035,6 +2674,10 @@ void DrawTool::onTypedValue( double v )
 		}
 		const CCVector2d target = m_ortho ? applyOrtho( m_chain.back(), m_cursor ) : m_cursor;
 		CCVector2d dir = target - m_chain.back();
+		if ( m_perpLock )
+		{
+			dir = m_perpDir * ( ( m_cursor - m_chain.back() ).dot( m_perpDir ) >= 0 ? 1.0 : -1.0 );
+		}
 		if ( dir.norm() < 1e-9 )
 		{
 			return;
@@ -2045,6 +2688,7 @@ void DrawTool::onTypedValue( double v )
 		addLine( m_chain.back(), P, m_category, m_hidden, &u );
 		pushUndo( std::move( u ) );
 		m_chain.push_back( P );
+		m_perpLock = false;
 		break;
 	}
 	case Mode::Move:
@@ -2060,26 +2704,29 @@ void DrawTool::onTypedValue( double v )
 			return;
 		}
 		dir.normalize();
-		const CCVector2d saved = m_cursor;
-		m_cursor = m_base + dir * L;
-		CCVector2d a;
-		CCVector2d b;
-		if ( previewGeometry( a, b ) )
+		const CCVector2d d = dir * L;
+		UndoItem u;
+		if ( !m_selSet.empty() )
 		{
-			UndoItem u;
+			for ( ccPolyline* p : m_selSet )
+			{
+				translateItem( p, d, m_mode == Mode::Copy, &u );
+			}
 			if ( m_mode == Mode::Move )
 			{
-				setLine( m_sel, a, b, &u );
+				m_step = 1;
+			}
+		}
+		else if ( lineExists( m_sel ) )
+		{
+			translateItem( m_sel, d, m_mode == Mode::Copy, &u );
+			if ( m_mode == Mode::Move )
+			{
 				select( nullptr );
 				m_step = 0;
 			}
-			else
-			{
-				addLine( a, b, m_sel->getMetaData( Drawing::MetaCategory ).toInt(), m_sel->getMetaData( Drawing::MetaHidden ).toBool(), &u );
-			}
-			pushUndo( std::move( u ) );
 		}
-		m_cursor = saved;
+		pushUndo( std::move( u ) );
 		break;
 	}
 	case Mode::Offset:
@@ -2330,6 +2977,56 @@ void DrawTool::updateTip()
 			segment( m_fixed, m_cursor, yellow, 2.0f );
 			segment( m_cursor, m_far2, yellow, 2.0f );
 		}
+		// polyline (oblouk) jako řada úseků
+		auto polyline = [&]( const std::vector<CCVector2d>& pts, const CCVector2d& d, const ccColor::Rgb& col, float w )
+		{
+			Overlay o;
+			o.color = col;
+			o.width = w;
+			for ( const CCVector2d& P : pts )
+			{
+				CCVector2d S;
+				if ( localToScreen( P + d, S ) )
+				{
+					o.pts.push_back( S );
+				}
+			}
+			if ( o.pts.size() >= 2 )
+			{
+				ovs.push_back( o );
+			}
+		};
+		// oblouk: pomocné čáry a náhled
+		if ( m_mode == Mode::Arc && !m_arcPts.empty() )
+		{
+			const ccColor::Rgb lc = toRgb( Drawing::displayColor( m_category, m_hidden ) );
+			if ( m_arcPts.size() == 1 )
+			{
+				segment( m_arcPts[0], m_cursor, white, 1.0f );
+			}
+			else
+			{
+				if ( m_arcMethod == 0 )
+				{
+					segment( m_arcPts[1], m_arcPts[0], white, 1.0f ); // poloměr
+					segment( m_arcPts[1], m_cursor, white, 1.0f );
+				}
+				else if ( m_arcMethod == 1 )
+				{
+					segment( m_arcPts[0], m_arcPts[1], white, 1.0f ); // tětiva
+				}
+				std::vector<CCVector2d> pts;
+				if ( arcPreview( pts ) )
+				{
+					polyline( pts, CCVector2d( 0, 0 ), lc, 2.0f );
+				}
+			}
+		}
+		// přesun / kopie jednoho oblouku
+		if ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && m_step == 2 && m_selSet.empty() && isArc( m_sel ) )
+		{
+			polyline( polyPoints( m_sel ), m_cursor - m_base, yellow, 2.0f );
+		}
 		// přesun / kopie výběru
 		if ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && m_step == 2 && !m_selSet.empty() )
 		{
@@ -2338,6 +3035,11 @@ void DrawTool::updateTip()
 			{
 				CCVector2d a;
 				CCVector2d b;
+				if ( isArc( p ) )
+				{
+					polyline( polyPoints( p ), d, yellow, 2.0f );
+					continue;
+				}
 				if ( lineEnds( p, a, b ) )
 				{
 					if ( dist( a, b ) < 1e-9 )
@@ -2360,7 +3062,7 @@ void DrawTool::updateTip()
 		{
 			CCVector2d a;
 			CCVector2d b;
-			if ( lineEnds( p, a, b ) )
+			if ( !isArc( p ) && lineEnds( p, a, b ) )
 			{
 				for ( const CCVector2d& E : { a, b } )
 				{
@@ -2442,6 +3144,19 @@ void DrawTool::updateTip()
 			}
 			addArrow( ovs, m_base, n, 40.0, cyan );
 			addArrow( ovs, m_secB, n, 40.0, cyan );
+		}
+	}
+
+	// čára z mračna: náhled k potvrzení (a posunutý konec předchozí čáry)
+	if ( m_mode == Mode::CloudLine && m_clHas )
+	{
+		const ccColor::Rgb cl( 0, 230, 255 );
+		segment( m_clA, m_clB, cl, 3.0f );
+		addMarker( ovs, m_clA, SnapType::End, cl );
+		addMarker( ovs, m_clB, SnapType::End, cl );
+		if ( m_clJoin )
+		{
+			segment( m_clPrevA, m_clPrevB, cl, 1.0f );
 		}
 	}
 
@@ -2755,13 +3470,48 @@ void DrawTool::updateStatus()
 		prompt = m_step == 0 ? QStringLiteral( "Oříznout k prvku: vyberte hraniční čáru" )
 		                     : QStringLiteral( "Oříznout k prvku: klikněte na čáry (na část, která zůstane); reset = nová hranice" );
 		break;
+	case Mode::Arc:
+	{
+		static const char* names[] = { "začátek – střed – konec", "začátek – konec – střed", "tři body" };
+		const QString n = QStringLiteral( "Oblouk (%1)" ).arg( QString::fromUtf8( names[m_arcMethod] ) );
+		if ( m_arcPts.empty() )
+			prompt = n + QStringLiteral( ": začátek" );
+		else if ( m_arcPts.size() == 1 )
+			prompt = n + ( m_arcMethod == 0 ? QStringLiteral( ": střed" ) : m_arcMethod == 1 ? QStringLiteral( ": konec" ) : QStringLiteral( ": bod na oblouku" ) );
+		else
+			prompt = n + ( m_arcMethod == 0 ? QStringLiteral( ": konec (směr podle pohybu myši)" ) : m_arcMethod == 1 ? QStringLiteral( ": střed" ) : QStringLiteral( ": konec" ) );
+		std::vector<CCVector2d> pts;
+		if ( arcPreview( pts ) && pts.size() >= 3 )
+		{
+			CCVector2d C;
+			if ( circleFrom3( pts.front(), pts[pts.size() / 2], pts.back(), C ) )
+			{
+				prompt += QStringLiteral( "  |  poloměr %1 m" ).arg( num( dist( C, pts.front() ) / m_scale ) );
+			}
+		}
+		break;
+	}
+	case Mode::CloudLine:
+		prompt = m_clHas ? QStringLiteral( "Čára z mračna: %1 m – klik na čáru nebo Enter = potvrdit, klik jinam = potvrdit a další, pravé = zahodit%2" )
+		                       .arg( num( dist( m_clA, m_clB ) / m_scale ), m_clJoin ? QStringLiteral( " (napojí se v rohu)" ) : QString() )
+		                 : QStringLiteral( "Čára z mračna: klikněte k bodům řezu (na líc zdi)" );
+		break;
 	}
 
+	if ( !m_flash.isEmpty() )
+	{
+		prompt = m_flash;
+		m_flash.clear();
+	}
 	QString s = prompt;
 	s += QStringLiteral( "\nHladina: %1%2" ).arg( Drawing::categoryName( m_category ), m_hidden ? QStringLiteral( " – zakrytá" ) : QString() );
 	if ( m_ortho )
 	{
 		s += QStringLiteral( "  |  ORTO" );
+	}
+	if ( m_perpLock )
+	{
+		s += QStringLiteral( "  |  KOLMO na předchozí úsek" );
 	}
 	if ( m_hasCursor && m_cursorSnap != SnapType::None )
 	{
@@ -2938,6 +3688,10 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 				setSelection( {} ); // reset zruší výběr, další klik vybírá čáru
 			}
 			m_chain.clear();
+			m_arcPts.clear();
+			m_arcSweep = 0.0;
+			m_perpLock = false;
+			m_clHas = false; // čára z mračna: reset = zahodit náhled
 			m_step = 0;
 			select( nullptr );
 			m_typed.clear();
@@ -2994,8 +3748,20 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		{
 			from = &m_fixed;
 		}
+		else if ( m_mode == Mode::Arc && !m_arcPts.empty() )
+		{
+			from = &m_arcPts.back();
+		}
 		m_trackLines.clear();
 		m_cursor = cursorPoint( e->pos(), st, from, &m_trackLines );
+		if ( m_mode == Mode::Arc && m_arcMethod == 0 && m_arcPts.size() == 2 && dist( m_cursor, m_arcPts[1] ) > 1e-9 )
+		{
+			// směr oblouku podle pohybu myši kolem středu
+			const double ang = std::atan2( m_cursor.y - m_arcPts[1].y, m_cursor.x - m_arcPts[1].x );
+			m_arcSweep += wrapPi( ang - m_arcPrevAng );
+			m_arcSweep = std::max( -TwoPi + 1e-3, std::min( TwoPi - 1e-3, m_arcSweep ) );
+			m_arcPrevAng = ang;
+		}
 		m_cursorSnap = st;
 		m_hasCursor = true;
 
@@ -3119,6 +3885,38 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 				redraw2D();
 			}
 		}
+		else if ( ( k == Qt::Key_Return || k == Qt::Key_Enter ) && m_typed.isEmpty() && ( m_mode == Mode::Line || m_mode == Mode::CloudLine ) )
+		{
+			if ( event->type() == QEvent::KeyPress )
+			{
+				if ( m_mode == Mode::CloudLine )
+				{
+					acceptCloudLine(); // Enter = potvrdit čáru z mračna
+				}
+				else if ( m_chain.size() >= 2 )
+				{
+					// Enter = další úsek kolmo na předchozí (jen jeden úsek; znovu Enter = zrušit)
+					CCVector2d d = m_chain.back() - m_chain[m_chain.size() - 2];
+					if ( d.norm() > 1e-9 && !m_perpLock )
+					{
+						d.normalize();
+						m_perpDir = CCVector2d( -d.y, d.x );
+						m_perpLock = true;
+					}
+					else
+					{
+						m_perpLock = false;
+					}
+				}
+				else
+				{
+					m_flash = QStringLiteral( "Kolmo: nejdřív nakreslete úsek, pak Enter = další úsek kolmo na něj" );
+				}
+				updateTip();
+				updateStatus();
+				redraw3D();
+			}
+		}
 		else if ( k == Qt::Key_Escape )
 		{
 			if ( event->type() == QEvent::KeyPress )
@@ -3129,7 +3927,7 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 					setSelection( {} );
 					updateStatus();
 				}
-				else if ( m_step == 0 && m_chain.empty() )
+				else if ( m_step == 0 && m_chain.empty() && m_arcPts.empty() && !m_clHas )
 				{
 					setMode( Mode::Select );
 				}
@@ -3147,7 +3945,11 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		else if ( k >= Qt::Key_F1 && k <= Qt::Key_F4 && !ctrl )
 		{
 			if ( event->type() == QEvent::KeyPress )
-				setCategory( k - Qt::Key_F1 );
+			{
+				const int id = Drawing::layerIdAt( k - Qt::Key_F1 );
+				if ( id >= 0 )
+					setCategory( id );
+			}
 		}
 		else if ( k == Qt::Key_F5 && !ctrl )
 		{
@@ -3201,6 +4003,11 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		{
 			if ( event->type() == QEvent::KeyPress )
 				setMode( Mode::Measure );
+		}
+		else if ( plain && k == Qt::Key_E )
+		{
+			if ( event->type() == QEvent::KeyPress )
+				setMode( Mode::Arc );
 		}
 		else
 		{
@@ -3279,7 +4086,7 @@ void DrawTool::applyLook( ccPolyline* poly, int cat, bool hidden )
 	}
 	poly->setMetaData( Drawing::MetaCategory, cat );
 	poly->setMetaData( Drawing::MetaHidden, hidden );
-	poly->setName( Drawing::categoryName( cat ) + ( hidden ? QStringLiteral( " (zakrytá)" ) : QString() ) );
+	poly->setName( Drawing::categoryName( cat ) + ( isArc( poly ) ? QStringLiteral( " – oblouk" ) : QString() ) + ( hidden ? QStringLiteral( " (zakrytá)" ) : QString() ) );
 	if ( auto* rl = dynamic_cast<RezLine*>( poly ) )
 	{
 		rl->setDashed( hidden );
@@ -3406,27 +4213,37 @@ void DrawTool::selectWindow( const QPoint& p0, const QPoint& p1, bool add )
 		return pos == 0 || neg == 0;
 	};
 	std::vector<ccPolyline*> sel = add ? m_selSet : std::vector<ccPolyline*>();
+	// po prvcích: uvnitř = všechny úseky uvnitř, křížem = kterýkoli úsek zasažen
+	std::vector<ccPolyline*> order;
+	std::vector<std::pair<bool, bool>> state; //!< (všechny uvnitř, něco zasaženo)
 	for ( const Segment& s : collectSegments() )
 	{
 		if ( s.ref || std::find( sel.begin(), sel.end(), s.poly ) != sel.end() )
 		{
 			continue;
 		}
+		size_t idx = std::find( order.begin(), order.end(), s.poly ) - order.begin();
+		if ( idx == order.size() )
+		{
+			order.push_back( s.poly );
+			state.push_back( { true, false } );
+		}
 		const bool ia = pointIn( s.a );
 		const bool ib = pointIn( s.b );
-		bool hit = ia && ib;
-		if ( !inside && !hit )
+		bool hit = ia || ib;
+		for ( int i = 0; i < 4 && !hit; ++i )
 		{
-			hit = ia || ib;
-			for ( int i = 0; i < 4 && !hit; ++i )
-			{
-				CCVector2d I;
-				hit = segmentIntersection( s.a, s.b, poly[i], poly[( i + 1 ) % 4], I );
-			}
+			CCVector2d I;
+			hit = segmentIntersection( s.a, s.b, poly[i], poly[( i + 1 ) % 4], I );
 		}
-		if ( hit )
+		state[idx].first = state[idx].first && ia && ib;
+		state[idx].second = state[idx].second || hit;
+	}
+	for ( size_t i = 0; i < order.size(); ++i )
+	{
+		if ( inside ? state[i].first : state[i].second )
 		{
-			sel.push_back( s.poly );
+			sel.push_back( order[i] );
 		}
 	}
 	setSelection( sel );
@@ -3446,7 +4263,7 @@ bool DrawTool::pickHandle( const QPoint& pos, ccPolyline*& poly, int& end ) cons
 	{
 		CCVector2d a;
 		CCVector2d b;
-		if ( !lineEnds( p, a, b ) )
+		if ( isArc( p ) || !lineEnds( p, a, b ) )
 		{
 			continue;
 		}
@@ -3596,11 +4413,32 @@ void DrawTool::setShowCodes( bool on )
 
 std::vector<DrawTool::VisPoint> DrawTool::visiblePoints() const
 {
-	std::vector<VisPoint> out;
 	if ( !m_showPoints )
+	{
+		return {};
+	}
+	return framePoints( m_frame );
+}
+
+std::vector<std::pair<CCVector3d, QString>> DrawTool::pointsInFrame( const DrawFrame& f ) const
+{
+	std::vector<std::pair<CCVector3d, QString>> out;
+	if ( f.plan )
 	{
 		return out;
 	}
+	std::vector<CCVector3d> local;
+	const std::vector<VisPoint> vps = framePoints( f, &local );
+	for ( size_t i = 0; i < vps.size(); ++i )
+	{
+		out.push_back( { local[i], vps[i].name } );
+	}
+	return out;
+}
+
+std::vector<DrawTool::VisPoint> DrawTool::framePoints( const DrawFrame& frame, std::vector<CCVector3d>* local ) const
+{
+	std::vector<VisPoint> out;
 	ccHObject* group = const_cast<DrawTool*>( this )->drawingGroup( false );
 	if ( !group )
 	{
@@ -3621,21 +4459,25 @@ std::vector<DrawTool::VisPoint> DrawTool::visiblePoints() const
 		{
 			const CCVector3d P = CCVector3d::fromArray( pc->getPoint( k )->u );
 			const bool z = ( static_cast<int>( k ) < hasZ.size() ) && hasZ[static_cast<int>( k )] == QChar( '1' );
-			if ( !m_frame.plan )
+			if ( !frame.plan )
 			{
 				// řez / pohled: jen body s výškou v dosahu roviny (sklopí se do ní)
 				if ( !z )
 				{
 					continue;
 				}
-				const double sN = ( P - m_frame.O ).dot( m_frame.N );
-				if ( sN < m_frame.ptMin || sN > m_frame.ptMax )
+				const double sN = ( P - frame.O ).dot( frame.N );
+				if ( sN < frame.ptMin || sN > frame.ptMax )
 				{
 					continue;
 				}
 			}
+			if ( local )
+			{
+				local->push_back( P );
+			}
 			VisPoint vp;
-			vp.uv = m_frame.toUV( P );
+			vp.uv = frame.toUV( P );
 			vp.name = ( static_cast<int>( k ) < names.size() ) ? names[static_cast<int>( k )] : QString();
 			vp.code = ( static_cast<int>( k ) < codes.size() ) ? codes[static_cast<int>( k )] : QString();
 			out.push_back( vp );
@@ -3910,7 +4752,7 @@ std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTa
 		const bool hid = poly->getMetaData( Drawing::MetaHidden ).toBool();
 
 		DgnV7::Element e;
-		e.sym = table.get( std::max( 0, std::min( Drawing::CategoryCount - 1, cat ) ), hid );
+		e.sym = table.get( cat, hid );
 		bool ok = true;
 		for ( unsigned k = 0; k < poly->size() && ok; ++k )
 		{
@@ -3918,10 +4760,101 @@ std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTa
 			ok = map( view, CCVector3d::fromArray( poly->getPoint( k )->u ), P );
 			e.pts.push_back( P );
 		}
+		if ( ok && isArc( poly ) && e.pts.size() >= 3 )
+		{
+			// skutečný oblouk (typ 16) ze začátku, středu a konce
+			const DgnV7::Point2& S = e.pts.front();
+			const DgnV7::Point2& M = e.pts[e.pts.size() / 2];
+			const DgnV7::Point2& E = e.pts.back();
+			CCVector2d C;
+			double r = 0.0;
+			double a0 = 0.0;
+			double sweep = 0.0;
+			if ( arcFrom3( CCVector2d( S.x, S.y ), CCVector2d( M.x, M.y ), CCVector2d( E.x, E.y ), C, r, a0, sweep ) )
+			{
+				if ( sweep < 0 )
+				{
+					a0 += sweep;
+					sweep = -sweep;
+				}
+				e.isArc = true;
+				e.center = { C.x, C.y };
+				e.radius = r;
+				e.startDeg = a0 * RadToDeg;
+				e.sweepDeg = sweep * RadToDeg;
+			}
+		}
 		if ( ok )
 		{
 			out.push_back( e );
 		}
 	}
 	return out;
+}
+
+int DrawTool::countCategory( int id ) const
+{
+	int n = 0;
+	ccHObject* group = const_cast<DrawTool*>( this )->drawingGroup( false );
+	if ( !group )
+	{
+		return 0;
+	}
+	for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+	{
+		ccHObject* ch = group->getChild( i );
+		if ( ch->isA( CC_TYPES::POLY_LINE ) && ch->hasMetaData( Drawing::MetaCategory ) && ch->getMetaData( Drawing::MetaCategory ).toInt() == id )
+		{
+			++n;
+		}
+	}
+	return n;
+}
+
+int DrawTool::moveCategory( int fromId, int toId )
+{
+	int n = 0;
+	ccHObject* group = drawingGroup( false );
+	if ( !group )
+	{
+		return 0;
+	}
+	for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+	{
+		ccHObject* ch = group->getChild( i );
+		if ( ch->isA( CC_TYPES::POLY_LINE ) && ch->hasMetaData( Drawing::MetaCategory ) && ch->getMetaData( Drawing::MetaCategory ).toInt() == fromId )
+		{
+			auto* p = static_cast<ccPolyline*>( ch );
+			applyLook( p, toId, ch->getMetaData( Drawing::MetaHidden ).toBool() );
+			++n;
+		}
+	}
+	// zpět by vracelo neexistující hladinu
+	m_undo.clear();
+	return n;
+}
+
+void DrawTool::refreshLooks()
+{
+	ccHObject* group = drawingGroup( false );
+	if ( group )
+	{
+		for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+		{
+			ccHObject* ch = group->getChild( i );
+			if ( ch->isA( CC_TYPES::POLY_LINE ) && ch->hasMetaData( Drawing::MetaCategory ) )
+			{
+				auto* p = static_cast<ccPolyline*>( ch );
+				applyLook( p, ch->getMetaData( Drawing::MetaCategory ).toInt(), ch->getMetaData( Drawing::MetaHidden ).toBool() );
+			}
+		}
+	}
+	if ( !Drawing::layerById( m_category ) )
+	{
+		m_category = Drawing::layerIdAt( 0 );
+		Q_EMIT categoryChanged( m_category );
+	}
+	updateLineVisibility();
+	redraw3D();
+	updateStatus();
 }

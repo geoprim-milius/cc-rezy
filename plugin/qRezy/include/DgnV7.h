@@ -38,6 +38,14 @@ namespace DgnV7
 		double textHeight = 0.2; //!< výška písma v hlavních jednotkách
 		int font = 0;
 		int justification = 0;   //!< 0 = vlevo dole
+
+		// oblouk (typ 16): střed, poloměr, počáteční úhel a rozsah proti směru hodinových ručiček (°);
+		// pts = body po oblouku (rozsah prvku, náhrada ve 3D výkresu)
+		bool isArc = false;
+		Point2 center;
+		double radius = 0.0;
+		double startDeg = 0.0;
+		double sweepDeg = 0.0;
 	};
 
 	class Writer
@@ -62,6 +70,8 @@ namespace DgnV7
 		bool toUOR( double v, int axis, int32_t& out ) const;
 		bool appendElement( std::vector<uint8_t>& out, const Element& e, std::string& error ) const;
 		bool appendText( std::vector<uint8_t>& out, const Element& e, std::string& error ) const;
+		bool appendArc( std::vector<uint8_t>& out, const Element& e, std::string& error ) const;
+		void appendLineStyle( std::vector<uint8_t>& out, const Symbology& sym ) const;
 
 		std::vector<uint8_t> m_header; //!< negrafické prvky ze seedu
 		bool m_is3D = false;

@@ -7,6 +7,8 @@
 
 #include <QByteArray>
 
+#include <array>
+
 #include <vector>
 
 class ccMainAppInterface;
@@ -87,6 +89,8 @@ private:
 	void buildToolbar();
 	QAction* mkAct( const char* icon, const QString& label, const QString& tip, bool checkable = false );
 	void refreshIcons();
+	void refreshCatCombo();
+	std::vector<std::array<double, 4>> slicePlanes() const; //!< roviny aktuálního řezu (pro čáru z mračna)
 	void renameView();
 
 public:

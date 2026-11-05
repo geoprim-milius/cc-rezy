@@ -258,6 +258,32 @@ namespace Icons
 					p.drawPoint( c );
 				}
 			}
+			else if ( n == "arc" )
+			{
+				p.setPen( QPen( Blue, 2.4, Qt::SolidLine, Qt::RoundCap ) );
+				p.drawArc( QRectF( 5, 8, 22, 22 ), 0, 180 * 16 );
+				p.setPen( Qt::NoPen );
+				p.setBrush( Ink );
+				for ( const QPointF& c : { QPointF( 5, 19 ), QPointF( 27, 19 ), QPointF( 16, 19 ) } )
+				{
+					p.drawEllipse( c, 2.2, 2.2 );
+				}
+				p.setBrush( Qt::NoBrush );
+			}
+			else if ( n == "cloudline" )
+			{
+				// body mračna podél zdi a proložená čára
+				p.setPen( Qt::NoPen );
+				p.setBrush( Ink );
+				const QPointF pts[] = { { 5, 24 }, { 8, 22.5 }, { 10, 21.8 }, { 13, 19.6 }, { 15, 19.2 }, { 18, 17 }, { 20, 16.4 }, { 23, 14.2 }, { 26, 13 }, { 7, 23.8 }, { 12, 20.9 }, { 17, 18.2 }, { 22, 15.3 }, { 9, 6 }, { 24, 25 } };
+				for ( const QPointF& c : pts )
+				{
+					p.drawEllipse( c, 1.1, 1.1 );
+				}
+				p.setBrush( Qt::NoBrush );
+				p.setPen( QPen( Accent, 2.2, Qt::SolidLine, Qt::RoundCap ) );
+				p.drawLine( QPointF( 4, 22.5 ), QPointF( 28, 10.5 ) );
+			}
 			else if ( n == "open" )
 			{
 				// otevřít složku (šipka nahoru)
