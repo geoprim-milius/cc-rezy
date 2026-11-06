@@ -125,6 +125,12 @@ výšky relativně nebo absolutně (Bpv), výška popisů. Řezy a pohledy jsou 
 s popisem „Řez A-A'“ a „±0,000 = … m n. m. Bpv“ (hladina 14). Vložené texty mají vlastní
 výšku a hladinu (výchozí 15) v okně Uložit.
 
+**Rastr mračna (TIFF + .tfw)** – zaškrtnout v okně Uložit: ke každému půdorysu patra a ke každému řezu
+a pohledu se uloží barevný obrázek mračna (LZW TIFF, výchozí 1 cm/pixel, velikost tečky 2 px) a world file .tfw.
+Půdorys = body v tloušťce řezu patra v S-JTSK, řez = body v tloušťce řezu, pohled = body do hloubky pohledu
+(bližší přes vzdálenější), vše přesně v místě řezu/pohledu ve výkresu. Názvy: *název_1NP.tif*,
+*název_rezy_Rez_A-A.tif* … V MicroStationu: Raster Manager → Attach → poloha se načte ze souboru .tfw.
+
 **Hladiny a barvy** (manažer hladin): název, barva na obrazovce, hladina/barva/tloušťka/styl pro plnou
 i zakrytou čáru; *Přidat*, *Smazat* (čáry ze smazané hladiny se přesunou na zvolenou), *Nahoru/Dolů*.
 Oblouky se ukládají jako oblouk (typ 16).

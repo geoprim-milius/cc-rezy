@@ -6,6 +6,7 @@
 #include "RezLine.h"
 #include "Ribbon.h"
 #include "Theme.h"
+#include "Tiff.h"
 #include "View3D.h"
 
 #include "ccGLUtils.h"
@@ -44,6 +45,7 @@
 #include <QMainWindow>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSettings>
@@ -2226,6 +2228,23 @@ void RezDock::openSaveDialog()
 	pf->addRow( QStringLiteral( "Číslo bodu – výška:" ), ptTextH );
 	l->addWidget( ptBox );
 
+	// rastr mračna
+	auto* rBox = new QGroupBox( QStringLiteral( "Rastr mračna (TIFF + .tfw) k půdorysům, řezům a pohledům" ) );
+	rBox->setCheckable( true );
+	rBox->setChecked( st.value( QStringLiteral( "qRezy/rasterExport" ), false ).toBool() );
+	rBox->setToolTip( QStringLiteral( "Barevný obrázek mračna v řezu (půdorys v S-JTSK, řezy a pohledy v místě ve výkresu). "
+	                                  "V MicroStationu připojit přes Raster Manager – poloha se načte ze souboru .tfw." ) );
+	auto* rf = new QFormLayout( rBox );
+	auto* rPx = makeSpin( 0.002, 0.5, st.value( QStringLiteral( "qRezy/rasterPx" ), 0.01 ).toDouble(), 0.005, 3, QStringLiteral( " m / pixel" ) );
+	rf->addRow( QStringLiteral( "Velikost pixelu:" ), rPx );
+	auto* rDot = new QSpinBox;
+	rDot->setRange( 1, 6 );
+	rDot->setSuffix( QStringLiteral( " px" ) );
+	rDot->setValue( st.value( QStringLiteral( "qRezy/rasterDot" ), 2 ).toInt() );
+	rDot->setToolTip( QStringLiteral( "Velikost tečky bodu – větší zaplní mezery mezi body" ) );
+	rf->addRow( QStringLiteral( "Velikost bodu:" ), rDot );
+	l->addWidget( rBox );
+
 	auto* bb = new QDialogButtonBox;
 	auto* saveBtn = bb->addButton( QStringLiteral( "Uložit výkres…" ), QDialogButtonBox::AcceptRole );
 	saveBtn->setIcon( Icons::get( QStringLiteral( "save" ) ) );
@@ -2242,6 +2261,9 @@ void RezDock::openSaveDialog()
 	st.setValue( QStringLiteral( "qRezy/userTextHeight" ), uTextH->value() );
 	st.setValue( QStringLiteral( "qRezy/userTextLevel" ), uTextL->value() );
 	st.setValue( QStringLiteral( "qRezy/ptExport" ), ptBox->isChecked() );
+	st.setValue( QStringLiteral( "qRezy/rasterExport" ), rBox->isChecked() );
+	st.setValue( QStringLiteral( "qRezy/rasterPx" ), rPx->value() );
+	st.setValue( QStringLiteral( "qRezy/rasterDot" ), rDot->value() );
 	st.setValue( QStringLiteral( "qRezy/ptLevel" ), ptLevel->value() );
 	st.setValue( QStringLiteral( "qRezy/ptCross" ), ptCross->value() );
 	st.setValue( QStringLiteral( "qRezy/ptTextH" ), ptTextH->value() );
@@ -2468,6 +2490,48 @@ void RezDock::exportV7( const std::vector<int>& floorIds, bool withSections )
 			}
 		}
 		const QString path = multi ? QStringLiteral( "%1_%2.dgn" ).arg( out, t.suffix ) : out + QStringLiteral( ".dgn" );
+		if ( st.value( QStringLiteral( "qRezy/rasterExport" ), false ).toBool() )
+		{
+			// rastr mračna (TIFF + .tfw) ke každému půdorysu / řezu / pohledu
+			const double px = st.value( QStringLiteral( "qRezy/rasterPx" ), 0.01 ).toDouble();
+			const int dot = st.value( QStringLiteral( "qRezy/rasterDot" ), 2 ).toInt();
+			QApplication::setOverrideCursor( Qt::WaitCursor );
+			for ( int view : t.views )
+			{
+				QString tif = path;
+				tif.chop( 4 );
+				if ( !isPlanView( view ) )
+				{
+					SectionInfo sx;
+					if ( !sectionById( view, sx ) )
+					{
+						continue;
+					}
+					// název bez diakritiky a zvláštních znaků (MicroStation, starší programy)
+					QString nm = sx.name.normalized( QString::NormalizationForm_D );
+					QString safe;
+					for ( const QChar ch : nm )
+					{
+						if ( ch.unicode() < 128 && ( ch.isLetterOrNumber() || ch == '-' || ch == '_' ) )
+							safe += ch;
+						else if ( ch == ' ' )
+							safe += '_';
+					}
+					tif += QStringLiteral( "_" ) + ( safe.isEmpty() ? QString::number( view ) : safe );
+				}
+				tif += QStringLiteral( ".tif" );
+				QString info;
+				if ( writeCloudRaster( tif, view, px, dot, info ) )
+				{
+					report << QStringLiteral( "%1 – rastr %2" ).arg( QFileInfo( tif ).fileName(), info );
+				}
+				else
+				{
+					skipped << QStringLiteral( "%1 (%2)" ).arg( QFileInfo( tif ).fileName(), info );
+				}
+			}
+			QApplication::restoreOverrideCursor();
+		}
 		if ( elements.empty() )
 		{
 			skipped << QFileInfo( path ).fileName();
@@ -2500,6 +2564,205 @@ void RezDock::exportV7( const std::vector<int>& floorIds, bool withSections )
 		msg += QStringLiteral( "\n\nPrázdné (neuloženo): " ) + skipped.join( QStringLiteral( ", " ) );
 	}
 	QMessageBox::information( this, QStringLiteral( "Řezy" ), msg );
+}
+
+bool RezDock::writeCloudRaster( const QString& path, int viewId, double px, int dot, QString& info )
+{
+	ccGenericPointCloud* c = cloud();
+	if ( !c || px <= 0.0 )
+	{
+		info = QStringLiteral( "není mračno" );
+		return false;
+	}
+	const double sc = c->getGlobalScale();
+	const CCVector3d shift = c->getGlobalShift();
+	const bool absH = QSettings().value( QStringLiteral( "qRezy/absHeights" ), false ).toBool();
+	const double zeroG = m_zero->value();
+
+	// výběr bodů (roviny a·x+b·y+c·z+d ≥ 0), priorita (větší = blíž pozorovateli) a převod do výkresu
+	std::vector<std::array<double, 4>> planes;
+	CCVector3d prioN( 0, 0, 1 );
+	bool plan = isPlanView( viewId );
+	DrawFrame f;
+	SectionInfo si;
+	if ( plan )
+	{
+		FloorInfo fi;
+		if ( !floorById( viewId, fi ) )
+		{
+			info = QStringLiteral( "patro nenalezeno" );
+			return false;
+		}
+		const double half = m_thickness->value() / 2.0;
+		const double zLo = c->toLocal3d( CCVector3d( 0, 0, fi.cut - half ) ).z;
+		const double zHi = c->toLocal3d( CCVector3d( 0, 0, fi.cut + half ) ).z;
+		planes.push_back( { 0.0, 0.0, 1.0, -zLo } );
+		planes.push_back( { 0.0, 0.0, -1.0, zHi } );
+	}
+	else
+	{
+		if ( !sectionById( viewId, si ) )
+		{
+			info = QStringLiteral( "řez nenalezen" );
+			return false;
+		}
+		f = frameFor( viewId );
+		prioN = f.N;
+		const double d = f.O.dot( f.N ) - si.offset * sc;
+		if ( si.kind == 0 )
+		{
+			const double half = m_thickness->value() * sc / 2.0;
+			planes.push_back( { f.N.x, f.N.y, f.N.z, -( d - half ) } );
+			planes.push_back( { -f.N.x, -f.N.y, -f.N.z, d + half } );
+		}
+		else
+		{
+			const double depth = si.depth * sc;
+			planes.push_back( { -f.N.x, -f.N.y, -f.N.z, d } );
+			planes.push_back( { f.N.x, f.N.y, f.N.z, -( d - depth ) } );
+		}
+		const double u0 = f.O.dot( f.U );
+		const double len = ( si.B - si.A ).norm();
+		const double m = 0.2 * sc;
+		planes.push_back( { f.U.x, f.U.y, f.U.z, -( u0 - m ) } );
+		planes.push_back( { -f.U.x, -f.U.y, -f.U.z, u0 + len + m } );
+	}
+	auto inside = [&planes]( const CCVector3* P )
+	{
+		for ( const auto& e : planes )
+		{
+			if ( e[0] * P->x + e[1] * P->y + e[2] * P->z + e[3] < 0.0 )
+			{
+				return false;
+			}
+		}
+		return true;
+	};
+	auto toDrawing = [&]( const CCVector3* P, double& x, double& y )
+	{
+		if ( plan )
+		{
+			x = P->x / sc - shift.x;
+			y = P->y / sc - shift.y;
+			return;
+		}
+		const CCVector2d uv = f.toUV( CCVector3d( P->x, P->y, P->z ) );
+		x = si.insX + uv.x / sc;
+		y = absH ? ( uv.y / sc + zeroG ) : ( si.insY + uv.y / sc );
+	};
+
+	// 1. průchod: rozsah
+	const unsigned n = c->size();
+	double x0 = 1e300;
+	double y0 = 1e300;
+	double x1 = -1e300;
+	double y1 = -1e300;
+	size_t cnt = 0;
+	for ( unsigned i = 0; i < n; ++i )
+	{
+		const CCVector3* P = c->getPoint( i );
+		if ( !inside( P ) )
+		{
+			continue;
+		}
+		double x;
+		double y;
+		toDrawing( P, x, y );
+		x0 = std::min( x0, x );
+		y0 = std::min( y0, y );
+		x1 = std::max( x1, x );
+		y1 = std::max( y1, y );
+		++cnt;
+	}
+	if ( cnt == 0 )
+	{
+		info = QStringLiteral( "v řezu nejsou žádné body" );
+		return false;
+	}
+	// mřížka zarovnaná na násobky pixelu, okraj 10 px
+	const double margin = 10 * px;
+	const double gx0 = std::floor( ( x0 - margin ) / px ) * px;
+	const double gy1 = std::ceil( ( y1 + margin ) / px ) * px;
+	const double W = std::ceil( ( x1 + margin - gx0 ) / px );
+	const double H = std::ceil( ( gy1 - ( y0 - margin ) ) / px );
+	if ( W * H > 400e6 || W > 60000 || H > 60000 )
+	{
+		info = QStringLiteral( "obrázek by měl %1 × %2 px – zvětšete velikost pixelu" ).arg( W, 0, 'f', 0 ).arg( H, 0, 'f', 0 );
+		return false;
+	}
+	const int w = static_cast<int>( W );
+	const int h = static_cast<int>( H );
+	std::vector<uint8_t> rgb( static_cast<size_t>( w ) * h * 3, 255 );
+	std::vector<float> zb( static_cast<size_t>( w ) * h, -std::numeric_limits<float>::max() );
+	const bool colors = c->hasColors();
+	const int r0 = -( dot - 1 ) / 2;
+	const int r1 = dot / 2;
+	// 2. průchod: body do mřížky (bližší přes vzdálenější)
+	for ( unsigned i = 0; i < n; ++i )
+	{
+		const CCVector3* P = c->getPoint( i );
+		if ( !inside( P ) )
+		{
+			continue;
+		}
+		double x;
+		double y;
+		toDrawing( P, x, y );
+		const int cx = static_cast<int>( std::floor( ( x - gx0 ) / px ) );
+		const int cy = static_cast<int>( std::floor( ( gy1 - y ) / px ) );
+		const float prio = static_cast<float>( P->x * prioN.x + P->y * prioN.y + P->z * prioN.z );
+		uint8_t cr = 70;
+		uint8_t cg = 70;
+		uint8_t cb = 70;
+		if ( colors )
+		{
+			const ccColor::Rgba& col = c->getPointColor( i );
+			cr = col.r;
+			cg = col.g;
+			cb = col.b;
+		}
+		for ( int dy = r0; dy <= r1; ++dy )
+		{
+			const int yy = cy + dy;
+			if ( yy < 0 || yy >= h )
+			{
+				continue;
+			}
+			for ( int dx = r0; dx <= r1; ++dx )
+			{
+				const int xx = cx + dx;
+				if ( xx < 0 || xx >= w )
+				{
+					continue;
+				}
+				const size_t k = static_cast<size_t>( yy ) * w + xx;
+				if ( prio >= zb[k] )
+				{
+					zb[k] = prio;
+					rgb[k * 3] = cr;
+					rgb[k * 3 + 1] = cg;
+					rgb[k * 3 + 2] = cb;
+				}
+			}
+		}
+	}
+	zb.clear();
+	zb.shrink_to_fit();
+	QString err;
+	if ( !Tiff::writeRgb( path, w, h, rgb, 0.0254 / px, err ) )
+	{
+		info = err;
+		return false;
+	}
+	QString tfw = path;
+	tfw.replace( QRegularExpression( QStringLiteral( "\\.tiff?$" ), QRegularExpression::CaseInsensitiveOption ), QStringLiteral( ".tfw" ) );
+	if ( !Tiff::writeWorld( tfw, px, gx0 + px / 2.0, gy1 - px / 2.0, err ) )
+	{
+		info = err;
+		return false;
+	}
+	info = QStringLiteral( "%1 × %2 px, %3 bodů" ).arg( w ).arg( h ).arg( cnt );
+	return true;
 }
 
 std::vector<RezDock::SectionInfo> RezDock::loadSections() const
