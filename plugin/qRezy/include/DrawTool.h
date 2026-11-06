@@ -127,6 +127,24 @@ public:
 	//! přesune čáry z hladiny na jinou (smazání hladiny); vrací počet
 	int moveCategory( int fromId, int toId );
 	int countCategory( int id ) const;
+	//! import z DGN: prvky v souřadnicích aktuálního pohledu (UV)
+	struct ImportPrim
+	{
+		int kind = 0;                 //!< 0 úsečky (lomená), 1 oblouk, 2 text
+		std::vector<CCVector2d> pts;  //!< úsečky: vrcholy; text: poloha
+		CCVector2d center;            //!< oblouk
+		double radius = 0.0;
+		double a0 = 0.0;              //!< oblouk: počátek (rad)
+		double sweep = 0.0;           //!< oblouk: rozsah (rad, + proti směru)
+		int cat = 0;
+		bool hidden = false;
+		QString text;
+		int textLevel = 0;
+		double textHeight = 0.0;
+	};
+	int importPrims( const std::vector<ImportPrim>& prims );
+	void setExportSkipImported( bool on ) { m_exportSkipImported = on; }
+	int countImported() const;
 	//! obnoví barvy a názvy čar (po změně hladin)
 	void refreshLooks();
 
@@ -284,7 +302,8 @@ private:
 	void addArrow( std::vector<Overlay>& ovs, const CCVector2d& from, const CCVector2d& dir, double lenPx, const ccColor::Rgb& col ) const;
 
 	// trasování (jako AutoCAD): získané body a pomocné čáry
-	bool trackingPoint( const CCVector2d& raw, const std::vector<CCVector2d>& sources, CCVector2d& out, TrackLines* lines ) const;
+	TrackLines trackRays( const CCVector2d* from ) const;
+	bool trackingPoint( const CCVector2d& raw, const TrackLines& rays, CCVector2d& out, TrackLines* lines ) const;
 	void onHoverTimeout();
 
 	void updateTip();
@@ -344,6 +363,12 @@ private:
 	// trasování
 	bool m_trackingOn = true;
 	std::vector<CCVector2d> m_acquired;   //!< získané body
+	std::vector<std::vector<CCVector2d>> m_acqDirs; //!< směry čar v získaném bodě (prodloužení)
+	CCVector2d m_lastCand;                //!< poslední kandidát na získání bodu
+	// kolmice: uchopený bod, jehož pata na kolmici je kurzor
+	mutable bool m_perpRefValid = false;
+	mutable CCVector2d m_perpRef;
+	mutable SnapType m_perpRefType = SnapType::None;
 	CCVector2d m_hoverCand;               //!< bod pod kurzorem (kandidát na získání)
 	bool m_hoverValid = false;
 	class QTimer* m_hoverTimer = nullptr;
@@ -377,6 +402,7 @@ private:
 	bool m_refSnap = false;
 	QString m_lastText;
 	QString m_flash; //!< jednorázová zpráva ve stavovém řádku
+	bool m_exportSkipImported = false;
 
 	// náhledy (2D prvky v okně) – zásobník znovu používaných čar
 	std::vector<ccPolyline*> m_overlayPool;

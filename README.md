@@ -57,7 +57,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | A | Vložit text | | klik a napsat (např. naměřenou výšku); přesun, kopie, mazání jako u čar; do DGN na hladinu z okna Uložit |
 | šipka zpět | Zpět | Ctrl+Z | |
 | pravý úhel | Orto | F8 | podle natočení pohledu |
-| zelený kříž | Trasování | F11 | podržte kurzor na konci/středu čáry → bod se „získá“ (zelené +); pomocné čáry vodorovně/svisle od získaných bodů i od posledního bodu, uchopí se na ně, na jejich průsečíky i na průsečík s čarou; napsané číslo = vzdálenost od získaného bodu |
+| zelený kříž | Trasování | F11 | podržte kurzor na konci/středu čáry → bod se „získá“ (zelené +); pomocné čáry vodorovně/svisle od získaných bodů i od posledního bodu, **v prodloužení čáry**, na jejímž konci/středu je získaný bod, a **šikmo přes poslední dva získané body**; uchopí se na ně, na jejich průsečíky i na průsečík s čarou; funguje i s Ortho a s kolmicí (Enter); napsané číslo = vzdálenost od získaného bodu |
 | čárkovaná | Zakrytá čára | F5 | |
 | hladina | Zdi / Překlady / Trámy / Drobné prvky (+ vlastní) | F1–F4 | hladiny jde přidávat, mazat a řadit v *Hladiny a barvy…* (F1–F4 = první čtyři) |
 | otočení | Natočit pohled | | 2 body: směr 1. → 2. bod bude vodorovně doprava |
@@ -130,6 +130,12 @@ a pohledu se uloží barevný obrázek mračna (LZW TIFF, výchozí 1 cm/pixel, 
 Půdorys = body v tloušťce řezu patra v S-JTSK, řez = body v tloušťce řezu, pohled = body do hloubky pohledu
 (bližší přes vzdálenější), vše přesně v místě řezu/pohledu ve výkresu. Názvy: *název_1NP.tif*,
 *název_rezy_Rez_A-A.tif* … V MicroStationu: Raster Manager → Attach → poloha se načte ze souboru .tfw.
+
+**Načíst V7** (karta Výstup) – výkres rozkreslený v MicroStationu (uložený jako V7) se načte do aktivního
+půdorysu (S-JTSK) nebo řezu/pohledu a dá se dál doplňovat: úsečky, lomené čáry, tvary, oblouky, kružnice
+(eliptické jako lomená čára) a texty; hladiny podle čísla, pro neznámé hladiny se nabídne založit nové
+(stejné číslo, barva, tloušťka). Buňky, rastry a další prvky se vynechají (vypíše se počet). Celý import = jeden
+krok Zpět. Při ukládání použijte nový soubor, nebo zaškrtněte *Uložit jen doplněné prvky*.
 
 **Hladiny a barvy** (manažer hladin): název, barva na obrazovce, hladina/barva/tloušťka/styl pro plnou
 i zakrytou čáru; *Přidat*, *Smazat* (čáry ze smazané hladiny se přesunou na zvolenou), *Nahoru/Dolů*.

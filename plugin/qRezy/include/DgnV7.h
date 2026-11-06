@@ -79,4 +79,34 @@ namespace DgnV7
 		mutable double m_origin[3] = { 0.0, 0.0, 0.0 }; //!< globální počátek v UOR (při přetečení se posune)
 		double m_seedOrigin[3] = { 0.0, 0.0, 0.0 };
 	};
+
+	//! Prvek načtený z výkresu V7 (souřadnice v hlavních jednotkách, s globálním počátkem)
+	struct ReadItem
+	{
+		int type = 0;              //!< 3 úsečka, 4 lomená, 6 tvar, 15 elipsa, 16 oblouk, 17 text
+		int level = 0;
+		int color = 0;
+		int weight = 0;
+		int lineStyleId = 0;       //!< vlastní styl čáry (0 = není)
+		std::vector<Point2> pts;   //!< vrcholy (úsečka, lomená, tvar uzavřený)
+		bool isArc = false;        //!< kruhový oblouk / kružnice (sweep 360)
+		Point2 center;
+		double radius = 0.0;
+		double startDeg = 0.0;     //!< proti směru hod. ručiček
+		double sweepDeg = 0.0;     //!< + proti směru, − po směru
+		bool isText = false;
+		std::string text;          //!< bajty v kódování výkresu (cp1250)
+		double textHeight = 0.0;
+	};
+
+	struct ReadStats
+	{
+		int total = 0;
+		int used = 0;
+		std::vector<std::pair<int, int>> skippedTypes; //!< (typ, počet)
+		bool is3D = false;
+	};
+
+	//! Načte výkres V7 (2D i 3D – Z se ignoruje). Buňky (typ 2) se rozbalí, sdílené buňky, rastry a ostatní se přeskočí.
+	bool readDesign( const std::vector<uint8_t>& bytes, std::vector<ReadItem>& out, ReadStats& stats, std::string& error );
 }

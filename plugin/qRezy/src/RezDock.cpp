@@ -939,6 +939,8 @@ void RezDock::buildToolbar()
 	} );
 	QAction* save = mkAct( "save", QStringLiteral( "Uložit V7" ), QStringLiteral( "Uložit výkres MicroStation V7 (patra, řezy a pohledy) a nastavení výstupu" ) );
 	connect( save, &QAction::triggered, this, &RezDock::openSaveDialog );
+	QAction* impDgn = mkAct( "open", QStringLiteral( "Načíst V7" ), QStringLiteral( "Načíst výkres MicroStation V7 (rozkreslený v MicroStationu) do aktivního půdorysu nebo řezu a dál ho doplňovat" ) );
+	connect( impDgn, &QAction::triggered, this, &RezDock::importDgn );
 
 	// --- zobrazení
 	auto* themeCombo = new QComboBox;
@@ -1061,6 +1063,7 @@ void RezDock::buildToolbar()
 		g.addBig( openA );
 		RibbonGroup d = r->addGroup( pOut, QStringLiteral( "MicroStation V7" ) );
 		d.addBig( save );
+		d.addBig( impDgn );
 		d.column().addSmall( symb );
 	}
 	const int pView = r->addPage( QStringLiteral( "Zobrazení" ) );
@@ -2245,6 +2248,12 @@ void RezDock::openSaveDialog()
 	rf->addRow( QStringLiteral( "Velikost bodu:" ), rDot );
 	l->addWidget( rBox );
 
+	auto* onlyNew = new QCheckBox( QStringLiteral( "Uložit jen doplněné prvky (bez prvků načtených z DGN)" ) );
+	onlyNew->setChecked( st.value( QStringLiteral( "qRezy/skipImported" ), false ).toBool() );
+	onlyNew->setToolTip( QStringLiteral( "Pro výkres, který jste načetli tlačítkem Načíst V7: uloží se jen to, co jste dokreslili – v MicroStationu to pak zkopírujete do původního výkresu." ) );
+	onlyNew->setVisible( m_draw->countImported() > 0 );
+	l->addWidget( onlyNew );
+
 	auto* bb = new QDialogButtonBox;
 	auto* saveBtn = bb->addButton( QStringLiteral( "Uložit výkres…" ), QDialogButtonBox::AcceptRole );
 	saveBtn->setIcon( Icons::get( QStringLiteral( "save" ) ) );
@@ -2262,6 +2271,7 @@ void RezDock::openSaveDialog()
 	st.setValue( QStringLiteral( "qRezy/userTextLevel" ), uTextL->value() );
 	st.setValue( QStringLiteral( "qRezy/ptExport" ), ptBox->isChecked() );
 	st.setValue( QStringLiteral( "qRezy/rasterExport" ), rBox->isChecked() );
+	st.setValue( QStringLiteral( "qRezy/skipImported" ), !onlyNew->isHidden() && onlyNew->isChecked() );
 	st.setValue( QStringLiteral( "qRezy/rasterPx" ), rPx->value() );
 	st.setValue( QStringLiteral( "qRezy/rasterDot" ), rDot->value() );
 	st.setValue( QStringLiteral( "qRezy/ptLevel" ), ptLevel->value() );
@@ -2420,7 +2430,9 @@ void RezDock::exportV7( const std::vector<int>& floorIds, bool withSections )
 			}
 			return false;
 		};
+		m_draw->setExportSkipImported( st.value( QStringLiteral( "qRezy/skipImported" ), false ).toBool() && m_draw->countImported() > 0 );
 		std::vector<DgnV7::Element> elements = m_draw->exportElements( table, map, userTextLevel, userTextH );
+		m_draw->setExportSkipImported( false );
 		if ( t.sections && st.value( QStringLiteral( "qRezy/ptExport" ), true ).toBool() )
 		{
 			// změřené body sklopené do řezů a pohledů: malý křížek + číslo, vlastní hladina
@@ -2763,6 +2775,302 @@ bool RezDock::writeCloudRaster( const QString& path, int viewId, double px, int 
 	}
 	info = QStringLiteral( "%1 × %2 px, %3 bodů" ).arg( w ).arg( h ).arg( cnt );
 	return true;
+}
+
+void RezDock::importDgn()
+{
+	ccGenericPointCloud* c = cloud();
+	if ( !c )
+	{
+		QMessageBox::information( this, QStringLiteral( "Řezy" ), QStringLiteral( "Nejdřív vyberte mračno." ) );
+		return;
+	}
+	if ( !m_draw->isActive() )
+	{
+		m_drawAct->setChecked( true );
+	}
+	QSettings st;
+	const QString path = QFileDialog::getOpenFileName( this, QStringLiteral( "Načíst výkres MicroStation V7 do aktivního půdorysu / řezu" ),
+	                                                   st.value( QStringLiteral( "qRezy/importDir" ), st.value( QStringLiteral( "qRezy/lastOut" ) ) ).toString(),
+	                                                   QStringLiteral( "MicroStation V7 (*.dgn);;Všechny soubory (*)" ) );
+	if ( path.isEmpty() )
+	{
+		return;
+	}
+	st.setValue( QStringLiteral( "qRezy/importDir" ), QFileInfo( path ).absolutePath() );
+	QFile f( path );
+	if ( !f.open( QIODevice::ReadOnly ) )
+	{
+		QMessageBox::warning( this, QStringLiteral( "Řezy" ), QStringLiteral( "Soubor nelze otevřít: %1" ).arg( path ) );
+		return;
+	}
+	const QByteArray data = f.readAll();
+	std::vector<uint8_t> bytes( data.begin(), data.end() );
+	std::vector<DgnV7::ReadItem> items;
+	DgnV7::ReadStats stats;
+	std::string err;
+	if ( !DgnV7::readDesign( bytes, items, stats, err ) )
+	{
+		QMessageBox::warning( this, QStringLiteral( "Řezy" ), QString::fromStdString( err ) );
+		return;
+	}
+	if ( items.empty() )
+	{
+		QMessageBox::information( this, QStringLiteral( "Řezy" ), QStringLiteral( "Ve výkresu nejsou žádné čáry, oblouky ani texty." ) );
+		return;
+	}
+
+	// převod souřadnic výkresu → aktuální pohled
+	const double sc = c->getGlobalScale();
+	const bool plan = isPlanView( m_activeView );
+	const DrawFrame fr = frameFor( m_activeView );
+	SectionInfo si;
+	if ( !plan && !sectionById( m_activeView, si ) )
+	{
+		return;
+	}
+	const bool absH = st.value( QStringLiteral( "qRezy/absHeights" ), false ).toBool();
+	const double zeroG = m_zero->value();
+	auto toUV = [&]( const DgnV7::Point2& P ) -> CCVector2d
+	{
+		if ( plan )
+		{
+			const CCVector3d L = c->toLocal3d( CCVector3d( P.x, P.y, 0.0 ) );
+			return fr.toUV( CCVector3d( L.x, L.y, fr.O.z ) );
+		}
+		return CCVector2d( ( P.x - si.insX ) * sc, absH ? ( P.y - zeroG ) * sc : ( P.y - si.insY ) * sc );
+	};
+
+	// kontrola polohy (půdorys musí ležet u mračna)
+	if ( plan )
+	{
+		double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300;
+		for ( const DgnV7::ReadItem& it : items )
+		{
+			for ( const DgnV7::Point2& P : it.pts )
+			{
+				x0 = std::min( x0, P.x );
+				y0 = std::min( y0, P.y );
+				x1 = std::max( x1, P.x );
+				y1 = std::max( y1, P.y );
+			}
+		}
+		ccBBox bb = c->getOwnBB();
+		const CCVector3d gMin = c->toGlobal3d( bb.minCorner() );
+		const CCVector3d gMax = c->toGlobal3d( bb.maxCorner() );
+		const double m = 50.0;
+		if ( x1 < gMin.x - m || x0 > gMax.x + m || y1 < gMin.y - m || y0 > gMax.y + m )
+		{
+			if ( QMessageBox::question( this, QStringLiteral( "Řezy" ),
+			                            QStringLiteral( "Výkres leží mimo mračno (výkres X %1…%2, Y %3…%4; mračno X %5…%6, Y %7…%8).\n"
+			                                            "Je výkres ve stejném souřadnicovém systému? Přesto načíst?" )
+			                                .arg( x0, 0, 'f', 1 ).arg( x1, 0, 'f', 1 ).arg( y0, 0, 'f', 1 ).arg( y1, 0, 'f', 1 )
+			                                .arg( gMin.x, 0, 'f', 1 ).arg( gMax.x, 0, 'f', 1 ).arg( gMin.y, 0, 'f', 1 ).arg( gMax.y, 0, 'f', 1 ) ) != QMessageBox::Yes )
+			{
+				return;
+			}
+		}
+	}
+
+	// hladiny: číslo hladiny DGN → hladina pluginu
+	std::vector<Drawing::Layer> layers = Drawing::layers();
+	auto findLayer = [&layers]( int level ) -> const Drawing::Layer*
+	{
+		for ( const Drawing::Layer& L : layers )
+		{
+			if ( L.sym[0].level == level || L.sym[1].level == level )
+			{
+				return &L;
+			}
+		}
+		return nullptr;
+	};
+	struct LevelInfo
+	{
+		int count = 0;
+		std::map<int, int> colors;
+		std::map<int, int> weights;
+		std::map<int, int> styles;
+	};
+	std::map<int, LevelInfo> unknown;
+	for ( const DgnV7::ReadItem& it : items )
+	{
+		if ( it.isText || findLayer( it.level ) )
+		{
+			continue;
+		}
+		LevelInfo& li = unknown[it.level];
+		++li.count;
+		++li.colors[it.color];
+		++li.weights[it.weight];
+		++li.styles[it.lineStyleId];
+	}
+	std::map<int, int> levelToLayer;
+	if ( !unknown.empty() )
+	{
+		QStringList lst;
+		for ( const auto& u : unknown )
+		{
+			lst << QStringLiteral( "%1 (%2)" ).arg( u.first ).arg( u.second.count );
+		}
+		QMessageBox box( QMessageBox::Question, QStringLiteral( "Načíst DGN – hladiny" ),
+		                 QStringLiteral( "Výkres má čáry na hladinách, které v pluginu nejsou:\n%1\n\n"
+		                                 "Založit pro ně nové hladiny (stejné číslo, barva a tloušťka ve V7)? "
+		                                 "Jinak se dají na aktuální hladinu „%2“." )
+		                     .arg( lst.join( QStringLiteral( ", " ) ), Drawing::categoryName( m_draw->category() ) ),
+		                 QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, this );
+		box.button( QMessageBox::Yes )->setText( QStringLiteral( "Založit hladiny" ) );
+		box.button( QMessageBox::No )->setText( QStringLiteral( "Na aktuální hladinu" ) );
+		box.button( QMessageBox::Cancel )->setText( QStringLiteral( "Zrušit" ) );
+		const int r = box.exec();
+		if ( r == QMessageBox::Cancel )
+		{
+			return;
+		}
+		if ( r == QMessageBox::Yes )
+		{
+			auto most = []( const std::map<int, int>& m )
+			{
+				int best = 0;
+				int bc = -1;
+				for ( const auto& kv : m )
+				{
+					if ( kv.second > bc )
+					{
+						bc = kv.second;
+						best = kv.first;
+					}
+				}
+				return best;
+			};
+			int hue = 0;
+			int nextId = Drawing::newLayerId();
+			for ( const auto& u : unknown )
+			{
+				Drawing::Layer L;
+				L.id = nextId++;
+				L.name = QStringLiteral( "Hladina %1" ).arg( u.first );
+				L.color = QColor::fromHsv( ( hue += 47 ) % 360, 170, 235 );
+				DgnV7::Symbology y;
+				y.level = u.first;
+				y.color = most( u.second.colors );
+				y.weight = most( u.second.weights );
+				const int ls = most( u.second.styles );
+				y.hasLineStyle = ( ls != 0 );
+				y.lineStyleId = ls;
+				L.sym[0] = y;
+				L.sym[1] = y;
+				L.sym[1].hasLineStyle = true;
+				L.sym[1].lineStyleId = -3;
+				layers.push_back( L );
+				levelToLayer[u.first] = L.id;
+			}
+			Drawing::setLayers( layers );
+			refreshCatCombo();
+		}
+		else
+		{
+			for ( const auto& u : unknown )
+			{
+				levelToLayer[u.first] = m_draw->category();
+			}
+		}
+	}
+
+	QTextCodec* codec = QTextCodec::codecForName( "Windows-1250" );
+	std::vector<DrawTool::ImportPrim> prims;
+	prims.reserve( items.size() );
+	int nLines = 0, nArcs = 0, nTexts = 0;
+	for ( const DgnV7::ReadItem& it : items )
+	{
+		DrawTool::ImportPrim ip;
+		if ( it.isText )
+		{
+			ip.kind = 2;
+			ip.pts.push_back( toUV( it.pts.front() ) );
+			ip.text = codec ? codec->toUnicode( it.text.c_str(), static_cast<int>( it.text.size() ) ) : QString::fromLatin1( it.text.c_str() );
+			ip.textLevel = it.level;
+			ip.textHeight = it.textHeight;
+			++nTexts;
+			prims.push_back( ip );
+			continue;
+		}
+		const Drawing::Layer* L = findLayer( it.level );
+		if ( L )
+		{
+			ip.cat = L->id;
+			ip.hidden = it.lineStyleId != 0 && it.lineStyleId == L->sym[1].lineStyleId && L->sym[1].lineStyleId != L->sym[0].lineStyleId;
+		}
+		else
+		{
+			ip.cat = levelToLayer.count( it.level ) ? levelToLayer[it.level] : m_draw->category();
+		}
+		if ( it.isArc )
+		{
+			ip.kind = 1;
+			const CCVector2d C = toUV( it.center );
+			// poloměr a úhly v pohledu (půdorys i řez jsou shodné zobrazení, jen posun a měřítko)
+			const DgnV7::Point2 E = { it.center.x + it.radius, it.center.y };
+			ip.center = C;
+			ip.radius = ( toUV( E ) - C ).norm();
+			ip.a0 = it.startDeg * 3.14159265358979323846 / 180.0;
+			ip.sweep = it.sweepDeg * 3.14159265358979323846 / 180.0;
+			++nArcs;
+		}
+		else
+		{
+			ip.kind = 0;
+			for ( const DgnV7::Point2& P : it.pts )
+			{
+				ip.pts.push_back( toUV( P ) );
+			}
+			if ( it.type == 6 && it.pts.size() > 2 )
+			{
+				ip.pts.push_back( ip.pts.front() ); // tvar je uzavřený
+			}
+			nLines += static_cast<int>( ip.pts.size() ) - 1;
+		}
+		prims.push_back( ip );
+	}
+	QApplication::setOverrideCursor( Qt::WaitCursor );
+	const int n = m_draw->importPrims( prims );
+	QApplication::restoreOverrideCursor();
+	m_draw->refreshLooks();
+	refresh3DLines();
+
+	QStringList skippedTxt;
+	for ( const auto& sk : stats.skippedTypes )
+	{
+		QString name;
+		switch ( sk.first )
+		{
+		case 34: name = QStringLiteral( "sdílené buňky" ); break;
+		case 35: name = QStringLiteral( "definice buněk" ); break;
+		case 90:
+		case 92:
+		case 87:
+		case 88: name = QStringLiteral( "rastry (typ %1)" ).arg( sk.first ); break;
+		case 22: name = QStringLiteral( "řady bodů" ); break;
+		case 66: name = QStringLiteral( "aplikační data" ); break;
+		case 33: name = QStringLiteral( "kóty" ); break;
+		case 37: name = QStringLiteral( "tagy" ); break;
+		default: name = QStringLiteral( "typ %1" ).arg( sk.first ); break;
+		}
+		skippedTxt << QStringLiteral( "%1: %2" ).arg( name ).arg( sk.second );
+	}
+	const QString msg = QStringLiteral( "Načteno z %1 do „%2“:\n%3 úseček, %4 oblouků/kružnic, %5 textů (celkem %6 prvků).%7\n\n"
+	                                    "Načtené prvky jdou upravovat jako nakreslené (jeden krok Zpět vrátí celý import). "
+	                                    "Buňky a rastry plugin nenačítá – při ukládání proto použijte nový soubor, nebo v okně Uložit "
+	                                    "zaškrtněte „uložit jen doplněné prvky“." )
+	                        .arg( QFileInfo( path ).fileName(), m_viewCombo->currentText() )
+	                        .arg( nLines )
+	                        .arg( nArcs )
+	                        .arg( nTexts )
+	                        .arg( n )
+	                        .arg( skippedTxt.isEmpty() ? QString() : QStringLiteral( "\nVynecháno: " ) + skippedTxt.join( QStringLiteral( ", " ) ) );
+	m_app->dispToConsole( QStringLiteral( "[Řezy] " ) + msg.section( '\n', 0, 2 ) );
+	QMessageBox::information( this, QStringLiteral( "Načíst DGN V7" ), msg );
+	focusView();
 }
 
 std::vector<RezDock::SectionInfo> RezDock::loadSections() const

@@ -547,4 +547,236 @@ namespace DgnV7
 		f.write( reinterpret_cast<const char*>( bytes.data() ), static_cast<std::streamsize>( bytes.size() ) );
 		return static_cast<bool>( f );
 	}
+
+	bool readDesign( const std::vector<uint8_t>& b, std::vector<ReadItem>& out, ReadStats& stats, std::string& error )
+	{
+		if ( b.size() < 1536 || ( b[1] & 0x7F ) != 9 )
+		{
+			error = "Soubor není výkres MicroStation V7 (chybí řídicí blok TCB). Výkres V8 uložte v MicroStationu jako V7.";
+			return false;
+		}
+		const bool is3D = ( b[0] & 0x40 ) != 0;
+		stats.is3D = is3D;
+		const int32_t subPerMaster = readI32( &b[1112] );
+		const int32_t uorPerSub = readI32( &b[1116] );
+		if ( subPerMaster <= 0 || uorPerSub <= 0 )
+		{
+			error = "Výkres má neplatné pracovní jednotky.";
+			return false;
+		}
+		const double uor = static_cast<double>( subPerMaster ) * uorPerSub;
+		double origin[3];
+		for ( int i = 0; i < 3; ++i )
+		{
+			origin[i] = vaxToDouble( &b[1240 + 8 * i] );
+		}
+		const int dim = is3D ? 3 : 2;
+		auto pt = [&]( size_t off ) -> Point2
+		{
+			// celočíselné UOR → hlavní jednotky
+			return { ( readI32( &b[off] ) - origin[0] ) / uor, ( readI32( &b[off + 4] ) - origin[1] ) / uor };
+		};
+		auto ptD = [&]( size_t off ) -> Point2
+		{
+			// VAX double v UOR
+			return { ( vaxToDouble( &b[off] ) - origin[0] ) / uor, ( vaxToDouble( &b[off + 8] ) - origin[1] ) / uor };
+		};
+
+		std::vector<std::pair<int, int>> skipped;
+		auto skip = [&skipped]( int t )
+		{
+			for ( auto& s : skipped )
+			{
+				if ( s.first == t )
+				{
+					++s.second;
+					return;
+				}
+			}
+			skipped.push_back( { t, 1 } );
+		};
+
+		size_t p = 0;
+		bool parentUsable = false; //!< složky komplexního prvku / buňky
+		while ( p + 4 <= b.size() )
+		{
+			if ( b[p] == 0xFF && b[p + 1] == 0xFF )
+			{
+				break;
+			}
+			const int type = b[p + 1] & 0x7F;
+			const bool deleted = ( b[p + 1] & 0x80 ) != 0;
+			const bool complexChild = ( b[p] & 0x80 ) != 0;
+			const int level = b[p] & 0x3F;
+			const size_t words = static_cast<size_t>( b[p + 2] ) | ( static_cast<size_t>( b[p + 3] ) << 8 );
+			const size_t len = 4 + 2 * words;
+			if ( p + len > b.size() )
+			{
+				break;
+			}
+			const size_t e = p;
+			p += len;
+			if ( deleted || type == 9 || type == 8 || type == 10 )
+			{
+				continue;
+			}
+			if ( !complexChild )
+			{
+				// nadřazený prvek: buňka (2), komplexní řetězec (12) a tvar (14) – složky se použijí
+				parentUsable = ( type == 2 || type == 12 || type == 14 );
+				if ( type == 2 || type == 12 || type == 14 )
+				{
+					continue;
+				}
+			}
+			else if ( !parentUsable )
+			{
+				continue; // složky sdílené buňky, rastru, …
+			}
+			++stats.total;
+			if ( len < 36 )
+			{
+				continue;
+			}
+			ReadItem it;
+			it.type = type;
+			it.level = level;
+			it.weight = b[e + 34] >> 3;
+			it.color = b[e + 35];
+			// vlastní styl čáry v připojených datech (linkage 0x79F9)
+			const size_t attIndex = static_cast<size_t>( b[e + 30] ) | ( static_cast<size_t>( b[e + 31] ) << 8 );
+			const size_t attStart = e + 32 + 2 * attIndex;
+			if ( ( b[e + 33] & 0x08 ) && attStart < e + len )
+			{
+				for ( size_t q = attStart; q + 8 <= e + len; q += 2 )
+				{
+					if ( b[q] == 0xF9 && b[q + 1] == 0x79 )
+					{
+						it.lineStyleId = static_cast<int32_t>( static_cast<uint32_t>( b[q + 2] ) | ( static_cast<uint32_t>( b[q + 3] ) << 8 ) | ( static_cast<uint32_t>( b[q + 4] ) << 16 ) | ( static_cast<uint32_t>( b[q + 5] ) << 24 ) );
+						break;
+					}
+				}
+			}
+			const size_t vs = static_cast<size_t>( 4 * dim ); // velikost bodu
+			bool ok = false;
+			switch ( type )
+			{
+			case 3: // úsečka
+				if ( len >= 36 + 2 * vs )
+				{
+					it.pts.push_back( pt( e + 36 ) );
+					it.pts.push_back( pt( e + 36 + vs ) );
+					ok = true;
+				}
+				break;
+			case 4: // lomená čára
+			case 6: // tvar
+			{
+				if ( len < 38 )
+					break;
+				const size_t n = static_cast<size_t>( b[e + 36] ) | ( static_cast<size_t>( b[e + 37] ) << 8 );
+				if ( n < 2 || 38 + n * vs > len )
+					break;
+				for ( size_t k = 0; k < n; ++k )
+				{
+					it.pts.push_back( pt( e + 38 + k * vs ) );
+				}
+				ok = true;
+				break;
+			}
+			case 15: // elipsa / kružnice (2D)
+			case 16: // oblouk (2D)
+			{
+				if ( is3D )
+					break; // 3D oblouky (natočení kvaternionem) zatím ne
+				size_t o = e + 36;
+				double start = 0.0;
+				double sweep = 360.0;
+				if ( type == 16 )
+				{
+					start = readI32( &b[o] ) / 360000.0;
+					uint8_t sw[4] = { b[o + 4], b[o + 5], b[o + 6], b[o + 7] };
+					const bool neg = ( sw[1] & 0x80 ) != 0;
+					sw[1] &= 0x7F;
+					const int32_t sv = readI32( sw );
+					sweep = sv == 0 ? 360.0 : ( neg ? -sv : sv ) / 360000.0;
+					o += 8;
+				}
+				if ( len < ( o - e ) + 36 )
+					break;
+				const double a1 = vaxToDouble( &b[o] ) / uor;
+				const double a2 = vaxToDouble( &b[o + 8] ) / uor;
+				const double rot = readI32( &b[o + 16] ) / 360000.0;
+				const Point2 c = ptD( o + 20 );
+				if ( a1 <= 0.0 )
+					break;
+				if ( std::abs( a1 - a2 ) <= 1e-6 * std::max( 1.0, a1 ) )
+				{
+					it.isArc = true;
+					it.center = c;
+					it.radius = a1;
+					it.startDeg = start + rot;
+					it.sweepDeg = sweep;
+				}
+				else
+				{
+					// skutečná elipsa → lomená čára
+					const double r = rot * 3.14159265358979323846 / 180.0;
+					const int n = std::max( 8, static_cast<int>( std::ceil( std::abs( sweep ) / 7.5 ) ) );
+					for ( int k = 0; k <= n; ++k )
+					{
+						const double t = ( start + sweep * k / n ) * 3.14159265358979323846 / 180.0;
+						const double x = a1 * std::cos( t );
+						const double y = a2 * std::sin( t );
+						it.pts.push_back( { c.x + x * std::cos( r ) - y * std::sin( r ), c.y + x * std::sin( r ) + y * std::cos( r ) } );
+					}
+					it.type = 4;
+				}
+				ok = true;
+				break;
+			}
+			case 17: // text
+			{
+				const size_t o = e + 36;
+				if ( is3D )
+				{
+					// 3D: font, just, lengthMult, heightMult, quat[4], origin xyz, nchars, edf, text
+					if ( len < 36 + 2 + 8 + 16 + 12 + 2 )
+						break;
+					it.textHeight = readI32( &b[o + 6] ) * 6.0 / 1000.0 / uor;
+					it.pts.push_back( pt( o + 26 ) );
+					const size_t nc = b[o + 38];
+					if ( o + 40 + nc <= e + len )
+						it.text.assign( reinterpret_cast<const char*>( &b[o + 40] ), nc );
+				}
+				else
+				{
+					if ( len < 36 + 24 )
+						break;
+					it.textHeight = readI32( &b[o + 6] ) * 6.0 / 1000.0 / uor;
+					it.pts.push_back( pt( o + 14 ) );
+					const size_t nc = b[o + 22];
+					if ( o + 24 + nc <= e + len )
+						it.text.assign( reinterpret_cast<const char*>( &b[o + 24] ), nc );
+				}
+				it.isText = !it.text.empty();
+				ok = it.isText;
+				break;
+			}
+			default:
+				break;
+			}
+			if ( ok )
+			{
+				out.push_back( it );
+				++stats.used;
+			}
+			else
+			{
+				skip( type );
+			}
+		}
+		stats.skippedTypes = skipped;
+		return true;
+	}
 }

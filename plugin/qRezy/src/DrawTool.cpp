@@ -474,6 +474,7 @@ void DrawTool::stop()
 	}
 	m_hoverTimer->stop();
 	m_acquired.clear();
+	m_acqDirs.clear();
 	m_win->setInteractionMode( static_cast<ccGLWindowInterface::INTERACTION_FLAGS>( m_savedInteraction ) );
 	m_win->setPickingMode( ccGLWindowInterface::DEFAULT_PICKING );
 	m_win->setWindowCursor( Qt::ArrowCursor );
@@ -586,6 +587,7 @@ void DrawTool::setTracking( bool on )
 {
 	m_trackingOn = on;
 	m_acquired.clear();
+	m_acqDirs.clear();
 	updateTip();
 	updateStatus();
 	redraw2D();
@@ -628,6 +630,7 @@ void DrawTool::resetTool()
 	m_step = 0;
 	m_measDone = false;
 	m_acquired.clear();
+	m_acqDirs.clear();
 	select( nullptr );
 	updateTip();
 	updateStatus();
@@ -968,9 +971,11 @@ CCVector2d DrawTool::applyOrtho( const CCVector2d& from, const CCVector2d& to ) 
 CCVector2d DrawTool::cursorPoint( const QPoint& pos, SnapType& type, const CCVector2d* orthoFrom, TrackLines* lines ) const
 {
 	CCVector2d P = snapPoint( pos, type );
+	m_perpRefValid = false;
 	if ( m_perpLock && orthoFrom && m_mode == Mode::Line )
 	{
-		// kolmo na předchozí úsek: bod (uchopený nebo pod kurzorem) se promítne na kolmici
+		// kolmo na předchozí úsek: kurzor jen po kolmici; uchopený bod se promítne na kolmici (pata),
+		// průsečík kolmice s trasovací čarou nebo s nakreslenou čarou má přednost
 		CCVector2d raw;
 		if ( !screenToLocal( pos, raw ) )
 		{
@@ -978,31 +983,72 @@ CCVector2d DrawTool::cursorPoint( const QPoint& pos, SnapType& type, const CCVec
 		}
 		const bool fixedSnap = ( type == SnapType::End || type == SnapType::Mid || type == SnapType::Intersection );
 		const CCVector2d base = fixedSnap ? P : raw;
-		const CCVector2d Pc = *orthoFrom + m_perpDir * ( base - *orthoFrom ).dot( m_perpDir );
-		type = SnapType::None;
-		if ( !fixedSnap )
+		CCVector2d dir = m_perpDir;
+		const CCVector2d Pc = *orthoFrom + dir * ( base - *orthoFrom ).dot( dir );
+		if ( fixedSnap )
 		{
-			// průsečík kolmice s nakreslenou čarou poblíž
-			const double tol = SnapPixels * pixelSize();
-			double best = tol;
-			CCVector2d bestI = Pc;
-			for ( const Segment& s : collectSegments() )
+			m_perpRefValid = true;
+			m_perpRef = P;
+			m_perpRefType = type;
+			type = SnapType::None;
+			if ( lines )
 			{
-				CCVector2d I;
-				if ( lineIntersection( *orthoFrom, *orthoFrom + m_perpDir, s.a, s.b, I ) )
+				lines->push_back( { *orthoFrom, dir } );
+			}
+			return Pc;
+		}
+		const double tol = SnapPixels * pixelSize();
+		double best = tol;
+		bool found = false;
+		CCVector2d bestI = Pc;
+		CCVector2d bestA;
+		CCVector2d bestD;
+		if ( m_trackingOn )
+		{
+			for ( const auto& r : trackRays( nullptr ) )
+			{
+				if ( std::abs( r.second.dot( dir ) ) > 0.995 )
 				{
-					const double t = paramOn( s.a, s.b, I );
-					if ( t >= -1e-9 && t <= 1 + 1e-9 && dist( I, Pc ) < best )
-					{
-						best = dist( I, Pc );
-						bestI = I;
-						type = SnapType::Intersection;
-					}
+					continue; // rovnoběžná s kolmicí
 				}
+				CCVector2d I;
+				if ( lineIntersection( *orthoFrom, *orthoFrom + dir, r.first, r.first + r.second, I ) && dist( I, Pc ) < best )
+				{
+					best = dist( I, Pc );
+					bestI = I;
+					bestA = r.first;
+					bestD = r.second;
+					found = true;
+				}
+			}
+		}
+		if ( found )
+		{
+			type = SnapType::None;
+			if ( lines )
+			{
+				lines->push_back( { bestA, bestD } );
+				lines->push_back( { *orthoFrom, dir } );
 			}
 			return bestI;
 		}
-		return Pc;
+		type = SnapType::None;
+		best = tol;
+		for ( const Segment& sg : collectSegments() )
+		{
+			CCVector2d I;
+			if ( lineIntersection( *orthoFrom, *orthoFrom + dir, sg.a, sg.b, I ) )
+			{
+				const double t = paramOn( sg.a, sg.b, I );
+				if ( t >= -1e-9 && t <= 1 + 1e-9 && dist( I, Pc ) < best )
+				{
+					best = dist( I, Pc );
+					bestI = I;
+					type = SnapType::Intersection;
+				}
+			}
+		}
+		return bestI;
 	}
 	if ( type == SnapType::End || type == SnapType::Mid || type == SnapType::Intersection )
 	{
@@ -1066,23 +1112,20 @@ CCVector2d DrawTool::cursorPoint( const QPoint& pos, SnapType& type, const CCVec
 		CCVector2d bestD;
 		if ( m_trackingOn )
 		{
-			for ( const CCVector2d& A : m_acquired )
+			for ( const auto& r : trackRays( nullptr ) )
 			{
-				for ( const CCVector2d& d : { d0, d1 } )
+				if ( std::abs( r.second.dot( dir ) ) > 0.995 )
 				{
-					if ( std::abs( d.dot( dir ) ) > 0.5 )
-					{
-						continue; // rovnoběžná s orto
-					}
-					CCVector2d I;
-					if ( lineIntersection( *orthoFrom, *orthoFrom + dir, A, A + d, I ) && dist( I, Pc ) < best )
-					{
-						best = dist( I, Pc );
-						bestI = I;
-						bestA = A;
-						bestD = d;
-						found = true;
-					}
+					continue; // rovnoběžná s orto
+				}
+				CCVector2d I;
+				if ( lineIntersection( *orthoFrom, *orthoFrom + dir, r.first, r.first + r.second, I ) && dist( I, Pc ) < best )
+				{
+					best = dist( I, Pc );
+					bestI = I;
+					bestA = r.first;
+					bestD = r.second;
+					found = true;
 				}
 			}
 		}
@@ -1109,14 +1152,10 @@ CCVector2d DrawTool::cursorPoint( const QPoint& pos, SnapType& type, const CCVec
 	if ( m_trackingOn )
 	{
 		// zdroje pomocných čar: získané body + poslední bod (vodorovně/svisle od něj)
-		std::vector<CCVector2d> sources = m_acquired;
-		if ( orthoFrom )
-		{
-			sources.push_back( *orthoFrom );
-		}
+		const TrackLines rays = trackRays( orthoFrom );
 		CCVector2d T;
 		TrackLines tl;
-		if ( !sources.empty() && trackingPoint( raw, sources, T, &tl ) )
+		if ( !rays.empty() && trackingPoint( raw, rays, T, &tl ) )
 		{
 			// pomocná čára × nakreslená čára
 			CCVector2d I;
@@ -1139,13 +1178,60 @@ CCVector2d DrawTool::cursorPoint( const QPoint& pos, SnapType& type, const CCVec
 	return P;
 }
 
-bool DrawTool::trackingPoint( const CCVector2d& raw, const std::vector<CCVector2d>& sources, CCVector2d& out, TrackLines* lines ) const
+DrawTool::TrackLines DrawTool::trackRays( const CCVector2d* from ) const
 {
-	// pomocné čáry z každého zdroje ve směru os pohledu
-	const double tol = SnapPixels * pixelSize();
+	// pomocné čáry: z každého získaného bodu ve směru os pohledu a v prodloužení čáry, na které bod leží;
+	// přes poslední dva získané body (šikmo); od posledního bodu ve směru os
+	TrackLines rays;
 	const double ang = viewAngle();
 	const CCVector2d d0( std::cos( ang ), std::sin( ang ) );
 	const CCVector2d d1( -d0.y, d0.x );
+	auto addRay = [&rays]( const CCVector2d& A, CCVector2d d )
+	{
+		if ( d.norm() < 1e-12 )
+		{
+			return;
+		}
+		d.normalize();
+		for ( const auto& r : rays )
+		{
+			// stejná přímka už je
+			if ( std::abs( r.second.x * d.y - r.second.y * d.x ) < 1e-6 && std::abs( ( A - r.first ).x * r.second.y - ( A - r.first ).y * r.second.x ) < 1e-6 )
+			{
+				return;
+			}
+		}
+		rays.push_back( { A, d } );
+	};
+	for ( size_t i = 0; i < m_acquired.size(); ++i )
+	{
+		addRay( m_acquired[i], d0 );
+		addRay( m_acquired[i], d1 );
+		if ( i < m_acqDirs.size() )
+		{
+			for ( const CCVector2d& d : m_acqDirs[i] )
+			{
+				addRay( m_acquired[i], d );
+			}
+		}
+	}
+	if ( m_acquired.size() >= 2 )
+	{
+		const CCVector2d& A = m_acquired[m_acquired.size() - 2];
+		const CCVector2d& B = m_acquired.back();
+		addRay( A, B - A );
+	}
+	if ( from )
+	{
+		addRay( *from, d0 );
+		addRay( *from, d1 );
+	}
+	return rays;
+}
+
+bool DrawTool::trackingPoint( const CCVector2d& raw, const TrackLines& rays, CCVector2d& out, TrackLines* lines ) const
+{
+	const double tol = SnapPixels * pixelSize();
 
 	struct Hit
 	{
@@ -1154,17 +1240,16 @@ bool DrawTool::trackingPoint( const CCVector2d& raw, const std::vector<CCVector2
 		double dist;
 	};
 	std::vector<Hit> hits;
-	for ( const CCVector2d& A : sources )
+	for ( const auto& r : rays )
 	{
-		for ( const CCVector2d& d : { d0, d1 } )
+		const CCVector2d& A = r.first;
+		const CCVector2d& d = r.second;
+		const double t = ( raw - A ).dot( d );
+		const CCVector2d proj = A + d * t;
+		const double dd = ( raw - proj ).norm();
+		if ( dd < tol )
 		{
-			const double t = ( raw - A ).dot( d );
-			const CCVector2d proj = A + d * t;
-			const double dd = ( raw - proj ).norm();
-			if ( dd < tol )
-			{
-				hits.push_back( { A, d, dd } );
-			}
+			hits.push_back( { A, d, dd } );
 		}
 	}
 	if ( hits.empty() )
@@ -1218,25 +1303,49 @@ bool DrawTool::trackingPoint( const CCVector2d& raw, const std::vector<CCVector2
 
 void DrawTool::onHoverTimeout()
 {
-	if ( !m_trackingOn || !m_hoverValid || !m_hasCursor || ( m_cursor - m_hoverCand ).norm() > 1e-9 )
+	if ( !m_trackingOn || !m_hoverValid || !m_hasCursor || ( m_lastCand - m_hoverCand ).norm() > 1e-9 )
 	{
 		return;
 	}
+	m_acqDirs.resize( m_acquired.size() );
 	// získat / zrušit bod
-	for ( auto it = m_acquired.begin(); it != m_acquired.end(); ++it )
+	for ( size_t i = 0; i < m_acquired.size(); ++i )
 	{
-		if ( ( *it - m_hoverCand ).norm() < 1e-9 )
+		if ( ( m_acquired[i] - m_hoverCand ).norm() < 1e-9 )
 		{
-			m_acquired.erase( it );
+			m_acquired.erase( m_acquired.begin() + static_cast<long>( i ) );
+			m_acqDirs.erase( m_acqDirs.begin() + static_cast<long>( i ) );
 			updateTip();
 			redraw2D();
 			return;
 		}
 	}
+	// směry čar, které v bodě končí nebo mají střed (prodloužení čáry)
+	std::vector<CCVector2d> dirs;
+	for ( const Segment& sg : collectSegments() )
+	{
+		if ( sg.arc )
+		{
+			continue;
+		}
+		const CCVector2d mid = ( sg.a + sg.b ) * 0.5;
+		const double tolP = 1e-6 * m_scale;
+		if ( dist( sg.a, m_hoverCand ) < tolP || dist( sg.b, m_hoverCand ) < tolP || dist( mid, m_hoverCand ) < tolP )
+		{
+			CCVector2d d = sg.b - sg.a;
+			if ( d.norm() > 1e-9 )
+			{
+				d.normalize();
+				dirs.push_back( d );
+			}
+		}
+	}
 	m_acquired.push_back( m_hoverCand );
+	m_acqDirs.push_back( dirs );
 	if ( m_acquired.size() > 3 )
 	{
 		m_acquired.erase( m_acquired.begin() );
+		m_acqDirs.erase( m_acqDirs.begin() );
 	}
 	updateTip();
 	redraw2D();
@@ -2647,6 +2756,7 @@ void DrawTool::onTypedValue( double v )
 			}
 			m_chain.push_back( P );
 			m_acquired.clear();
+	m_acqDirs.clear();
 			break;
 		}
 		if ( m_chain.empty() )
@@ -2920,6 +3030,12 @@ void DrawTool::updateTip()
 		{
 			addMarker( ovs, A, SnapType::None, track );
 		}
+	}
+	// kolmice: uchopený bod a jeho pata na kolmici
+	if ( m_perpRefValid && m_hasCursor && m_mode == Mode::Line && m_perpLock )
+	{
+		addMarker( ovs, m_perpRef, m_perpRefType, ccColor::Rgb( 255, 220, 0 ) );
+		segment( m_perpRef, m_cursor, ccColor::Rgb( 255, 220, 0 ), 1.0f );
 	}
 
 	if ( m_hasCursor )
@@ -3758,11 +3874,13 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			}
 		}
 		// kandidát na získání bodu (stojí-li kurzor na konci/středu/průsečíku)
-		if ( m_trackingOn && ( st == SnapType::End || st == SnapType::Mid || st == SnapType::Intersection ) )
+		const bool candOk = m_perpRefValid || st == SnapType::End || st == SnapType::Mid || st == SnapType::Intersection;
+		m_lastCand = m_perpRefValid ? m_perpRef : m_cursor;
+		if ( m_trackingOn && candOk )
 		{
-			if ( !m_hoverValid || ( m_hoverCand - m_cursor ).norm() > 1e-9 )
+			if ( !m_hoverValid || ( m_hoverCand - m_lastCand ).norm() > 1e-9 )
 			{
-				m_hoverCand = m_cursor;
+				m_hoverCand = m_lastCand;
 				m_hoverValid = true;
 				m_hoverTimer->start();
 			}
@@ -4706,14 +4824,18 @@ std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTa
 			continue;
 		}
 		auto* poly = static_cast<ccPolyline*>( ch );
+		if ( m_exportSkipImported && poly->hasMetaData( "qRezy.imported" ) )
+		{
+			continue; // jen doplněné prvky
+		}
 		const int view = poly->hasMetaData( Drawing::MetaView ) ? poly->getMetaData( Drawing::MetaView ).toInt() : 0;
 		if ( view >= 0 && isText( poly ) && poly->size() > 0 )
 		{
 			DgnV7::Element t;
 			t.isText = true;
-			t.sym.level = textLevel;
+			t.sym.level = poly->hasMetaData( "qRezy.textLevel" ) ? poly->getMetaData( "qRezy.textLevel" ).toInt() : textLevel;
 			t.sym.color = 0;
-			t.textHeight = textHeight;
+			t.textHeight = poly->hasMetaData( "qRezy.textH" ) ? poly->getMetaData( "qRezy.textH" ).toDouble() : textHeight;
 			DgnV7::Point2 P;
 			if ( map( view, CCVector3d::fromArray( poly->getPoint( 0 )->u ), P ) )
 			{
@@ -4838,4 +4960,76 @@ void DrawTool::refreshLooks()
 	updateLineVisibility();
 	redraw3D();
 	updateStatus();
+}
+
+int DrawTool::importPrims( const std::vector<ImportPrim>& prims )
+{
+	UndoItem u;
+	int n = 0;
+	auto mark = [&n]( ccPolyline* p )
+	{
+		if ( p )
+		{
+			p->setMetaData( "qRezy.imported", true );
+			++n;
+		}
+	};
+	for ( const ImportPrim& ip : prims )
+	{
+		if ( ip.kind == 0 )
+		{
+			for ( size_t k = 0; k + 1 < ip.pts.size(); ++k )
+			{
+				mark( addLine( ip.pts[k], ip.pts[k + 1], ip.cat, ip.hidden, &u ) );
+			}
+		}
+		else if ( ip.kind == 1 )
+		{
+			if ( ip.radius <= 0.0 )
+			{
+				continue;
+			}
+			if ( std::abs( ip.sweep ) >= TwoPi - 1e-6 )
+			{
+				// kružnice = dva půloblouky
+				mark( addPolyline( arcPoints( ip.center, ip.radius, ip.a0, TwoPi / 2 ), ip.cat, ip.hidden, true, &u ) );
+				mark( addPolyline( arcPoints( ip.center, ip.radius, ip.a0 + TwoPi / 2, TwoPi / 2 ), ip.cat, ip.hidden, true, &u ) );
+			}
+			else
+			{
+				mark( addPolyline( arcPoints( ip.center, ip.radius, ip.a0, ip.sweep ), ip.cat, ip.hidden, true, &u ) );
+			}
+		}
+		else if ( ip.kind == 2 && !ip.pts.empty() && !ip.text.isEmpty() )
+		{
+			ccPolyline* t = addText( ip.pts.front(), ip.text, &u );
+			if ( t )
+			{
+				t->setMetaData( "qRezy.textLevel", ip.textLevel );
+				t->setMetaData( "qRezy.textH", ip.textHeight );
+			}
+			mark( t );
+		}
+	}
+	pushUndo( std::move( u ) );
+	updateLineVisibility();
+	redraw3D();
+	return n;
+}
+
+int DrawTool::countImported() const
+{
+	int n = 0;
+	ccHObject* group = const_cast<DrawTool*>( this )->drawingGroup( false );
+	if ( group )
+	{
+		for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+		{
+			if ( group->getChild( i )->hasMetaData( "qRezy.imported" ) )
+			{
+				++n;
+			}
+		}
+	}
+	return n;
 }
