@@ -445,6 +445,22 @@ namespace Icons
 				p.drawText( QPointF( 13, 9 ), QStringLiteral( "1" ) );
 				p.drawText( QPointF( 24, 24 ), QStringLiteral( "2" ) );
 			}
+			else if ( n == "kota" )
+			{
+				// kačena: základní čára, šipka do V, svislice s poličkou, text
+				p.setPen( QPen( Ink, 1.6 ) );
+				p.drawLine( QPointF( 2, 27 ), QPointF( 20, 27 ) );
+				p.drawLine( QPointF( 6, 21 ), QPointF( 11, 27 ) );
+				p.drawLine( QPointF( 16, 21 ), QPointF( 11, 27 ) );
+				p.drawLine( QPointF( 11, 27 ), QPointF( 11, 14 ) );
+				p.drawLine( QPointF( 11, 14 ), QPointF( 30, 14 ) );
+				p.setPen( QPen( Blue, 1 ) );
+				QFont f = p.font();
+				f.setPixelSize( 9 );
+				f.setBold( true );
+				p.setFont( f );
+				p.drawText( QPointF( 12, 11 ), QStringLiteral( "+3.3" ) );
+			}
 			else if ( n == "text" )
 			{
 				p.setPen( QPen( Ink, 1 ) );

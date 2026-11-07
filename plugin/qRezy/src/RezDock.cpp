@@ -163,6 +163,11 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 	connect( m_draw, &DrawTool::statusChanged, this, &RezDock::onStatus );
 	connect( m_draw, &DrawTool::categoryChanged, this, [this]( int c ) { const QSignalBlocker b( m_catCombo ); m_catCombo->setCurrentIndex( std::max( 0, m_catCombo->findData( c ) ) ); } );
 	m_draw->setSliceProvider( [this]() { return slicePlanes(); } );
+	m_draw->setZeroProvider( [this]() { return m_zero ? m_zero->value() : 0.0; } );
+	{
+		QSettings ks;
+		m_draw->setKotaSymbology( ks.value( QStringLiteral( "qRezy/kotaLevel" ), 16 ).toInt(), ks.value( QStringLiteral( "qRezy/kotaColor" ), 135 ).toInt() );
+	}
 	connect( m_draw, &DrawTool::hiddenChanged, this, [this]( bool h ) { const QSignalBlocker b( m_hiddenAct ); m_hiddenAct->setChecked( h ); } );
 	connect( m_draw, &DrawTool::orthoChanged, this, [this]( bool o ) { const QSignalBlocker b( m_orthoAct ); m_orthoAct->setChecked( o ); } );
 	connect( m_draw, &DrawTool::trackingChanged, this, [this]( bool o ) { const QSignalBlocker b( m_trackAct ); m_trackAct->setChecked( o ); } );
@@ -677,6 +682,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Delete, "delete", "Smazat", "Klik na čáru (s výběrem smaže výběr)." },
 		{ DrawTool::Mode::Measure, "measure", "Měřit", "Vzdálenost mezi dvěma body." },
 		{ DrawTool::Mode::Text, "text", "Text", "Klik a napsat (např. naměřenou výšku); přesun, kopie a mazání jako u čar." },
+		{ DrawTool::Mode::Kota, "kota", "Kóta", "Výšková kóta (kačena) v řezu nebo pohledu: klik na bod = hrot šipky, druhý klik = strana poličky. Výška v Bpv, místní (k ±0,000) nebo obojí; velikost podle měřítka výkresu. Přesun, kopie (výška se přepočítá) a mazání jako u čar." },
 	};
 	for ( const ToolDef& t : tools )
 	{
@@ -713,6 +719,22 @@ void RezDock::buildToolbar()
 	arcCombo->setToolTip( QStringLiteral( "Metoda oblouku" ) );
 	arcCombo->setCurrentIndex( m_draw->arcMethod() );
 	connect( arcCombo, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this]( int i ) { m_draw->setArcMethod( i ); if ( m_draw->isActive() ) m_draw->setMode( DrawTool::Mode::Arc ); focusView(); } );
+	auto* kotaFmt = new QComboBox;
+	kotaFmt->addItem( QStringLiteral( "Bpv" ) );
+	kotaFmt->addItem( QStringLiteral( "místní" ) );
+	kotaFmt->addItem( QStringLiteral( "oboje" ) );
+	kotaFmt->setItemData( 0, QStringLiteral( "Výška v Bpv (např. 394.410)" ), Qt::ToolTipRole );
+	kotaFmt->setItemData( 1, QStringLiteral( "Výška k ±0,000 z panelu Řezy (např. +3.315)" ), Qt::ToolTipRole );
+	kotaFmt->setItemData( 2, QStringLiteral( "Místní nad poličkou, Bpv pod ní" ), Qt::ToolTipRole );
+	kotaFmt->setToolTip( QStringLiteral( "Zápis výšky u nové kóty" ) );
+	kotaFmt->setCurrentIndex( m_draw->kotaFormat() );
+	connect( kotaFmt, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this]( int i ) { m_draw->setKotaFormat( i ); if ( m_draw->isActive() ) m_draw->setMode( DrawTool::Mode::Kota ); focusView(); } );
+	auto* kotaScale = new QSpinBox;
+	kotaScale->setRange( 1, 10000 );
+	kotaScale->setValue( m_draw->kotaScale() );
+	kotaScale->setToolTip( QStringLiteral( "Měřítko výkresu – velikost značky a textu kóty (1:70 = jako ve vašem výkresu)" ) );
+	kotaScale->setFixedWidth( 70 );
+	connect( kotaScale, qOverload<int>( &QSpinBox::valueChanged ), this, [this]( int v ) { m_draw->setKotaScale( v ); } );
 	QSettings clSt;
 	auto* clGap = makeSpin( 0.01, 1.0, clSt.value( QStringLiteral( "qRezy/clGap" ), 0.10 ).toDouble(), 0.01, 2, QStringLiteral( " m" ) );
 	clGap->setToolTip( QStringLiteral( "Čára z mračna: největší mezera v bodech, kterou čára přeskočí (dveře, okna = konec čáry)" ) );
@@ -976,6 +998,11 @@ void RezDock::buildToolbar()
 		c.widget( arcCombo );
 		c.addSmall( T( DrawTool::Mode::Text ) );
 		c.addSmall( T( DrawTool::Mode::Measure ), QStringLiteral( "D" ) );
+		RibbonGroup kg = r->addGroup( pDraw, QStringLiteral( "Kóta" ) );
+		kg.addBig( T( DrawTool::Mode::Kota ) );
+		RibbonColumn kc = kg.column();
+		kc.widget( kotaFmt );
+		kc.widget( kotaScale, QStringLiteral( "1 :" ) );
 		RibbonGroup cg = r->addGroup( pDraw, QStringLiteral( "Z mračna" ) );
 		cg.addBig( T( DrawTool::Mode::CloudLine ) );
 		RibbonColumn cc = cg.column();
@@ -2224,12 +2251,29 @@ void RezDock::openSaveDialog()
 	ptLevel->setRange( 1, 63 );
 	ptLevel->setValue( st.value( QStringLiteral( "qRezy/ptLevel" ), 16 ).toInt() );
 	pf->addRow( QStringLiteral( "Hladina:" ), ptLevel );
-	auto* ptCross = makeSpin( 0.005, 1.0, st.value( QStringLiteral( "qRezy/ptCross" ), 0.05 ).toDouble(), 0.01, 3, QStringLiteral( " m" ) );
+	auto* ptCross = makeSpin( 0.005, 1.0, st.value( QStringLiteral( "qRezy/ptCrossHalf" ), 0.02 ).toDouble(), 0.005, 3, QStringLiteral( " m" ) );
 	pf->addRow( QStringLiteral( "Křížek – polovina ramene:" ), ptCross );
 	auto* ptTextH = makeSpin( 0.0, 5.0, st.value( QStringLiteral( "qRezy/ptTextH" ), 0.10 ).toDouble(), 0.05, 2, QStringLiteral( " m" ) );
 	ptTextH->setSpecialValueText( QStringLiteral( "bez čísla" ) );
 	pf->addRow( QStringLiteral( "Číslo bodu – výška:" ), ptTextH );
 	l->addWidget( ptBox );
+
+	// výškové kóty
+	auto* kBox = new QGroupBox( QStringLiteral( "Výškové kóty v řezech a pohledech" ) );
+	auto* kf = new QHBoxLayout( kBox );
+	auto* kLevel = new QSpinBox;
+	kLevel->setRange( 1, 63 );
+	kLevel->setValue( st.value( QStringLiteral( "qRezy/kotaLevel" ), 16 ).toInt() );
+	auto* kColor = new QSpinBox;
+	kColor->setRange( 0, 255 );
+	kColor->setValue( st.value( QStringLiteral( "qRezy/kotaColor" ), 135 ).toInt() );
+	kf->addWidget( new QLabel( QStringLiteral( "Hladina:" ) ) );
+	kf->addWidget( kLevel );
+	kf->addSpacing( 12 );
+	kf->addWidget( new QLabel( QStringLiteral( "Barva:" ) ) );
+	kf->addWidget( kColor );
+	kf->addStretch( 1 );
+	l->addWidget( kBox );
 
 	// rastr mračna
 	auto* rBox = new QGroupBox( QStringLiteral( "Rastr mračna (TIFF + .tfw) k půdorysům, řezům a pohledům" ) );
@@ -2275,7 +2319,10 @@ void RezDock::openSaveDialog()
 	st.setValue( QStringLiteral( "qRezy/rasterPx" ), rPx->value() );
 	st.setValue( QStringLiteral( "qRezy/rasterDot" ), rDot->value() );
 	st.setValue( QStringLiteral( "qRezy/ptLevel" ), ptLevel->value() );
-	st.setValue( QStringLiteral( "qRezy/ptCross" ), ptCross->value() );
+	st.setValue( QStringLiteral( "qRezy/ptCrossHalf" ), ptCross->value() );
+	st.setValue( QStringLiteral( "qRezy/kotaLevel" ), kLevel->value() );
+	st.setValue( QStringLiteral( "qRezy/kotaColor" ), kColor->value() );
+	m_draw->setKotaSymbology( kLevel->value(), kColor->value() );
 	st.setValue( QStringLiteral( "qRezy/ptTextH" ), ptTextH->value() );
 	for ( int i = 0; i < static_cast<int>( sections.size() ); ++i )
 	{
@@ -2437,7 +2484,7 @@ void RezDock::exportV7( const std::vector<int>& floorIds, bool withSections )
 		{
 			// změřené body sklopené do řezů a pohledů: malý křížek + číslo, vlastní hladina
 			const int ptLevel = st.value( QStringLiteral( "qRezy/ptLevel" ), 16 ).toInt();
-			const double cr = st.value( QStringLiteral( "qRezy/ptCross" ), 0.05 ).toDouble();
+			const double cr = st.value( QStringLiteral( "qRezy/ptCrossHalf" ), 0.02 ).toDouble();
 			const double ptH = st.value( QStringLiteral( "qRezy/ptTextH" ), 0.10 ).toDouble();
 			QTextCodec* codec = QTextCodec::codecForName( "Windows-1250" );
 			for ( const SectionInfo& si : sections )

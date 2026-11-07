@@ -28,6 +28,28 @@ void RezLayer::drawMeOnly( CC_DRAW_CONTEXT& context )
 	QFont base = context.display->getTextDisplayFont();
 	for ( const Item& it : items )
 	{
+		if ( !it.segs.empty() )
+		{
+			gl->glColor3ub( it.color.r, it.color.g, it.color.b );
+			gl->glLineWidth( 1.5f );
+			gl->glBegin( GL_LINES );
+			for ( size_t k = 0; k + 1 < it.segs.size(); k += 2 )
+			{
+				CCVector3d A;
+				CCVector3d B;
+				if ( cam.project( it.segs[k], A ) && cam.project( it.segs[k + 1], B ) )
+				{
+					gl->glVertex2d( A.x - cx, A.y - cy );
+					gl->glVertex2d( B.x - cx, B.y - cy );
+				}
+			}
+			gl->glEnd();
+			gl->glLineWidth( 1.0f );
+			if ( it.text.isEmpty() )
+			{
+				continue;
+			}
+		}
 		CCVector3d S;
 		if ( !cam.project( it.P, S ) )
 		{

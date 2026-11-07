@@ -10,6 +10,7 @@
 #include <QObject>
 #include <QPoint>
 #include <QString>
+#include <QStringList>
 
 #include <CCGeom.h>
 
@@ -80,7 +81,8 @@ public:
 		InsertVertex, //!< vložit vrchol (rozdělí čáru, vrchol se umístí)
 		DeleteVertex, //!< smazat vrchol (sloučí dvě navazující čáry)
 		Arc,          //!< oblouk (3 body, metoda podle setArcMethod)
-		CloudLine     //!< čára z mračna: klik u bodů řezu → proložená čára, potvrdit / zahodit
+		CloudLine,    //!< čára z mračna: klik u bodů řezu → proložená čára, potvrdit / zahodit
+		Kota          //!< výšková kóta („kačena“) v řezu / pohledu: hrot, strana poličky
 	};
 
 	enum class SnapType
@@ -122,6 +124,14 @@ public:
 	using SliceProvider = std::function<std::vector<std::array<double, 4>>()>;
 	void setSliceProvider( SliceProvider p ) { m_sliceProvider = std::move( p ); }
 	void setCloudLineParams( double gap, double tol, bool square );
+	//! výšková kóta: ±0,000 v Bpv (z panelu), zápis 0 = Bpv, 1 = místní, 2 = oboje; měřítko výkresu 1:N
+	void setZeroProvider( std::function<double()> p ) { m_zeroProvider = std::move( p ); }
+	void setKotaFormat( int f );
+	int kotaFormat() const { return m_kotaFmt; }
+	void setKotaScale( int n );
+	int kotaScale() const { return m_kotaScale; }
+	void setKotaSymbology( int level, int color ) { m_kotaLevel = level; m_kotaColor = color; }
+	static bool isKota( const ccHObject* obj );
 	//! změřené body s výškou v dosahu dané roviny (lokální 3D poloha, číslo) – pro výstup
 	std::vector<std::pair<CCVector3d, QString>> pointsInFrame( const DrawFrame& f ) const;
 	//! přesune čáry z hladiny na jinou (smazání hladiny); vrací počet
@@ -326,6 +336,18 @@ private:
 	void refreshLayer();
 	ccPolyline* addText( const CCVector2d& P, const QString& text, UndoItem* undo );
 	static bool isText( const ccHObject* obj );
+	//! kóta: geometrie v lokálních 3D souřadnicích (úsečky po dvojicích, počátky a texty)
+	struct KotaGeom
+	{
+		std::vector<CCVector3d> segs;
+		std::vector<CCVector3d> textPos;
+		QStringList texts;
+		double textH = 0.0; //!< lokální jednotky
+	};
+	KotaGeom kotaGeom( const CCVector3d& tip, const CCVector3d& U, const CCVector3d& V, int side, int fmt, int scale ) const;
+	KotaGeom kotaGeom( const ccPolyline* poly ) const;
+	double heightOf( const CCVector3d& local ) const;
+	ccPolyline* addKota( const CCVector2d& P, int side, int fmt, int scale, UndoItem* undo, const ccPolyline* like = nullptr );
 	bool pickingCursor() const;
 
 	ccMainAppInterface* m_app = nullptr;
@@ -421,6 +443,12 @@ private:
 
 	// čára z mračna
 	SliceProvider m_sliceProvider;
+	std::function<double()> m_zeroProvider;
+	int m_kotaFmt = 0;
+	int m_kotaScale = 70;
+	int m_kotaLevel = 16;
+	int m_kotaColor = 135;
+	CCVector2d m_kotaTip;
 	double m_clGap = 0.10;
 	double m_clTol = 0.02;
 	bool m_clSquare = true;

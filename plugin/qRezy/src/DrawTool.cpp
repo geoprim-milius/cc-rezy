@@ -307,6 +307,8 @@ DrawTool::DrawTool( ccMainAppInterface* app, QObject* parent )
 	m_clGap = st.value( QStringLiteral( "qRezy/clGap" ), 0.10 ).toDouble();
 	m_clTol = st.value( QStringLiteral( "qRezy/clTol" ), 0.02 ).toDouble();
 	m_clSquare = st.value( QStringLiteral( "qRezy/clSquare" ), true ).toBool();
+	m_kotaFmt = std::max( 0, std::min( 2, st.value( QStringLiteral( "qRezy/kotaFormat" ), 0 ).toInt() ) );
+	m_kotaScale = std::max( 1, st.value( QStringLiteral( "qRezy/kotaScale" ), 70 ).toInt() );
 	m_category = Drawing::layerIdAt( 0 );
 }
 
@@ -800,6 +802,20 @@ ccPolyline* DrawTool::pickLine( const QPoint& pos, CCVector2d* clicked ) const
 		{
 			bestD = d;
 			best = s.poly;
+		}
+		if ( isKota( s.poly ) && s.poly != best )
+		{
+			// kóta: klik na kteroukoli čáru značky
+			const KotaGeom g = kotaGeom( s.poly );
+			for ( size_t k = 0; k + 1 < g.segs.size(); k += 2 )
+			{
+				const double dk = dist( closestOnSegment( m_frame.toUV( g.segs[k] ), m_frame.toUV( g.segs[k + 1] ), P ), P );
+				if ( dk < bestD )
+				{
+					bestD = dk;
+					best = s.poly;
+				}
+			}
 		}
 	}
 	if ( clicked )
@@ -1432,6 +1448,11 @@ void DrawTool::translateItem( ccPolyline* poly, const CCVector2d& d, bool copy, 
 		{
 			setLine( poly, pts.front(), pts.back(), undo );
 		}
+		return;
+	}
+	if ( isKota( poly ) )
+	{
+		addKota( pts.front(), poly->getMetaData( "qRezy.kotaSide" ).toInt(), poly->getMetaData( "qRezy.kotaFmt" ).toInt(), poly->getMetaData( "qRezy.kotaScale" ).toInt(), undo, poly );
 		return;
 	}
 	if ( isText( poly ) )
@@ -2431,6 +2452,28 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		pushUndo( std::move( u ) );
 		break;
 	}
+	case Mode::Kota:
+	{
+		if ( m_frame.plan )
+		{
+			m_flash = QStringLiteral( "Kóta jde jen v řezu nebo pohledu" );
+			break;
+		}
+		if ( m_step == 0 )
+		{
+			m_kotaTip = cursorPoint( pos, st, nullptr );
+			m_step = 1;
+		}
+		else
+		{
+			const CCVector2d P = cursorPoint( pos, st, nullptr );
+			UndoItem u;
+			addKota( m_kotaTip, P.x < m_kotaTip.x ? -1 : 1, m_kotaFmt, m_kotaScale, &u );
+			pushUndo( std::move( u ) );
+			m_step = 0;
+		}
+		break;
+	}
 	case Mode::Text:
 	{
 		const CCVector2d P = cursorPoint( pos, st, nullptr );
@@ -3119,6 +3162,17 @@ void DrawTool::updateTip()
 				}
 			}
 		}
+		// kóta: náhled značky (hrot na kurzoru, nebo pevný hrot a strana podle kurzoru)
+		if ( m_mode == Mode::Kota && !m_frame.plan )
+		{
+			const CCVector2d T = m_step == 1 ? m_kotaTip : m_cursor;
+			const int side = ( m_step == 1 && m_cursor.x < m_kotaTip.x ) ? -1 : 1;
+			const KotaGeom g = kotaGeom( m_frame.to3D( T, false ), m_frame.U, m_frame.V, side, m_kotaFmt, m_kotaScale );
+			for ( size_t k = 0; k + 1 < g.segs.size(); k += 2 )
+			{
+				segment( m_frame.toUV( g.segs[k] ), m_frame.toUV( g.segs[k + 1] ), cyan, 1.5f );
+			}
+		}
 		// přesun / kopie jednoho oblouku
 		if ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && m_step == 2 && m_selSet.empty() && isArc( m_sel ) )
 		{
@@ -3548,6 +3602,24 @@ void DrawTool::updateStatus()
 	case Mode::Text:
 		prompt = QStringLiteral( "Text: klikněte, kam text vložit (levý dolní roh)" );
 		break;
+	case Mode::Kota:
+	{
+		static const char* fm[] = { "Bpv", "místní", "oboje" };
+		if ( m_frame.plan )
+		{
+			prompt = QStringLiteral( "Kóta: jen v řezu nebo pohledu" );
+			break;
+		}
+		const CCVector2d T = m_step == 1 ? m_kotaTip : m_cursor;
+		const KotaGeom g = kotaGeom( m_frame.to3D( T ), m_frame.U, m_frame.V, 1, 2, m_kotaScale );
+		prompt = ( m_step == 0 ? QStringLiteral( "Kóta (%1, 1:%2): klikněte na bod (hrot šipky)" ) : QStringLiteral( "Kóta (%1, 1:%2): klikněte na stranu poličky (vlevo / vpravo)" ) )
+		             .arg( QString::fromUtf8( fm[m_kotaFmt] ) ).arg( m_kotaScale );
+		if ( m_hasCursor || m_step == 1 )
+		{
+			prompt += QStringLiteral( "  |  %1  (%2 Bpv)" ).arg( g.texts.value( 0 ), g.texts.value( 1 ) );
+		}
+		break;
+	}
 	case Mode::Select:
 		prompt = m_step == 1 ? QStringLiteral( "Úchop: nové místo konce čáry (nebo délka)" )
 		                     : QStringLiteral( "Výběr: klik = vybrat, Ctrl+klik = přidat/ubrat, okno tažením (zleva = uvnitř, zprava = křížem); úchop na konci = přesun konce. Vybráno: %1" ).arg( m_selSet.size() );
@@ -4433,6 +4505,111 @@ ccPolyline* DrawTool::addText( const CCVector2d& P, const QString& text, UndoIte
 	return poly;
 }
 
+// ---------------------------------------------------------------- výšková kóta („kačena“)
+
+bool DrawTool::isKota( const ccHObject* obj )
+{
+	return obj && obj->hasMetaData( "qRezy.kota" );
+}
+
+void DrawTool::setKotaFormat( int f )
+{
+	m_kotaFmt = std::max( 0, std::min( 2, f ) );
+	QSettings().setValue( QStringLiteral( "qRezy/kotaFormat" ), m_kotaFmt );
+	updateTip();
+	updateStatus();
+}
+
+void DrawTool::setKotaScale( int n )
+{
+	m_kotaScale = std::max( 1, n );
+	QSettings().setValue( QStringLiteral( "qRezy/kotaScale" ), m_kotaScale );
+	updateTip();
+}
+
+double DrawTool::heightOf( const CCVector3d& local ) const
+{
+	return local.z / m_scale - m_shift.z;
+}
+
+DrawTool::KotaGeom DrawTool::kotaGeom( const CCVector3d& tip, const CCVector3d& U, const CCVector3d& V, int side, int fmt, int scale ) const
+{
+	// rozměry v mm na papíře (podle výkresu uživatele v 1:70: čára 0,70 m, text 0,18 m)
+	const double f = scale / 1000.0 * m_scale; // mm → lokální jednotky
+	const double s = side < 0 ? -1.0 : 1.0;
+	auto P = [&]( double x, double y ) { return tip + U * ( x * f ) + V * ( y * f ); };
+	KotaGeom g;
+	const double halfBase = 5.05;
+	const double arm = 2.65;
+	const double stem = 5.9;
+	const double shelf = 8.05;
+	const double th = 2.5;
+	const double gap = 0.7;
+	g.segs = { P( -halfBase, 0 ), P( halfBase, 0 ),
+	           P( -arm, arm ), tip, tip, P( arm, arm ),
+	           tip, P( 0, stem ), P( 0, stem ), P( s * shelf, stem ) };
+	g.textH = th * f;
+	const double x0 = s > 0 ? 0.25 : -shelf;
+	const double h = heightOf( tip );
+	const double zero = m_zeroProvider ? m_zeroProvider() : 0.0;
+	const QString bpv = QString::number( h, 'f', 3 );
+	const double r = h - zero;
+	const QString loc = std::abs( r ) < 0.0005 ? QStringLiteral( "±0.000" ) : ( ( r > 0 ? QStringLiteral( "+" ) : QStringLiteral( "-" ) ) + QString::number( std::abs( r ), 'f', 3 ) );
+	if ( fmt == 0 )
+	{
+		g.texts << bpv;
+		g.textPos.push_back( P( x0, stem + gap ) );
+	}
+	else if ( fmt == 1 )
+	{
+		g.texts << loc;
+		g.textPos.push_back( P( x0, stem + gap ) );
+	}
+	else
+	{
+		g.texts << loc << bpv; // místní nad poličkou, Bpv pod ní
+		g.textPos.push_back( P( x0, stem + gap ) );
+		g.textPos.push_back( P( x0, stem - gap - th ) );
+	}
+	return g;
+}
+
+DrawTool::KotaGeom DrawTool::kotaGeom( const ccPolyline* poly ) const
+{
+	const CCVector3d tip = CCVector3d::fromArray( poly->getPoint( 0 )->u );
+	const CCVector3d U( poly->getMetaData( "qRezy.kux" ).toDouble(), poly->getMetaData( "qRezy.kuy" ).toDouble(), poly->getMetaData( "qRezy.kuz" ).toDouble() );
+	const CCVector3d V( poly->getMetaData( "qRezy.kvx" ).toDouble(), poly->getMetaData( "qRezy.kvy" ).toDouble(), poly->getMetaData( "qRezy.kvz" ).toDouble() );
+	return kotaGeom( tip, U, V, poly->getMetaData( "qRezy.kotaSide" ).toInt(), poly->getMetaData( "qRezy.kotaFmt" ).toInt(), std::max( 1, poly->getMetaData( "qRezy.kotaScale" ).toInt() ) );
+}
+
+ccPolyline* DrawTool::addKota( const CCVector2d& P, int side, int fmt, int scale, UndoItem* undo, const ccPolyline* like )
+{
+	ccPolyline* poly = addText( P, QString(), undo );
+	if ( !poly )
+	{
+		return nullptr;
+	}
+	poly->setName( QStringLiteral( "Kóta" ) );
+	poly->setMetaData( "qRezy.kota", true );
+	poly->setMetaData( "qRezy.kotaSide", side < 0 ? -1 : 1 );
+	poly->setMetaData( "qRezy.kotaFmt", fmt );
+	poly->setMetaData( "qRezy.kotaScale", scale );
+	CCVector3d U = m_frame.U;
+	CCVector3d V = m_frame.V;
+	if ( like && isKota( like ) )
+	{
+		U = CCVector3d( like->getMetaData( "qRezy.kux" ).toDouble(), like->getMetaData( "qRezy.kuy" ).toDouble(), like->getMetaData( "qRezy.kuz" ).toDouble() );
+		V = CCVector3d( like->getMetaData( "qRezy.kvx" ).toDouble(), like->getMetaData( "qRezy.kvy" ).toDouble(), like->getMetaData( "qRezy.kvz" ).toDouble() );
+	}
+	poly->setMetaData( "qRezy.kux", U.x );
+	poly->setMetaData( "qRezy.kuy", U.y );
+	poly->setMetaData( "qRezy.kuz", U.z );
+	poly->setMetaData( "qRezy.kvx", V.x );
+	poly->setMetaData( "qRezy.kvy", V.y );
+	poly->setMetaData( "qRezy.kvz", V.z );
+	return poly;
+}
+
 void DrawTool::setReference( int viewId, bool snap )
 {
 	m_refView = viewId;
@@ -4639,6 +4816,27 @@ void DrawTool::refreshLayer()
 			{
 				continue;
 			}
+			if ( isKota( poly ) )
+			{
+				const KotaGeom g = kotaGeom( poly );
+				const ccColor::Rgb kc = ( ch == m_sel || isSelected( poly ) ) ? ccColor::Rgb( 255, 220, 0 ) : ccColor::Rgb( 0, 200, 200 );
+				RezLayer::Item li;
+				li.segs = g.segs;
+				li.color = kc;
+				m_layer->items.push_back( li );
+				for ( int k = 0; k < g.texts.size(); ++k )
+				{
+					RezLayer::Item ti;
+					// displayText bere y jako horní okraj písma → posun o výšku textu (spodek textu = počátek jako v DGN)
+					ti.P = g.textPos[static_cast<size_t>( k )] + up * ( g.textH * 0.9 );
+					ti.up = up;
+					ti.height = g.textH;
+					ti.text = g.texts[k];
+					ti.color = kc;
+					m_layer->items.push_back( ti );
+				}
+				continue;
+			}
 			RezLayer::Item it;
 			it.P = CCVector3d::fromArray( poly->getPoint( 0 )->u );
 			it.up = up;
@@ -4829,6 +5027,57 @@ std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTa
 			continue; // jen doplněné prvky
 		}
 		const int view = poly->hasMetaData( Drawing::MetaView ) ? poly->getMetaData( Drawing::MetaView ).toInt() : 0;
+		if ( view >= 0 && isKota( poly ) && poly->size() > 0 )
+		{
+			const KotaGeom g = kotaGeom( poly );
+			DgnV7::Symbology ks;
+			ks.level = m_kotaLevel;
+			ks.color = m_kotaColor;
+			bool ok = true;
+			std::vector<DgnV7::Point2> P2( g.segs.size() );
+			for ( size_t k = 0; k < g.segs.size() && ok; ++k )
+			{
+				ok = map( view, g.segs[k], P2[k] );
+			}
+			if ( !ok )
+			{
+				continue;
+			}
+			// základní čára, šipka (lomená), svislice s poličkou (lomená)
+			DgnV7::Element base;
+			base.sym = ks;
+			base.pts = { P2[0], P2[1] };
+			out.push_back( base );
+			DgnV7::Element arrow;
+			arrow.sym = ks;
+			arrow.pts = { P2[2], P2[3], P2[5] };
+			out.push_back( arrow );
+			DgnV7::Element stem;
+			stem.sym = ks;
+			stem.pts = { P2[6], P2[7], P2[9] };
+			out.push_back( stem );
+			// výška textu v metrech výkresu: z mapování dvou bodů svislice
+			const double stemLen = std::hypot( P2[7].x - P2[6].x, P2[7].y - P2[6].y );
+			const double stemLocal = ( g.segs[7] - g.segs[6] ).norm();
+			const double th = stemLocal > 0 ? g.textH * stemLen / stemLocal : 0.0;
+			for ( int k = 0; k < g.texts.size(); ++k )
+			{
+				DgnV7::Element t;
+				t.isText = true;
+				t.sym = ks;
+				t.textHeight = th;
+				DgnV7::Point2 TP;
+				if ( !map( view, g.textPos[static_cast<size_t>( k )], TP ) )
+				{
+					continue;
+				}
+				t.pts.push_back( TP );
+				const QByteArray bytes = codec ? codec->fromUnicode( g.texts[k] ) : g.texts[k].toLatin1();
+				t.text = std::string( bytes.constData(), static_cast<size_t>( bytes.size() ) );
+				out.push_back( t );
+			}
+			continue;
+		}
 		if ( view >= 0 && isText( poly ) && poly->size() > 0 )
 		{
 			DgnV7::Element t;

@@ -24,6 +24,7 @@ public:
 		QString text2;       //!< druhý text za prvním (kód bodu)
 		ccColor::Rgb color2 = ccColor::Rgb( 0, 230, 255 );
 		bool background = false; //!< tmavý podklad pod textem
+		std::vector<CCVector3d> segs; //!< úsečky po dvojicích (značka kóty), barva color
 	};
 
 	RezLayer()

@@ -55,6 +55,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | křížek | Mazat | 8 / Del | klik na čáru (s výběrem smaže hned výběr) |
 | metr | Měřit | D | dva body → délka, vodorovně/výškově (ΔX/ΔY), úhel |
 | A | Vložit text | | klik a napsat (např. naměřenou výšku); přesun, kopie, mazání jako u čar; do DGN na hladinu z okna Uložit |
+| kačena | Kóta (výšková) | | jen v řezu a pohledu: klik na bod = hrot šipky (uchopí se na čáry a body), druhý klik = strana poličky (vlevo / vpravo). Zápis v pásu: *Bpv* (394.410), *místní* k ±0,000 z panelu (+3.315 / ±0.000 / -0.450), *oboje* (místní nad poličkou, Bpv pod ní); 3 desetinná místa. Velikost značky a textu podle měřítka výkresu (pole *1 :*, výchozí 1:70 = základní čára 0,70 m, text 0,175 m). Přesun / kopie / Upravit prvek – výška se přepočítá podle nové polohy. Do DGN čáry + text, hladina 16 a barva 135 (okno Uložit) |
 | šipka zpět | Zpět | Ctrl+Z | |
 | pravý úhel | Orto | F8 | podle natočení pohledu |
 | zelený kříž | Trasování | F11 | podržte kurzor na konci/středu čáry → bod se „získá“ (zelené +); pomocné čáry vodorovně/svisle od získaných bodů i od posledního bodu, **v prodloužení čáry**, na jejímž konci/středu je získaný bod, a **šikmo přes poslední dva získané body**; uchopí se na ně, na jejich průsečíky i na průsečík s čarou; funguje i s Ortho a s kolmicí (Enter); napsané číslo = vzdálenost od získaného bodu |
@@ -98,7 +99,8 @@ Levé tažení = otáčení, kolečko = zoom.
 Soubor „číslo Y X [Z] [kód]“ v S-JTSK (mezery, tabulátory nebo středníky). Body se ukážou v půdorysu
 se značkou, číslem a kódem a dá se na ně uchopit. Body s výškou se v řezu (±1 m od roviny)
 a v pohledu (do hloubky pohledu) samy sklopí do roviny. Do DGN řezů a pohledů se ukládají jako
-malý křížek s číslem na vlastní hladině (okno Uložit, výchozí hladina 16); do půdorysu ne.
+malý křížek s číslem na vlastní hladině (okno Uložit, výchozí hladina 16, křížek 4 cm = polovina ramene 0,02 m); do půdorysu ne.
+Výšky si v řezech vynesete nástrojem **Kóta** jen tam, kde je potřebujete.
 Jednotlivé soubory jdou vypnout zaškrtnutím v seznamu objektů (skupina *Výkres (Řezy)*).
 Barvy značky, čísla a kódu a tmavý podklad pod textem: menu bodů → *Barvy bodů…*
 
