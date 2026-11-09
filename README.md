@@ -29,6 +29,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 
 - **Zobrazení → Vzhled**: *Světlý (původní)*, *AutoCAD tmavý*, *Geoprim* – přebarví celý CloudCompare.
 - **Zobrazení → Pozadí kresby**: *Tmavé / Světlé* – když mračno na tmavém pozadí není dobře vidět.
+- **Zobrazení → Zakryté čáry**: *jemné / střední / hrubé čárky* – délka čárek zakrytých čar na obrazovce (výchozí jemné; dřív bylo hrubé). Do DGN se nepřenáší, tam platí styl čáry z hladiny.
 - **Zobrazení → Pracovní režim**: schová lišty a panely CloudCompare (DB Tree, vlastnosti, konzole); znovu kliknout = vrátit. Pamatuje si to i po dalším spuštění.
 - **Řezy a pohledy / Patra → Přejmenovat**: přejmenuje aktivní patro (i v názvu souboru) nebo řez/pohled.
 - **Patra → ±0 z mračna**: odhad výšky podlahy 1. patra.

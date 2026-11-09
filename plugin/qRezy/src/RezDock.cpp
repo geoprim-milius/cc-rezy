@@ -1102,6 +1102,18 @@ void RezDock::buildToolbar()
 		RibbonColumn bc = b.column();
 		bc.addSmall( m_bgDarkAct );
 		bc.addSmall( m_bgLightAct );
+		RibbonGroup dg = r->addGroup( pView, QStringLiteral( "Zakryté čáry" ) );
+		auto* dash = new QComboBox;
+		dash->addItem( QStringLiteral( "jemné čárky" ), 1 );
+		dash->addItem( QStringLiteral( "střední čárky" ), 2 );
+		dash->addItem( QStringLiteral( "hrubé čárky" ), 4 );
+		dash->setToolTip( QStringLiteral( "Délka čárek a mezer zakrytých čar na obrazovce (do DGN se nepřenáší – tam platí styl čáry z hladiny)" ) );
+		dash->setCurrentIndex( std::max( 0, dash->findData( RezLine::dashFactor() ) ) );
+		connect( dash, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this, dash]( int i ) {
+			RezLine::setDashFactor( dash->itemData( i ).toInt() );
+			m_draw->refreshDisplay(); // 3D náhled se překreslí při další změně pohledu
+		} );
+		dg.column().widget( dash );
 		RibbonGroup w = r->addGroup( pView, QStringLiteral( "Okno" ) );
 		w.addBig( m_workAct );
 		w.column().addSmall( panelA );
