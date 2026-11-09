@@ -237,9 +237,9 @@ namespace
 			{
 				code = e->key() - Qt::Key_0;
 			}
-			if ( code < 0 && e->key() == Qt::Key_Q )
+			if ( code < 0 && e->key() >= Qt::Key_A && e->key() <= Qt::Key_Z )
 			{
-				code = Qt::Key_Q;
+				code = e->key();
 			}
 			if ( code >= 0 )
 			{
@@ -804,6 +804,29 @@ ccPolyline* DrawTool::pickLine( const QPoint& pos, CCVector2d* clicked ) const
 		{
 			bestD = d;
 			best = s.poly;
+		}
+		if ( s.poly && isText( s.poly ) && !isKota( s.poly ) && s.poly != best )
+		{
+			// text: klik kamkoli na písmena (obdélník od počátku doprava a nahoru)
+			// výška na obrazovce: skutečná, ale aspoň 11 px (jako RezLayer)
+			const double th = std::max( QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale, 11.0 / 1.35 * pixelSize() );
+			CCVector2d upv( 0.0, 1.0 );
+			if ( m_frame.plan )
+			{
+				const double a = viewAngle();
+				upv = CCVector2d( -std::sin( a ), std::cos( a ) );
+			}
+			const CCVector2d rightv( upv.y, -upv.x );
+			const double w = std::max( 1, s.poly->getMetaData( "qRezy.text" ).toString().size() ) * 0.75 * th;
+			const CCVector2d q = P - s.a;
+			const double tol = ClickTolerance * pixelSize();
+			const double x = q.dot( rightv );
+			const double y = q.dot( upv );
+			if ( x >= -tol && x <= w + tol && y >= -tol && y <= th * 1.2 + tol )
+			{
+				bestD = 0.0;
+				best = s.poly;
+			}
 		}
 		if ( isKota( s.poly ) && s.poly != best )
 		{
@@ -2532,6 +2555,41 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		keepCrossCursor();
 		break;
 	}
+	case Mode::EditText:
+	{
+		ccPolyline* p = pickLine( pos );
+		if ( !p || !isText( p ) || isKota( p ) )
+		{
+			m_flash = QStringLiteral( "Klikněte na text" );
+			break;
+		}
+		select( p );
+		redraw2D();
+		bool ok = false;
+		const QString old = p->getMetaData( "qRezy.text" ).toString();
+		const QString txt = QInputDialog::getText( qobject_cast<QWidget*>( m_winObject ), QStringLiteral( "Upravit text" ), QStringLiteral( "Text:" ), QLineEdit::Normal, old, &ok );
+		select( nullptr );
+		if ( ok && !txt.trimmed().isEmpty() && txt != old )
+		{
+			const CCVector2d P = m_frame.toUV( CCVector3d::fromArray( p->getPoint( 0 )->u ) );
+			UndoItem u;
+			ccPolyline* n = addText( P, txt, &u );
+			if ( n )
+			{
+				for ( const char* key : { "qRezy.textLevel", "qRezy.textH", "qRezy.imported" } )
+				{
+					if ( p->hasMetaData( key ) )
+					{
+						n->setMetaData( key, p->getMetaData( key ) );
+					}
+				}
+			}
+			removeLine( p, &u );
+			pushUndo( std::move( u ) );
+		}
+		keepCrossCursor();
+		break;
+	}
 	case Mode::Offset:
 	{
 		if ( m_step == 0 )
@@ -3489,6 +3547,14 @@ void DrawTool::showToolMenu( int group )
 			{ 0, "Přisunout  (Move To Contact)", false, Mode::Line },
 		};
 	}
+	else if ( group == Qt::Key_A )
+	{
+		title = QStringLiteral( "Text" );
+		items = {
+			{ Qt::Key_A, "Nový text  (Place Text)", true, Mode::Text },
+			{ Qt::Key_B, "Upravit text  (Edit Text)", true, Mode::EditText },
+		};
+	}
 	else
 	{
 		title = QStringLiteral( "Úpravy" );
@@ -3508,12 +3574,12 @@ void DrawTool::showToolMenu( int group )
 	}
 	KeyMenu menu( qobject_cast<QWidget*>( m_winObject ) );
 	menu.setTitle( title );
-	QAction* head = menu.addAction( QStringLiteral( "%1 (%2)" ).arg( title ).arg( group ) );
+	QAction* head = menu.addAction( QStringLiteral( "%1 (%2)" ).arg( title, group == Qt::Key_A ? QStringLiteral( "A" ) : QString::number( group ) ) );
 	head->setEnabled( false );
 	menu.addSeparator();
 	for ( const Item& it : items )
 	{
-		const QString key = ( it.key == Qt::Key_Q ) ? QStringLiteral( "Q" ) : QString::number( it.key );
+		const QString key = ( it.key >= Qt::Key_A && it.key <= Qt::Key_Z ) ? QString( QChar( it.key ) ) : QString::number( it.key );
 		QAction* a = menu.addAction( QStringLiteral( "%1\t%2" ).arg( QString::fromUtf8( it.label ), key ) );
 		a->setEnabled( it.enabled );
 		const Mode m = it.mode;
@@ -3690,6 +3756,9 @@ void DrawTool::updateStatus()
 		break;
 	case Mode::Text:
 		prompt = QStringLiteral( "Text: klikněte, kam text vložit (levý dolní roh)" );
+		break;
+	case Mode::EditText:
+		prompt = QStringLiteral( "Upravit text: klikněte na text" );
 		break;
 	case Mode::BreakLine:
 		prompt = m_step == 0 ? QStringLiteral( "Rozdělit čarou: první bod řezné čáry" )
@@ -4265,6 +4334,11 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		{
 			if ( event->type() == QEvent::KeyPress )
 				setMode( Mode::Line );
+		}
+		else if ( plain && k == Qt::Key_A )
+		{
+			if ( event->type() == QEvent::KeyPress )
+				QTimer::singleShot( 0, this, [this]() { showToolMenu( Qt::Key_A ); } );
 		}
 		else if ( plain && k == Qt::Key_D )
 		{
@@ -5002,8 +5076,7 @@ void DrawTool::refreshLayer()
 				for ( int k = 0; k < g.texts.size(); ++k )
 				{
 					RezLayer::Item ti;
-					// displayText bere y jako horní okraj písma → posun o výšku textu (spodek textu = počátek jako v DGN)
-					ti.P = g.textPos[static_cast<size_t>( k )] + up * ( g.textH * 0.9 );
+					ti.P = g.textPos[static_cast<size_t>( k )]; // levý dolní roh (RezLayer posune o výšku písma)
 					ti.up = up;
 					ti.height = g.textH;
 					ti.text = g.texts[k];
@@ -5013,11 +5086,11 @@ void DrawTool::refreshLayer()
 				continue;
 			}
 			RezLayer::Item it;
-			it.P = CCVector3d::fromArray( poly->getPoint( 0 )->u );
+			it.P = CCVector3d::fromArray( poly->getPoint( 0 )->u ); // levý dolní roh jako v DGN
 			it.up = up;
 			it.height = h;
 			it.text = ch->getMetaData( "qRezy.text" ).toString();
-			it.color = ( ch == m_sel ) ? ccColor::Rgb( 255, 220, 0 ) : ccColor::Rgb( 255, 235, 140 );
+			it.color = ( ch == m_sel || isSelected( poly ) ) ? ccColor::Rgb( 255, 220, 0 ) : ccColor::Rgb( 255, 235, 140 );
 			m_layer->items.push_back( it );
 		}
 	}

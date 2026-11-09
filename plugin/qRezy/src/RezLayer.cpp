@@ -127,8 +127,10 @@ void RezLayer::drawMeOnly( CC_DRAW_CONTEXT& context )
 			}
 			// skutečná velikost, ale aspoň čitelná
 			const double px = std::sqrt( ( S2.x - S.x ) * ( S2.x - S.x ) + ( S2.y - S.y ) * ( S2.y - S.y ) );
-			f.setPixelSize( static_cast<int>( std::max( 11.0, std::min( 300.0, px * 1.35 ) ) ) );
-			context.display->displayText( it.text, static_cast<int>( S.x ), static_cast<int>( S.y ), ccGenericGLDisplay::ALIGN_HLEFT | ccGenericGLDisplay::ALIGN_VBOTTOM, 0.0f, &col, &f );
+			const int fpx = static_cast<int>( std::max( 11.0, std::min( 300.0, px * 1.35 ) ) );
+			f.setPixelSize( fpx );
+			// displayText kreslí písmo pod zadaný bod → posun nahoru, aby P byl levý dolní roh textu (jako v DGN)
+			context.display->displayText( it.text, static_cast<int>( S.x ), static_cast<int>( S.y + 0.8 * fpx ), ccGenericGLDisplay::ALIGN_HLEFT | ccGenericGLDisplay::ALIGN_VBOTTOM, 0.0f, &col, &f );
 		}
 		else
 		{

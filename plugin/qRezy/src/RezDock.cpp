@@ -684,6 +684,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Delete, "delete", "Smazat", "Klik na čáru (s výběrem smaže výběr)." },
 		{ DrawTool::Mode::Measure, "measure", "Měřit", "Vzdálenost mezi dvěma body." },
 		{ DrawTool::Mode::Text, "text", "Text", "Klik a napsat (např. naměřenou výšku); přesun, kopie a mazání jako u čar." },
+		{ DrawTool::Mode::EditText, "text", "Upravit text", "Klik na text → změnit jeho obsah (A·B)." },
 		{ DrawTool::Mode::Kota, "kota", "Kóta", "Výšková kóta (kačena) v řezu nebo pohledu: klik na bod = hrot šipky, druhý klik = strana poličky. Výška v Bpv, místní (k ±0,000) nebo obojí; velikost podle měřítka výkresu. Přesun, kopie (výška se přepočítá) a mazání jako u čar." },
 	};
 	for ( const ToolDef& t : tools )
@@ -848,7 +849,7 @@ void RezDock::buildToolbar()
 	} );
 
 	// --- patra
-	QAction* nf = mkAct( "newfloor", QStringLiteral( "Nové patro" ), QStringLiteral( "Samostatný půdorys (předchozí patro se nabídne jako reference)" ) );
+	QAction* nf = mkAct( "newfloor", QStringLiteral( "Nové\npatro" ), QStringLiteral( "Samostatný půdorys (předchozí patro se nabídne jako reference)" ) );
 	connect( nf, &QAction::triggered, this, [this]() { newFloor(); focusView(); } );
 	QAction* floorEst = mkAct( "floor", QStringLiteral( "±0 z mračna" ), QStringLiteral( "Odhadnout výšku podlahy 1. patra (±0,000) z mračna" ) );
 	connect( floorEst, &QAction::triggered, this, &RezDock::zeroFromFloor );
@@ -1010,8 +1011,10 @@ void RezDock::buildToolbar()
 		g.addBig( T( DrawTool::Mode::Arc ), QStringLiteral( "E" ) );
 		RibbonColumn c = g.column();
 		c.widget( arcCombo );
-		c.addSmall( T( DrawTool::Mode::Text ) );
+		c.addSmall( T( DrawTool::Mode::Text ), QStringLiteral( "A·A" ) );
 		c.addSmall( T( DrawTool::Mode::Measure ), QStringLiteral( "D" ) );
+		RibbonColumn c2 = g.column();
+		c2.addSmall( T( DrawTool::Mode::EditText ), QStringLiteral( "A·B" ) );
 		RibbonGroup kg = r->addGroup( pDraw, QStringLiteral( "Kóta" ) );
 		kg.addBig( T( DrawTool::Mode::Kota ) );
 		RibbonColumn kc = kg.column();
@@ -1063,14 +1066,24 @@ void RezDock::buildToolbar()
 		QAction* pinVis = mkAct( "pin", QStringLiteral( "Zobrazit špendlík" ), QStringLiteral( "Špendlík ve výkresu (z prostředního kliku do 3D náhledu) zobrazit / skrýt" ), true );
 		pinVis->setChecked( true );
 		connect( pinVis, &QAction::toggled, this, [this]( bool on ) { m_draw->setPinVisible( on ); focusView(); } );
-		p.column().addSmall( pinVis );
+		RibbonColumn pc2 = p.column();
+		pc2.addSmall( pinVis );
+		pc2.addSmall( aux );
+		RibbonGroup bg = r->addGroup( pDraw, QStringLiteral( "Změřené body" ) );
+		bg.addBig( ptLoad );
+		RibbonColumn b1 = bg.column();
+		b1.addSmall( ptShow );
+		b1.addSmall( ptCodes );
+		b1.addSmall( ptColors );
+		RibbonColumn b2 = bg.column();
+		b2.addSmall( ptHeights );
+		b2.widget( ptHFmt );
 	}
 	const int pSec = r->addPage( QStringLiteral( "Řezy a pohledy" ) );
 	{
 		RibbonGroup g = r->addGroup( pSec, QStringLiteral( "Nový" ) );
 		g.addBig( sec, QStringLiteral( "S" ) );
 		g.addBig( fac );
-		g.addBig( aux );
 		RibbonGroup n = r->addGroup( pSec, QStringLiteral( "Pohled" ) );
 		RibbonColumn nc = n.column();
 		nc.addSmall( rot );
@@ -1084,48 +1097,14 @@ void RezDock::buildToolbar()
 		s2.addSmall( thPlus );
 		s2.addSmall( thMinus );
 		r->addGroup( pSec, QStringLiteral( "3D" ) ).addBig( v3 );
-	}
-	const int pFloor = r->addPage( QStringLiteral( "Patra" ) );
-	{
-		RibbonGroup g = r->addGroup( pFloor, QStringLiteral( "Patro" ) );
-		g.addBig( nf );
-		RibbonColumn c = g.column();
-		c.addSmall( topA );
-		c.addSmall( rename );
-		c.addSmall( floorEst );
-	}
-	const int pPts = r->addPage( QStringLiteral( "Body" ) );
-	{
-		RibbonGroup g = r->addGroup( pPts, QStringLiteral( "Změřené body" ) );
-		g.addBig( ptLoad );
-		RibbonColumn c = g.column();
-		c.addSmall( ptShow );
-		c.addSmall( ptCodes );
-		c.addSmall( ptColors );
-		RibbonColumn c2 = g.column();
-		c2.addSmall( ptHeights );
-		c2.widget( ptHFmt );
-	}
-	const int pOut = r->addPage( QStringLiteral( "Výstup" ) );
-	{
-		RibbonGroup g = r->addGroup( pOut, QStringLiteral( "Rozdělaná práce" ) );
-		g.addBig( proj );
-		g.addBig( openA );
-		RibbonGroup d = r->addGroup( pOut, QStringLiteral( "MicroStation V7" ) );
-		d.addBig( save );
-		d.addBig( impDgn );
-		d.column().addSmall( symb );
-	}
-	const int pView = r->addPage( QStringLiteral( "Zobrazení" ) );
-	{
-		RibbonGroup g = r->addGroup( pView, QStringLiteral( "Vzhled" ) );
-		RibbonColumn c = g.column();
-		c.widget( themeCombo );
-		RibbonGroup b = r->addGroup( pView, QStringLiteral( "Pozadí kresby" ) );
-		RibbonColumn bc = b.column();
-		bc.addSmall( m_bgDarkAct );
-		bc.addSmall( m_bgLightAct );
-		RibbonGroup dg = r->addGroup( pView, QStringLiteral( "Zakryté čáry" ) );
+		RibbonGroup fg = r->addGroup( pSec, QStringLiteral( "Patro" ) );
+		fg.addBig( nf );
+		RibbonColumn fc = fg.column();
+		fc.addSmall( topA );
+		fc.addSmall( floorEst );
+		RibbonGroup vg = r->addGroup( pSec, QStringLiteral( "Zobrazení" ) );
+		RibbonColumn v1 = vg.column();
+		v1.widget( themeCombo );
 		auto* dash = new QComboBox;
 		dash->addItem( QStringLiteral( "jemné čárky" ), 1 );
 		dash->addItem( QStringLiteral( "střední čárky" ), 2 );
@@ -1136,10 +1115,22 @@ void RezDock::buildToolbar()
 			RezLine::setDashFactor( dash->itemData( i ).toInt() );
 			m_draw->refreshDisplay(); // 3D náhled se překreslí při další změně pohledu
 		} );
-		dg.column().widget( dash );
-		RibbonGroup w = r->addGroup( pView, QStringLiteral( "Okno" ) );
-		w.addBig( m_workAct );
-		w.column().addSmall( panelA );
+		v1.widget( dash );
+		RibbonColumn v2 = vg.column();
+		v2.addSmall( m_bgDarkAct );
+		v2.addSmall( m_bgLightAct );
+		v2.addSmall( panelA );
+		vg.addBig( m_workAct );
+	}
+	const int pOut = r->addPage( QStringLiteral( "Výstup" ) );
+	{
+		RibbonGroup g = r->addGroup( pOut, QStringLiteral( "Rozdělaná práce" ) );
+		g.addBig( proj );
+		g.addBig( openA );
+		RibbonGroup d = r->addGroup( pOut, QStringLiteral( "MicroStation V7" ) );
+		d.addBig( save );
+		d.addBig( impDgn );
+		d.column().addSmall( symb );
 	}
 	r->finishPages();
 }

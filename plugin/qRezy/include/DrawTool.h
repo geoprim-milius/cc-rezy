@@ -84,7 +84,8 @@ public:
 		CloudLine,    //!< čára z mračna: klik u bodů řezu → proložená čára, potvrdit / zahodit
 		Kota,         //!< výšková kóta („kačena“) v řezu / pohledu: hrot, strana poličky
 		BreakLine,    //!< rozdělit řeznou čarou: 2 body → všechny protnuté čáry se rozdělí v průsečíku
-		Pin           //!< špendlík: klik → ukázat místo ve 3D náhledu
+		Pin,          //!< špendlík: klik → ukázat místo ve 3D náhledu
+		EditText      //!< upravit text: klik na text → nový obsah
 	};
 
 	enum class SnapType

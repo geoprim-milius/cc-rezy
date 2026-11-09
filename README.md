@@ -23,14 +23,14 @@ Rozbalte zip do nové složky a spusťte `CloudCompare.exe`.
 - **Reference**: jiné patro šedě pod kresbou (kontrola, zda jsou zdi nad sebou), *uchopit* = uchopovat i na jeho čáry
 
 ## Pás karet
-Karty **Kreslení**, **Řezy a pohledy**, **Patra**, **Body**, **Výstup**, **Zobrazení**; vlevo tlačítko **Kreslit**
+Karty **Kreslení** (kreslení, úpravy, pomůcky vč. pomocného řezu, změřené body), **Řezy a pohledy** (řezy, pohledy, patra, zobrazení), **Výstup**; vlevo tlačítko **Kreslit**
 (zapnout/vypnout kreslení – zapne se samo i výběrem nástroje). U tlačítek je drobně klávesa (Q, 3·1 = 3 a pak 1 …).
 Dvojklik na kartu pás sbalí / rozbalí.
 
-- **Zobrazení → Vzhled**: *Světlý (původní)*, *AutoCAD tmavý*, *Geoprim* – přebarví celý CloudCompare.
-- **Zobrazení → Pozadí kresby**: *Tmavé / Světlé* – když mračno na tmavém pozadí není dobře vidět.
-- **Zobrazení → Zakryté čáry**: *jemné / střední / hrubé čárky* – délka čárek zakrytých čar na obrazovce (výchozí jemné; dřív bylo hrubé). Do DGN se nepřenáší, tam platí styl čáry z hladiny.
-- **Zobrazení → Pracovní režim**: schová lišty a panely CloudCompare (DB Tree, vlastnosti, konzole); znovu kliknout = vrátit. Pamatuje si to i po dalším spuštění.
+- **Řezy a pohledy → Zobrazení → Vzhled**: *Světlý (původní)*, *AutoCAD tmavý*, *Geoprim* – přebarví celý CloudCompare.
+- **Řezy a pohledy → Zobrazení → Pozadí kresby**: *Tmavé / Světlé* – když mračno na tmavém pozadí není dobře vidět.
+- **Řezy a pohledy → Zobrazení → Zakryté čáry**: *jemné / střední / hrubé čárky* – délka čárek zakrytých čar na obrazovce (výchozí jemné; dřív bylo hrubé). Do DGN se nepřenáší, tam platí styl čáry z hladiny.
+- **Řezy a pohledy → Zobrazení → Pracovní režim**: schová lišty a panely CloudCompare (DB Tree, vlastnosti, konzole); znovu kliknout = vrátit. Pamatuje si to i po dalším spuštění.
 - **Řezy a pohledy / Patra → Přejmenovat**: přejmenuje aktivní patro (i v názvu souboru) nebo řez/pohled.
 - **Patra → ±0 z mračna**: odhad výšky podlahy 1. patra.
 - **Výstup → Otevřít**: otevřít mračno nebo uloženou práci (.bin).
@@ -56,7 +56,8 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | čáry s červenou | Rozdělit čarou | | řezná čára 2 body → všechny čáry, které protne, se v průsečíku rozdělí (nic se nemaže); průsečíky se ukazují červeně, počet v nápovědě; jeden krok Zpět |
 | křížek | Mazat | 8 / Del | klik na čáru (s výběrem smaže hned výběr) |
 | metr | Měřit | D | dva body → délka, vodorovně/výškově (ΔX/ΔY), úhel |
-| A | Vložit text | | klik a napsat (např. naměřenou výšku); přesun, kopie, mazání jako u čar; do DGN na hladinu z okna Uložit |
+| A | Vložit text | A → A | klik = levý dolní roh, napsat (např. naměřenou výšku); přesun (3·2) a kopie (3·1) – stačí kliknout na písmena; mazání jako u čar; do DGN na hladinu z okna Uložit |
+| A | Upravit text | A → B | klik na text → změnit jeho obsah |
 | kačena | Kóta (výšková) | | jen v řezu a pohledu: klik na bod = hrot šipky (uchopí se na čáry a body), druhý klik = strana poličky (vlevo / vpravo). Zápis v pásu: *Bpv* (394.410), *místní* k ±0,000 z panelu (+3.315 / ±0.000 / -0.450), *oboje* (místní nad poličkou, Bpv pod ní); 3 desetinná místa. Velikost značky a textu podle měřítka výkresu (pole *1 :*, výchozí 1:70 = základní čára 0,70 m, text 0,175 m). Přesun / kopie / Upravit prvek – výška se přepočítá podle nové polohy. Do DGN čáry + text, hladina 16 a barva 135 (okno Uložit) |
 | šipka zpět | Zpět | Ctrl+Z | |
 | pravý úhel | Orto | F8 | podle natočení pohledu |
