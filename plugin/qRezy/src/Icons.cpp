@@ -445,6 +445,27 @@ namespace Icons
 				p.drawText( QPointF( 13, 9 ), QStringLiteral( "1" ) );
 				p.drawText( QPointF( 24, 24 ), QStringLiteral( "2" ) );
 			}
+			else if ( n == "breakline" )
+			{
+				// dvě rozdělené čáry a červená řezná čára
+				p.setPen( QPen( Ink, 1.8 ) );
+				p.drawLine( QPointF( 3, 10 ), QPointF( 14, 10 ) );
+				p.drawLine( QPointF( 18, 10 ), QPointF( 29, 10 ) );
+				p.drawLine( QPointF( 3, 22 ), QPointF( 14, 22 ) );
+				p.drawLine( QPointF( 18, 22 ), QPointF( 29, 22 ) );
+				p.setPen( QPen( QColor( 230, 60, 60 ), 1.6, Qt::DashLine ) );
+				p.drawLine( QPointF( 16, 3 ), QPointF( 16, 29 ) );
+			}
+			else if ( n == "pin" )
+			{
+				// špendlík: jehla a kulatá hlavička
+				p.setPen( QPen( Ink, 1.8 ) );
+				p.drawLine( QPointF( 16, 16 ), QPointF( 16, 30 ) );
+				p.setPen( QPen( QColor( 150, 20, 20 ), 1.2 ) );
+				p.setBrush( QColor( 230, 50, 50 ) );
+				p.drawEllipse( QPointF( 16, 10 ), 6.5, 6.5 );
+				p.setBrush( Qt::NoBrush );
+			}
 			else if ( n == "kota" )
 			{
 				// kačena: základní čára, šipka do V, svislice s poličkou, text

@@ -120,7 +120,7 @@ private:
 	void editSymbology();
 	void focusView();
 	bool ensure3D( bool aux = false ); //!< aux = samostatné okno pomocného řezu
-	void show3DAt( double x, double y, double z );
+	void show3DAt( double x, double y, double z, bool pin = true );
 	void refresh3DLines();
 	double planZLocal() const;
 

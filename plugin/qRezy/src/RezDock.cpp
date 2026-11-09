@@ -190,7 +190,7 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 		}
 	} );
 	connect( m_draw, &DrawTool::rotateViewRequested, this, [this]( double a ) { m_viewAngle = a; topView(); focusView(); } );
-	connect( m_draw, &DrawTool::show3DRequested, this, &RezDock::show3DAt );
+	connect( m_draw, &DrawTool::show3DRequested, this, [this]( double x, double y, double z ) { show3DAt( x, y, z, true ); } );
 	connect( m_draw, &DrawTool::sectionDefined, this, &RezDock::createSection );
 	connect( m_draw, &DrawTool::thicknessWheel, this, &RezDock::thicknessStep );
 	connect( m_draw, &DrawTool::drawingChanged, this, &RezDock::refresh3DLines );
@@ -674,6 +674,8 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Offset, "offset", "Rovnoběžka", "Čára, strana; vzdálenost z pole vedle nebo napsat + Enter." },
 		{ DrawTool::Mode::Modify, "modify", "Upravit prvek", "Klik u konce čáry, pak nové místo konce." },
 		{ DrawTool::Mode::Break, "break", "Rozdělit", "2 body na čáře, část mezi nimi se smaže; stejný bod 2× = jen rozdělit." },
+		{ DrawTool::Mode::BreakLine, "breakline", "Rozdělit čarou", "Řezná čára 2 body → všechny čáry, které protne, se v průsečíku rozdělí (nic se nemaže). Průsečíky se ukazují červeně." },
+		{ DrawTool::Mode::Pin, "pin", "Špendlík", "Klik na místo ve výkresu → 3D náhled se na něj posune a přiblíží (natočení a nastavení zůstane) a ukáže špendlík. Totéž kdykoli prostředním kliknutím." },
 		{ DrawTool::Mode::Extend, "extend", "Prodloužit", "Klik u konce čáry, nový konec nebo celková délka." },
 		{ DrawTool::Mode::Corner, "corner", "Roh", "Dvě čáry do průsečíku; klikejte na části, které zůstanou." },
 		{ DrawTool::Mode::Trim, "trim", "Oříznout", "Hraniční čára, pak čáry k oříznutí / prodloužení." },
@@ -830,18 +832,18 @@ void RezDock::buildToolbar()
 	QAction* thMinus = mkAct( "minus", QStringLiteral( "Tenčí řez" ), QStringLiteral( "Tloušťka řezu − (Ctrl + kolečko)" ) );
 	connect( thMinus, &QAction::triggered, this, [this]() { thicknessStep( -1 ); focusView(); } );
 
-	QAction* v3 = mkAct( "3d", QStringLiteral( "3D náhled" ), QStringLiteral( "3D náhled kolem středu okna (klik kolečkem do výkresu ukáže místo)" ) );
+	QAction* v3 = mkAct( "3d", QStringLiteral( "3D náhled" ), QStringLiteral( "3D náhled kolem středu okna ve výchozím šikmém pohledu (klik kolečkem nebo Špendlík ukáže místo a pohled nechá)" ) );
 	connect( v3, &QAction::triggered, this, [this]()
 	{
 		CCVector3d P;
 		if ( m_draw->isActive() && m_draw->viewCenter( P ) )
 		{
-			show3DAt( P.x, P.y, isPlanView( m_activeView ) ? std::numeric_limits<double>::quiet_NaN() : P.z );
+			show3DAt( P.x, P.y, isPlanView( m_activeView ) ? std::numeric_limits<double>::quiet_NaN() : P.z, false );
 		}
 		else if ( ccGenericPointCloud* c = cloud() )
 		{
 			const CCVector3 C = c->getOwnBB().getCenter();
-			show3DAt( C.x, C.y, std::numeric_limits<double>::quiet_NaN() );
+			show3DAt( C.x, C.y, std::numeric_limits<double>::quiet_NaN(), false );
 		}
 	} );
 
@@ -1034,6 +1036,7 @@ void RezDock::buildToolbar()
 		RibbonColumn u3 = u.column();
 		u3.addSmall( T( DrawTool::Mode::DeleteVertex ), QStringLiteral( "7·8" ) );
 		u3.addSmall( T( DrawTool::Mode::Delete ), QStringLiteral( "8" ) );
+		u3.addSmall( T( DrawTool::Mode::BreakLine ) );
 		RibbonGroup h = r->addGroup( pDraw, QStringLiteral( "Hladina" ) );
 		RibbonColumn hc = h.column();
 		hc.widget( m_catCombo );
@@ -1043,6 +1046,7 @@ void RezDock::buildToolbar()
 		RibbonColumn pc = p.column();
 		pc.addSmall( m_orthoAct, QStringLiteral( "F8" ) );
 		pc.addSmall( m_trackAct, QStringLiteral( "F11" ) );
+		pc.addSmall( T( DrawTool::Mode::Pin ) );
 		pc.addSmall( undo, QStringLiteral( "Ctrl+Z" ) );
 	}
 	const int pSec = r->addPage( QStringLiteral( "Řezy a pohledy" ) );
@@ -2121,7 +2125,7 @@ void RezDock::refresh3DLines()
 	}
 }
 
-void RezDock::show3DAt( double x, double y, double z )
+void RezDock::show3DAt( double x, double y, double z, bool pin )
 {
 	if ( !ensure3D() )
 	{
@@ -2135,7 +2139,14 @@ void RezDock::show3DAt( double x, double y, double z )
 		// pohled z místa pozorovatele řezu
 		ang = std::atan2( -si.N.x, si.N.y );
 	}
-	m_view3D->focusOn( CCVector3d( x, y, zLocal ), ang );
+	if ( pin )
+	{
+		m_view3D->pinAt( CCVector3d( x, y, zLocal ), ang, std::isnan( z ) );
+	}
+	else
+	{
+		m_view3D->focusOn( CCVector3d( x, y, zLocal ), ang ); // tlačítko 3D náhled = výchozí šikmý pohled
+	}
 }
 
 // ================================================================ výstup

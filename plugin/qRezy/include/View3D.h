@@ -43,6 +43,10 @@ public:
 	//! zaměří pohled na okolí bodu (lokální souřadnice mračna), natočení podle pohledu
 	void focusOn( const CCVector3d& localP, double viewAngle );
 
+	//! špendlík: posune a přiblíží náhled na místo (natočení, perspektiva a ořez zůstanou), ukáže špendlík;
+	//! plan = klik v půdorysu (jehla přes celou výšku ořezu)
+	void pinAt( const CCVector3d& localP, double viewAngle, bool plan );
+
 	//! nakreslené čáry (kopie pro toto okno)
 	void setLines( const std::vector<Line>& lines );
 
@@ -82,6 +86,13 @@ private:
 	RangeSlider* m_rs[3] = { nullptr, nullptr, nullptr }; //!< šířka (U), hloubka (V), výška (Z) – metry od bodu
 	QLabel* m_rsLabel[3] = { nullptr, nullptr, nullptr };
 	QCheckBox* m_showLines = nullptr;
+	QCheckBox* m_showPoints = nullptr;
+	void clearPin();
+	void buildPin();
+	ccHObject* m_pinGroup = nullptr;
+	CCVector3d m_pinP;
+	bool m_pinPlan = false;
+	bool m_hasPin = false;
 	std::vector<Line> m_lines;            //!< čáry bez posunu
 	class QSlider* m_shift = nullptr;     //!< posun kresby (cm)
 	QLabel* m_shiftLabel = nullptr;

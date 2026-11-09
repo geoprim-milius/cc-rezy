@@ -53,6 +53,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | hranice | Oříznout k prvku | 7 → 5 | hraniční čára, pak čáry k oříznutí / prodloužení (klik na část, která zůstane) |
 | vrchol + | Vložit vrchol | 7 → 7 | klik na čáru, pak umístit nový vrchol (čára se zlomí) |
 | vrchol × | Smazat vrchol | 7 → 8 | klik na spoj dvou čar → jedna rovná čára |
+| čáry s červenou | Rozdělit čarou | | řezná čára 2 body → všechny čáry, které protne, se v průsečíku rozdělí (nic se nemaže); průsečíky se ukazují červeně, počet v nápovědě; jeden krok Zpět |
 | křížek | Mazat | 8 / Del | klik na čáru (s výběrem smaže hned výběr) |
 | metr | Měřit | D | dva body → délka, vodorovně/výškově (ΔX/ΔY), úhel |
 | A | Vložit text | | klik a napsat (např. naměřenou výšku); přesun, kopie, mazání jako u čar; do DGN na hladinu z okna Uložit |
@@ -69,7 +70,8 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | pravítko | Pomocný řez | | 2 body v půdorysu a strana → okno 3D náhledu se přepne do řezu jen pro měření (nic se neukládá) |
 | křížky 1 2 | Změřené body | | načíst seznam (číslo Y X [Z] [kód], S-JTSK), zobrazit/skrýt body (i uchopování), kódy |
 | dům | Nový pohled (fasáda) | | rovina před objektem: 2 body, pak strana pohledu; vidět je vše za rovinou do *Hloubky* |
-| kostka | 3D náhled | | |
+| kostka | 3D náhled | | výchozí šikmý pohled kolem středu okna (zároveň „reset“ 3D náhledu) |
+| špendlík | Špendlík | prostřední klik | klik na místo ve výkresu → 3D náhled se tam posune a přiblíží a ukáže červený špendlík; **natočení, perspektiva a nastavení posuvníků zůstanou**. V půdorysu jde jehla přes celou výšku ořezu, v řezu/pohledu ukazuje přesně na místo |
 | složka | Uložit rozdělanou práci | | projekt CloudCompare (.bin): mračno, kresba, řezy, patra, body, nastavení panelu i pohled |
 | disketa | Uložit V7 | | seed, hladiny, umístění řezů, výšky |
 
@@ -80,7 +82,7 @@ v menu se volí opět číslem horní řady. Funguje podle polohy klávesy, na �
 Esc = zrušit krok, bez rozdělané práce přepne na Výběr. Rychlost zoomu kolečkem: panel *Zoom kolečkem* (1,25× na zub ≈ MicroStation).
 
 Myš: **levé** = bod, **pravé** = reset, **Shift + tažení** nebo **tažení kolečkem** = posun, **kolečko** = zoom k myši,
-**prostřední kliknutí** = ukázat místo ve 3D náhledu. Esc = zrušit (2× = zpět na čáru).
+**prostřední kliknutí** = špendlík – ukázat místo ve 3D náhledu (pohled nechá, jak je). Esc = zrušit (2× = zpět na čáru).
 Kurzor je nitkový kříž (na výběr čáry se čtverečkem).
 
 Uchopení: konec (čtverec), průsečík (křížek), střed (trojúhelník), na čáře (kosočtverec).
@@ -89,7 +91,7 @@ Uchopení: konec (čtverec), průsečík (křížek), střed (trojúhelník), na
 Okno se zředěnou kopií mračna a nakreslenými čarami. Nahoře posuvníky **od – do**
 (jako Cross Section v CloudCompare): **Šířka**, **Hloubka** (podle natočení pohledu) a **Výška**
 v metrech od místa kliknutí; horní jezdec výšky doleva = uříznutá střecha.
-*výchozí* = ±1,5 m / ±2 m, *vše* = celé mračno, *čáry* = zobrazení nakreslených čar,
+*výchozí* = ±1,5 m / ±2 m, *vše* = celé mračno, *body* = zobrazení bodů mračna (vypnout = jen čáry), *čáry* = zobrazení nakreslených čar,
 posuvník *průhlednost* = mračno průhledně („rentgen“), čáry zůstanou plné.
 **Posun kresby**: kresba patra leží ve 3D na podlaze patra – posuvníkem ji posunete nahoru/dolů
 (např. na překlady). Kresba řezu je v rovině řezu, kresba pohledu na líci objektu (odhad z mračna) –

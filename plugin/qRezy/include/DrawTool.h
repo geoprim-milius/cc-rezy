@@ -82,7 +82,9 @@ public:
 		DeleteVertex, //!< smazat vrchol (sloučí dvě navazující čáry)
 		Arc,          //!< oblouk (3 body, metoda podle setArcMethod)
 		CloudLine,    //!< čára z mračna: klik u bodů řezu → proložená čára, potvrdit / zahodit
-		Kota          //!< výšková kóta („kačena“) v řezu / pohledu: hrot, strana poličky
+		Kota,         //!< výšková kóta („kačena“) v řezu / pohledu: hrot, strana poličky
+		BreakLine,    //!< rozdělit řeznou čarou: 2 body → všechny protnuté čáry se rozdělí v průsečíku
+		Pin           //!< špendlík: klik → ukázat místo ve 3D náhledu
 	};
 
 	enum class SnapType
@@ -347,6 +349,8 @@ private:
 	KotaGeom kotaGeom( const CCVector3d& tip, const CCVector3d& U, const CCVector3d& V, int side, int fmt, int scale ) const;
 	KotaGeom kotaGeom( const ccPolyline* poly ) const;
 	double heightOf( const CCVector3d& local ) const;
+	//! průsečíky řezné čáry A–B s čarami pohledu (čára, bod)
+	std::vector<std::pair<ccPolyline*, CCVector2d>> breakLineHits( const CCVector2d& A, const CCVector2d& B ) const;
 	ccPolyline* addKota( const CCVector2d& P, int side, int fmt, int scale, UndoItem* undo, const ccPolyline* like = nullptr );
 	bool pickingCursor() const;
 

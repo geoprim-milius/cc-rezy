@@ -2452,6 +2452,47 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		pushUndo( std::move( u ) );
 		break;
 	}
+	case Mode::BreakLine:
+	{
+		const CCVector2d P = cursorPoint( pos, st, m_step == 1 ? &m_base : nullptr );
+		if ( m_step == 0 )
+		{
+			m_base = P;
+			m_step = 1;
+		}
+		else if ( dist( P, m_base ) > 1e-9 )
+		{
+			const auto hits = breakLineHits( m_base, P );
+			UndoItem u;
+			for ( const auto& h : hits )
+			{
+				CCVector2d a;
+				CCVector2d b;
+				if ( !lineEnds( h.first, a, b ) )
+				{
+					continue;
+				}
+				const int cat = h.first->getMetaData( Drawing::MetaCategory ).toInt();
+				const bool hid = h.first->getMetaData( Drawing::MetaHidden ).toBool();
+				setLine( h.first, a, h.second, &u );
+				addLine( h.second, b, cat, hid, &u );
+			}
+			if ( !u.empty() )
+			{
+				pushUndo( std::move( u ) );
+			}
+			m_flash = QStringLiteral( "Rozděleno čar: %1" ).arg( hits.size() );
+			m_step = 0;
+		}
+		break;
+	}
+	case Mode::Pin:
+	{
+		CCVector2d P = cursorPoint( pos, st, nullptr );
+		const CCVector3d P3 = m_frame.to3D( P, false );
+		Q_EMIT show3DRequested( P3.x, P3.y, m_frame.plan ? std::numeric_limits<double>::quiet_NaN() : P3.z );
+		break;
+	}
 	case Mode::Kota:
 	{
 		if ( m_frame.plan )
@@ -3162,6 +3203,19 @@ void DrawTool::updateTip()
 				}
 			}
 		}
+		// rozdělit čarou: řezná čára + průsečíky
+		if ( m_mode == Mode::BreakLine && m_step == 1 )
+		{
+			const ccColor::Rgb red( 255, 60, 60 );
+			segment( m_base, m_cursor, red, 1.5f );
+			const double r = 4.0 * pixelSize();
+			for ( const auto& h : breakLineHits( m_base, m_cursor ) )
+			{
+				const CCVector2d& I = h.second;
+				segment( I + CCVector2d( -r, -r ), I + CCVector2d( r, r ), red, 2.0f );
+				segment( I + CCVector2d( -r, r ), I + CCVector2d( r, -r ), red, 2.0f );
+			}
+		}
 		// kóta: náhled značky (hrot na kurzoru, nebo pevný hrot a strana podle kurzoru)
 		if ( m_mode == Mode::Kota && !m_frame.plan )
 		{
@@ -3601,6 +3655,13 @@ void DrawTool::updateStatus()
 		break;
 	case Mode::Text:
 		prompt = QStringLiteral( "Text: klikněte, kam text vložit (levý dolní roh)" );
+		break;
+	case Mode::BreakLine:
+		prompt = m_step == 0 ? QStringLiteral( "Rozdělit čarou: první bod řezné čáry" )
+		                     : QStringLiteral( "Rozdělit čarou: druhý bod – protnuté čáry se rozdělí (%1)" ).arg( m_hasCursor ? breakLineHits( m_base, m_cursor ).size() : 0 );
+		break;
+	case Mode::Pin:
+		prompt = QStringLiteral( "Špendlík: klikněte na místo – ukáže se ve 3D náhledu (také prostřední klik kdekoli)" );
 		break;
 	case Mode::Kota:
 	{
@@ -4503,6 +4564,44 @@ ccPolyline* DrawTool::addText( const CCVector2d& P, const QString& text, UndoIte
 		undo->push_back( act );
 	}
 	return poly;
+}
+
+// ---------------------------------------------------------------- rozdělit řeznou čarou
+
+std::vector<std::pair<ccPolyline*, CCVector2d>> DrawTool::breakLineHits( const CCVector2d& A, const CCVector2d& B ) const
+{
+	std::vector<std::pair<ccPolyline*, CCVector2d>> hits;
+	const double L = dist( A, B );
+	if ( L < 1e-9 )
+	{
+		return hits;
+	}
+	const double minLen = 2.0 * pixelSize();
+	for ( const Segment& sg : collectSegments() )
+	{
+		if ( sg.ref || sg.arc || !sg.poly || isText( sg.poly ) || sg.poly->size() != 2 )
+		{
+			continue;
+		}
+		CCVector2d I;
+		if ( !lineIntersection( A, B, sg.a, sg.b, I ) )
+		{
+			continue;
+		}
+		const double u = paramOn( A, B, I );
+		const double t = paramOn( sg.a, sg.b, I );
+		const double len = dist( sg.a, sg.b );
+		if ( u < 0.0 || u > 1.0 || len < 1e-9 )
+		{
+			continue;
+		}
+		if ( t * len <= minLen || ( 1.0 - t ) * len <= minLen )
+		{
+			continue; // na konci čáry se nic nedělí
+		}
+		hits.emplace_back( sg.poly, I );
+	}
+	return hits;
 }
 
 // ---------------------------------------------------------------- výšková kóta („kačena“)

@@ -9,6 +9,7 @@
 
 #include <ccPointCloud.h>
 #include <ccPolyline.h>
+#include <ccSphere.h>
 
 #include <CloudSamplingTools.h>
 #include <ReferenceCloud.h>
@@ -257,6 +258,10 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 	resetBtn->setToolTip( QStringLiteral( "Šířka a hloubka ±1,5 m, výška ±2 m" ) );
 	auto* allBtn = new QPushButton( QStringLiteral( "vše" ) );
 	allBtn->setToolTip( QStringLiteral( "Celé mračno" ) );
+	m_showPoints = new QCheckBox( QStringLiteral( "body" ) );
+	m_showPoints->setChecked( QSettings().value( QStringLiteral( "qRezy/3dPoints" ), true ).toBool() );
+	m_showPoints->setToolTip( QStringLiteral( "Zobrazit body mračna (vypnout = jen nakreslené čáry)" ) );
+	side->addWidget( m_showPoints );
 	side->addWidget( m_showLines );
 	side->addWidget( resetBtn );
 	side->addWidget( allBtn );
@@ -362,6 +367,18 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		}
 		updateValueLabels();
 		applyClip();
+	} );
+	connect( m_showPoints, &QCheckBox::toggled, this, [this]( bool on )
+	{
+		QSettings().setValue( QStringLiteral( "qRezy/3dPoints" ), on );
+		if ( m_clone )
+		{
+			m_clone->setVisible( on );
+		}
+		if ( m_win )
+		{
+			m_win->redraw();
+		}
 	} );
 	connect( m_showLines, &QCheckBox::toggled, this, [this]( bool on )
 	{
@@ -536,7 +553,7 @@ bool View3D::setSource( ccPointCloud* cloud, unsigned maxPoints )
 	}
 	m_clone->setPointSize( 2 );
 	m_clone->setEnabled( true );
-	m_clone->setVisible( true );
+	m_clone->setVisible( !m_showPoints || m_showPoints->isChecked() );
 	m_clone->setDisplay( m_win );
 	if ( !m_blend )
 	{
@@ -681,6 +698,100 @@ void View3D::focusOn( const CCVector3d& P, double viewAngle )
 	m_win->setBaseViewMat( view );
 	m_win->updateConstellationCenterAndZoom( &box );
 	m_win->setPivotPoint( CCVector3d( P.x, P.y, P.z ), false, false );
+	m_win->redraw();
+	if ( !isVisible() )
+	{
+		show();
+	}
+}
+
+// ---------------------------------------------------------------- špendlík
+
+void View3D::clearPin()
+{
+	if ( m_pinGroup )
+	{
+		if ( m_win )
+		{
+			m_win->removeFromOwnDB( m_pinGroup );
+		}
+		delete m_pinGroup;
+		m_pinGroup = nullptr;
+	}
+}
+
+void View3D::buildPin()
+{
+	clearPin();
+	if ( !m_win || !m_hasPin || !m_hasFocus )
+	{
+		return;
+	}
+	// velikost podle viditelného okolí
+	const double r = std::max( { std::abs( m_rs[0]->v0() ), std::abs( m_rs[0]->v1() ), std::abs( m_rs[1]->v0() ), std::abs( m_rs[1]->v1() ) } ) * m_scale;
+	const double h = std::max( 0.15 * m_scale, 0.3 * r );
+	const double head = 0.12 * h;
+	CCVector3d bottom = m_pinP;
+	CCVector3d top = m_pinP + CCVector3d( 0, 0, h );
+	if ( m_pinPlan )
+	{
+		// půdorys: výška místa není dána → jehla přes celou výšku ořezu
+		bottom.z = m_focus.z + m_rs[2]->v0() * m_scale;
+		top.z = m_focus.z + m_rs[2]->v1() * m_scale + head;
+	}
+	m_pinGroup = new ccHObject( "pin" );
+	auto* verts = new ccPointCloud( "v" );
+	verts->reserve( 2 );
+	verts->addPoint( bottom.toFloat() );
+	verts->addPoint( top.toFloat() );
+	verts->setEnabled( false );
+	auto* needle = new ccPolyline( verts );
+	needle->addChild( verts );
+	needle->addPointIndex( 0, 2 );
+	needle->setColor( ccColor::Rgb( 255, 40, 40 ) );
+	needle->showColors( true );
+	needle->setWidth( 3 );
+	m_pinGroup->addChild( needle );
+	ccGLMatrix tr;
+	tr.setTranslation( ( top + CCVector3d( 0, 0, head ) ).toFloat() );
+	auto* ball = new ccSphere( static_cast<PointCoordinateType>( head ), &tr, QStringLiteral( "pin head" ), 16 );
+	ball->setColor( ccColor::Rgb( 255, 40, 40 ) );
+	ball->showColors( true );
+	m_pinGroup->addChild( ball );
+	m_pinGroup->setDisplay_recursive( m_win );
+	m_win->addToOwnDB( m_pinGroup );
+}
+
+void View3D::pinAt( const CCVector3d& P, double viewAngle, bool plan )
+{
+	if ( !m_win || !m_clone )
+	{
+		return;
+	}
+	m_pinP = P;
+	m_pinPlan = plan;
+	m_hasPin = true;
+	if ( !m_hasFocus || m_aux )
+	{
+		// první ukázání: výchozí šikmý pohled
+		focusOn( P, viewAngle );
+		buildPin();
+		m_win->redraw();
+		return;
+	}
+	// natočení, perspektivu, směr ořezu i šířky posuvníků nechat – jen přesunout ořez a kameru
+	m_focus = P;
+	updateRanges();
+	applyClip();
+	const double r = std::max( { std::abs( m_rs[0]->v0() ), std::abs( m_rs[0]->v1() ), std::abs( m_rs[1]->v0() ), std::abs( m_rs[1]->v1() ) } ) * m_scale;
+	const double zLo = P.z + m_rs[2]->v0() * m_scale;
+	const double zHi = P.z + m_rs[2]->v1() * m_scale;
+	CCVector3 mn( static_cast<PointCoordinateType>( P.x - r ), static_cast<PointCoordinateType>( P.y - r ), static_cast<PointCoordinateType>( zLo ) );
+	CCVector3 mx( static_cast<PointCoordinateType>( P.x + r ), static_cast<PointCoordinateType>( P.y + r ), static_cast<PointCoordinateType>( zHi ) );
+	ccBBox box( mn, mx, true );
+	m_win->updateConstellationCenterAndZoom( &box );
+	m_win->setPivotPoint( CCVector3d( P.x, P.y, P.z ), false, false );
+	buildPin();
 	m_win->redraw();
 	if ( !isVisible() )
 	{
