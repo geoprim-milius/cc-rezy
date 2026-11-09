@@ -71,7 +71,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | křížky 1 2 | Změřené body | | načíst seznam (číslo Y X [Z] [kód], S-JTSK), zobrazit/skrýt body (i uchopování), kódy |
 | dům | Nový pohled (fasáda) | | rovina před objektem: 2 body, pak strana pohledu; vidět je vše za rovinou do *Hloubky* |
 | kostka | 3D náhled | | výchozí šikmý pohled kolem středu okna (zároveň „reset“ 3D náhledu) |
-| špendlík | Špendlík | prostřední klik | klik na místo ve výkresu → 3D náhled se tam posune a přiblíží a ukáže červený špendlík; **natočení, perspektiva a nastavení posuvníků zůstanou**. V půdorysu jde jehla přes celou výšku ořezu, v řezu/pohledu ukazuje přesně na místo |
+| špendlík | Špendlík | prostřední klik | klik na místo ve výkresu → 3D náhled se tam posune a ukáže červený špendlík; **natočení, přiblížení, perspektiva a nastavení posuvníků zůstanou**. Skrýt: ve 3D náhledu zaškrtávátko *špendlík*, ve výkresu *Zobrazit špendlík* (Pomůcky). V půdorysu jde jehla přes celou výšku ořezu, v řezu/pohledu ukazuje přesně na místo |
 | složka | Uložit rozdělanou práci | | projekt CloudCompare (.bin): mračno, kresba, řezy, patra, body, nastavení panelu i pohled |
 | disketa | Uložit V7 | | seed, hladiny, umístění řezů, výšky |
 
@@ -91,7 +91,7 @@ Uchopení: konec (čtverec), průsečík (křížek), střed (trojúhelník), na
 Okno se zředěnou kopií mračna a nakreslenými čarami. Nahoře posuvníky **od – do**
 (jako Cross Section v CloudCompare): **Šířka**, **Hloubka** (podle natočení pohledu) a **Výška**
 v metrech od místa kliknutí; horní jezdec výšky doleva = uříznutá střecha.
-*výchozí* = ±1,5 m / ±2 m, *vše* = celé mračno, *body* = zobrazení bodů mračna (vypnout = jen čáry), *čáry* = zobrazení nakreslených čar,
+*výchozí* = ±1,5 m / ±2 m, *vše* = celé mračno, *body* = zobrazení bodů mračna (vypnout = jen čáry), *měřené body* = změřené body ze souboru (křížek a číslo; body bez výšky na podlaze patra), *špendlík*, *čáry* = zobrazení nakreslených čar,
 posuvník *průhlednost* = mračno průhledně („rentgen“), čáry zůstanou plné.
 **Posun kresby**: kresba patra leží ve 3D na podlaze patra – posuvníkem ji posunete nahoru/dolů
 (např. na překlady). Kresba řezu je v rovině řezu, kresba pohledu na líci objektu (odhad z mračna) –
@@ -106,7 +106,8 @@ a v pohledu (do hloubky pohledu) samy sklopí do roviny. Do DGN řezů a pohled�
 malý křížek s číslem na vlastní hladině (okno Uložit, výchozí hladina 16, křížek 4 cm = polovina ramene 0,02 m); do půdorysu ne.
 Výšky si v řezech vynesete nástrojem **Kóta** jen tam, kde je potřebujete.
 Jednotlivé soubory jdou vypnout zaškrtnutím v seznamu objektů (skupina *Výkres (Řezy)*).
-Barvy značky, čísla a kódu a tmavý podklad pod textem: menu bodů → *Barvy bodů…*
+**Výšky bodů** (karta Body): výška pod číslem bodu, *Bpv* nebo *místní* (k ±0,000 z panelu); jde vypnout zvlášť; jen na obrazovce, jen body s výškou.
+Barvy značky, čísla, kódu a výšky a tmavý podklad pod textem: *Barvy bodů…*
 
 ## Pomocný řez
 Natáhněte čáru v půdorysu a klikněte na stranu pohledu. Otevře se samostatné okno (3D náhled zůstane)

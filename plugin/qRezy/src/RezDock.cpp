@@ -861,7 +861,16 @@ void RezDock::buildToolbar()
 	ptShow->setChecked( true );
 	QAction* ptCodes = mkAct( "text", QStringLiteral( "Kódy bodů" ), QStringLiteral( "Zobrazit kódy bodů" ), true );
 	ptCodes->setChecked( true );
-	QAction* ptColors = mkAct( "theme", QStringLiteral( "Barvy bodů…" ), QStringLiteral( "Barva značky, čísla a kódu" ) );
+	QAction* ptHeights = mkAct( "kota", QStringLiteral( "Výšky bodů" ), QStringLiteral( "Zobrazit výšku pod číslem bodu (jen body s výškou; jen na obrazovce)" ), true );
+	ptHeights->setChecked( m_draw->showHeights() );
+	auto* ptHFmt = new QComboBox;
+	ptHFmt->addItem( QStringLiteral( "Bpv" ) );
+	ptHFmt->addItem( QStringLiteral( "místní" ) );
+	ptHFmt->setToolTip( QStringLiteral( "Výška bodu v Bpv, nebo místní k ±0,000 z panelu Řezy" ) );
+	ptHFmt->setCurrentIndex( m_draw->heightFormat() == 1 ? 1 : 0 );
+	connect( ptHeights, &QAction::toggled, this, [this, ptHFmt]( bool on ) { m_draw->setShowHeights( on, ptHFmt->currentIndex() ); focusView(); } );
+	connect( ptHFmt, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this, ptHeights]( int i ) { m_draw->setShowHeights( ptHeights->isChecked(), i ); focusView(); } );
+	QAction* ptColors = mkAct( "theme", QStringLiteral( "Barvy bodů…" ), QStringLiteral( "Barva značky, čísla, kódu a výšky" ) );
 	connect( ptColors, &QAction::triggered, this, [this]()
 	{
 		QSettings st;
@@ -876,7 +885,8 @@ void RezDock::buildToolbar()
 		};
 		const Entry entries[] = { { "qRezy/ptColMarker", "Značka (křížek):", QColor( 255, 90, 255 ) },
 		                          { "qRezy/ptColName", "Číslo bodu:", QColor( 255, 235, 0 ) },
-		                          { "qRezy/ptColCode", "Kód:", QColor( 0, 230, 255 ) } };
+		                          { "qRezy/ptColCode", "Kód:", QColor( 0, 230, 255 ) },
+		                          { "qRezy/ptColHeight", "Výška:", QColor( 150, 255, 150 ) } };
 		std::vector<std::pair<QString, QColor>> values;
 		for ( const Entry& e : entries )
 		{
@@ -914,6 +924,7 @@ void RezDock::buildToolbar()
 			}
 			st.setValue( QStringLiteral( "qRezy/ptBkg" ), bkg->isChecked() );
 			m_draw->refreshDisplay();
+			refresh3DLines();
 		}
 		focusView();
 	} );
@@ -944,6 +955,7 @@ void RezDock::buildToolbar()
 		{
 			const QSignalBlocker b( ptShow );
 			ptShow->setChecked( true );
+			refresh3DLines();
 		}
 		focusView();
 	} );
@@ -1048,6 +1060,10 @@ void RezDock::buildToolbar()
 		pc.addSmall( m_trackAct, QStringLiteral( "F11" ) );
 		pc.addSmall( T( DrawTool::Mode::Pin ) );
 		pc.addSmall( undo, QStringLiteral( "Ctrl+Z" ) );
+		QAction* pinVis = mkAct( "pin", QStringLiteral( "Zobrazit špendlík" ), QStringLiteral( "Špendlík ve výkresu (z prostředního kliku do 3D náhledu) zobrazit / skrýt" ), true );
+		pinVis->setChecked( true );
+		connect( pinVis, &QAction::toggled, this, [this]( bool on ) { m_draw->setPinVisible( on ); focusView(); } );
+		p.column().addSmall( pinVis );
 	}
 	const int pSec = r->addPage( QStringLiteral( "Řezy a pohledy" ) );
 	{
@@ -1086,6 +1102,9 @@ void RezDock::buildToolbar()
 		c.addSmall( ptShow );
 		c.addSmall( ptCodes );
 		c.addSmall( ptColors );
+		RibbonColumn c2 = g.column();
+		c2.addSmall( ptHeights );
+		c2.widget( ptHFmt );
 	}
 	const int pOut = r->addPage( QStringLiteral( "Výstup" ) );
 	{
@@ -2122,6 +2141,40 @@ void RezDock::refresh3DLines()
 	if ( v3 )
 	{
 		m_view3D->setLines( lines );
+		// změřené body ze souboru (bez výšky na podlaze patra)
+		std::vector<View3D::SurveyPt> sps;
+		const double floorL = c ? c->toLocal3d( CCVector3d( 0, 0, m_floorLevel->value() ) ).z : m_floorLevel->value();
+		if ( group )
+		{
+			for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+			{
+				ccHObject* ch = group->getChild( i );
+				if ( !ch->isA( CC_TYPES::POINT_CLOUD ) || !ch->hasMetaData( "qRezy.points" ) || !ch->isEnabled() )
+				{
+					continue;
+				}
+				auto* pc = static_cast<ccPointCloud*>( ch );
+				const QStringList names = pc->getMetaData( "qRezy.names" ).toStringList();
+				const QString hasZ = pc->getMetaData( "qRezy.hasZ" ).toString();
+				for ( unsigned k = 0; k < pc->size(); ++k )
+				{
+					View3D::SurveyPt sp;
+					sp.P = CCVector3d::fromArray( pc->getPoint( k )->u );
+					const bool z = ( static_cast<int>( k ) < hasZ.size() ) && hasZ[static_cast<int>( k )] == QChar( '1' );
+					if ( !z )
+					{
+						sp.P.z = floorL;
+					}
+					sp.name = ( static_cast<int>( k ) < names.size() ) ? names[static_cast<int>( k )] : QString();
+					sps.push_back( sp );
+				}
+			}
+		}
+		QSettings pst;
+		const QColor cm = pst.value( QStringLiteral( "qRezy/ptColMarker" ), QColor( 255, 90, 255 ) ).value<QColor>();
+		const QColor cn = pst.value( QStringLiteral( "qRezy/ptColName" ), QColor( 255, 235, 0 ) ).value<QColor>();
+		m_view3D->setSurveyPoints( sps, ccColor::Rgb( static_cast<ColorCompType>( cm.red() ), static_cast<ColorCompType>( cm.green() ), static_cast<ColorCompType>( cm.blue() ) ),
+		                           ccColor::Rgb( static_cast<ColorCompType>( cn.red() ), static_cast<ColorCompType>( cn.green() ), static_cast<ColorCompType>( cn.blue() ) ) );
 	}
 	if ( va )
 	{

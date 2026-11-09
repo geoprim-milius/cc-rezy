@@ -309,6 +309,8 @@ DrawTool::DrawTool( ccMainAppInterface* app, QObject* parent )
 	m_clSquare = st.value( QStringLiteral( "qRezy/clSquare" ), true ).toBool();
 	m_kotaFmt = std::max( 0, std::min( 2, st.value( QStringLiteral( "qRezy/kotaFormat" ), 0 ).toInt() ) );
 	m_kotaScale = std::max( 1, st.value( QStringLiteral( "qRezy/kotaScale" ), 70 ).toInt() );
+	m_showHeights = st.value( QStringLiteral( "qRezy/ptHeights" ), true ).toBool();
+	m_heightFmt = st.value( QStringLiteral( "qRezy/ptHeightFmt" ), 0 ).toInt();
 	m_category = Drawing::layerIdAt( 0 );
 }
 
@@ -4813,6 +4815,23 @@ void DrawTool::setShowPoints( bool on )
 	redraw2D();
 }
 
+void DrawTool::setShowHeights( bool on, int fmt )
+{
+	m_showHeights = on;
+	m_heightFmt = fmt;
+	QSettings st;
+	st.setValue( QStringLiteral( "qRezy/ptHeights" ), on );
+	st.setValue( QStringLiteral( "qRezy/ptHeightFmt" ), fmt );
+	redraw2D();
+}
+
+void DrawTool::setPinVisible( bool on )
+{
+	m_pinVisible = on;
+	refreshLayer();
+	redraw2D();
+}
+
 void DrawTool::setShowCodes( bool on )
 {
 	m_showCodes = on;
@@ -4888,6 +4907,8 @@ std::vector<DrawTool::VisPoint> DrawTool::framePoints( const DrawFrame& frame, s
 			vp.uv = frame.toUV( P );
 			vp.name = ( static_cast<int>( k ) < names.size() ) ? names[static_cast<int>( k )] : QString();
 			vp.code = ( static_cast<int>( k ) < codes.size() ) ? codes[static_cast<int>( k )] : QString();
+			vp.hasZ = z;
+			vp.zLocal = P.z;
 			out.push_back( vp );
 		}
 	}
@@ -4901,7 +4922,7 @@ void DrawTool::refreshLayer()
 		return;
 	}
 	m_layer->items.clear();
-	if ( m_hasPin )
+	if ( m_hasPin && m_pinVisible )
 	{
 		RezLayer::Item pi;
 		pi.P = m_pin3;
@@ -4920,6 +4941,7 @@ void DrawTool::refreshLayer()
 	const QColor cn = st.value( QStringLiteral( "qRezy/ptColName" ), QColor( 255, 235, 0 ) ).value<QColor>();
 	const QColor cc = st.value( QStringLiteral( "qRezy/ptColCode" ), QColor( 0, 230, 255 ) ).value<QColor>();
 	const bool bkg = st.value( QStringLiteral( "qRezy/ptBkg" ), true ).toBool();
+	const QColor ch3 = st.value( QStringLiteral( "qRezy/ptColHeight" ), QColor( 150, 255, 150 ) ).value<QColor>();
 	for ( const VisPoint& vp : visiblePoints() )
 	{
 		RezLayer::Item it;
@@ -4933,6 +4955,20 @@ void DrawTool::refreshLayer()
 		{
 			it.text2 = vp.code;
 			it.color2 = toRgb( cc );
+		}
+		if ( m_showHeights && vp.hasZ )
+		{
+			const double h = heightOf( CCVector3d( 0, 0, vp.zLocal ) );
+			if ( m_heightFmt == 1 )
+			{
+				const double r = h - ( m_zeroProvider ? m_zeroProvider() : 0.0 );
+				it.text3 = std::abs( r ) < 0.0005 ? QStringLiteral( "±0.000" ) : ( ( r > 0 ? QStringLiteral( "+" ) : QStringLiteral( "-" ) ) + QString::number( std::abs( r ), 'f', 3 ) );
+			}
+			else
+			{
+				it.text3 = QString::number( h, 'f', 3 );
+			}
+			it.color3 = toRgb( ch3 );
 		}
 		it.background = bkg;
 		m_layer->items.push_back( it );

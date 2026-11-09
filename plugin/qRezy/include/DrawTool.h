@@ -191,6 +191,12 @@ public:
 	//! překreslí popisky (po změně barev apod.)
 	void refreshDisplay() { redraw2D(); }
 	bool showCodes() const { return m_showCodes; }
+	//! výška bodu pod číslem: zapnuto, zápis 0 = Bpv, 1 = místní (k ±0)
+	void setShowHeights( bool on, int fmt );
+	bool showHeights() const { return m_showHeights; }
+	int heightFormat() const { return m_heightFmt; }
+	//! špendlík ve výkresu zobrazit / skrýt (poloha zůstane)
+	void setPinVisible( bool on );
 
 	//! střed okna v rovině kreslení (lokálně 3D)
 	bool viewCenter( CCVector3d& out ) const;
@@ -335,6 +341,8 @@ private:
 		CCVector2d uv;
 		QString name;
 		QString code;
+		bool hasZ = false;
+		double zLocal = 0.0;
 	};
 	std::vector<VisPoint> visiblePoints() const;
 	std::vector<VisPoint> framePoints( const DrawFrame& f, std::vector<CCVector3d>* local = nullptr ) const;
@@ -421,6 +429,9 @@ private:
 	class RezLayer* m_layer = nullptr; //!< popisky bodů a texty
 	bool m_showPoints = true;
 	bool m_showCodes = true;
+	bool m_showHeights = true;
+	int m_heightFmt = 0;
+	bool m_pinVisible = true;
 	int m_refView = -1;
 	std::vector<ccPolyline*> m_selSet; //!< výběr
 	bool m_winPressed = false;         //!< výběr: levé stisknuto

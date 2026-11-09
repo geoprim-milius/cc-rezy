@@ -1,5 +1,6 @@
 #include "View3D.h"
 #include "RezLine.h"
+#include "RezLayer.h"
 #include "DrawTool.h"
 
 #include "ccGLUtils.h"
@@ -261,8 +262,16 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 	m_showPoints = new QCheckBox( QStringLiteral( "body" ) );
 	m_showPoints->setChecked( QSettings().value( QStringLiteral( "qRezy/3dPoints" ), true ).toBool() );
 	m_showPoints->setToolTip( QStringLiteral( "Zobrazit body mračna (vypnout = jen nakreslené čáry)" ) );
+	m_showSurvey = new QCheckBox( QStringLiteral( "měřené body" ) );
+	m_showSurvey->setChecked( QSettings().value( QStringLiteral( "qRezy/3dSurvey" ), true ).toBool() );
+	m_showSurvey->setToolTip( QStringLiteral( "Změřené body načtené ze souboru (křížek a číslo); body bez výšky na podlaze patra" ) );
+	m_showPin = new QCheckBox( QStringLiteral( "špendlík" ) );
+	m_showPin->setChecked( true );
+	m_showPin->setToolTip( QStringLiteral( "Zobrazit špendlík" ) );
 	side->addWidget( m_showPoints );
 	side->addWidget( m_showLines );
+	side->addWidget( m_showSurvey );
+	side->addWidget( m_showPin );
 	side->addWidget( resetBtn );
 	side->addWidget( allBtn );
 	m_alpha = new QSlider( Qt::Horizontal );
@@ -367,6 +376,22 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		}
 		updateValueLabels();
 		applyClip();
+	} );
+	connect( m_showSurvey, &QCheckBox::toggled, this, [this]( bool on )
+	{
+		QSettings().setValue( QStringLiteral( "qRezy/3dSurvey" ), on );
+		rebuildSurvey();
+	} );
+	connect( m_showPin, &QCheckBox::toggled, this, [this]( bool on )
+	{
+		if ( m_pinGroup )
+		{
+			m_pinGroup->setEnabled( on );
+		}
+		if ( m_win )
+		{
+			m_win->redraw();
+		}
 	} );
 	connect( m_showPoints, &QCheckBox::toggled, this, [this]( bool on )
 	{
@@ -664,7 +689,7 @@ void View3D::applyClip()
 		}
 	}
 	m_clone->prepareDisplayForRefresh();
-	m_win->redraw();
+	rebuildSurvey(); // překreslí
 }
 
 void View3D::focusOn( const CCVector3d& P, double viewAngle )
@@ -703,6 +728,63 @@ void View3D::focusOn( const CCVector3d& P, double viewAngle )
 	{
 		show();
 	}
+}
+
+// ---------------------------------------------------------------- změřené body
+
+void View3D::setSurveyPoints( const std::vector<SurveyPt>& pts, const ccColor::Rgb& marker, const ccColor::Rgb& name )
+{
+	m_survey = pts;
+	m_surveyMarker = marker;
+	m_surveyName = name;
+	rebuildSurvey();
+}
+
+void View3D::rebuildSurvey()
+{
+	if ( !m_win )
+	{
+		return;
+	}
+	if ( !m_surveyLayer )
+	{
+		m_surveyLayer = new RezLayer;
+		m_surveyLayer->setDisplay( m_win );
+		m_win->addToOwnDB( m_surveyLayer );
+	}
+	m_surveyLayer->items.clear();
+	if ( m_showSurvey && m_showSurvey->isChecked() )
+	{
+		// jen body v ořezu (jako mračno)
+		const double c = std::cos( m_angle );
+		const double sn = std::sin( m_angle );
+		const CCVector3d axes[3] = { CCVector3d( c, sn, 0 ), CCVector3d( -sn, c, 0 ), CCVector3d( 0, 0, 1 ) };
+		for ( const SurveyPt& sp : m_survey )
+		{
+			bool in = true;
+			if ( m_hasFocus && !m_aux )
+			{
+				for ( int i = 0; i < 3 && in; ++i )
+				{
+					const double v = axes[i].dot( sp.P - m_focus ) / m_scale;
+					in = v >= m_rs[i]->v0() && v <= m_rs[i]->v1();
+				}
+			}
+			if ( !in )
+			{
+				continue;
+			}
+			RezLayer::Item it;
+			it.P = sp.P;
+			it.marker = true;
+			it.markerColor = m_surveyMarker;
+			it.color = m_surveyName;
+			it.text = sp.name;
+			it.background = true;
+			m_surveyLayer->items.push_back( it );
+		}
+	}
+	m_win->redraw();
 }
 
 // ---------------------------------------------------------------- špendlík
@@ -759,6 +841,7 @@ void View3D::buildPin()
 	ball->showColors( true );
 	m_pinGroup->addChild( ball );
 	m_pinGroup->setDisplay_recursive( m_win );
+	m_pinGroup->setEnabled( !m_showPin || m_showPin->isChecked() );
 	m_win->addToOwnDB( m_pinGroup );
 }
 
@@ -789,8 +872,13 @@ void View3D::pinAt( const CCVector3d& P, double viewAngle, bool plan )
 	CCVector3 mn( static_cast<PointCoordinateType>( P.x - r ), static_cast<PointCoordinateType>( P.y - r ), static_cast<PointCoordinateType>( zLo ) );
 	CCVector3 mx( static_cast<PointCoordinateType>( P.x + r ), static_cast<PointCoordinateType>( P.y + r ), static_cast<PointCoordinateType>( zHi ) );
 	ccBBox box( mn, mx, true );
-	m_win->updateConstellationCenterAndZoom( &box );
+	Q_UNUSED( box );
+	// přiblížení nechat: kamera se jen posune o rozdíl starého a nového středu otáčení
+	const ccViewportParameters& vp = m_win->getViewportParameters();
+	const CCVector3d shift = P - vp.getPivotPoint();
+	const CCVector3d eye = vp.getCameraCenter() + shift;
 	m_win->setPivotPoint( CCVector3d( P.x, P.y, P.z ), false, false );
+	m_win->setCameraPos( eye );
 	buildPin();
 	m_win->redraw();
 	if ( !isVisible() )

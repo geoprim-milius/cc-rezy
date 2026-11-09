@@ -47,6 +47,14 @@ public:
 	//! plan = klik v půdorysu (jehla přes celou výšku ořezu)
 	void pinAt( const CCVector3d& localP, double viewAngle, bool plan );
 
+	//! změřené body ze souboru (lokální 3D, číslo) a jejich barvy
+	struct SurveyPt
+	{
+		CCVector3d P;
+		QString name;
+	};
+	void setSurveyPoints( const std::vector<SurveyPt>& pts, const ccColor::Rgb& marker, const ccColor::Rgb& name );
+
 	//! nakreslené čáry (kopie pro toto okno)
 	void setLines( const std::vector<Line>& lines );
 
@@ -91,6 +99,13 @@ private:
 	QLabel* m_rsLabel[3] = { nullptr, nullptr, nullptr };
 	QCheckBox* m_showLines = nullptr;
 	QCheckBox* m_showPoints = nullptr;
+	QCheckBox* m_showSurvey = nullptr;
+	QCheckBox* m_showPin = nullptr;
+	void rebuildSurvey();
+	std::vector<SurveyPt> m_survey;
+	ccColor::Rgb m_surveyMarker = ccColor::Rgb( 255, 90, 255 );
+	ccColor::Rgb m_surveyName = ccColor::Rgb( 255, 235, 0 );
+	class RezLayer* m_surveyLayer = nullptr;
 	void clearPin();
 	void buildPin();
 	ccHObject* m_pinGroup = nullptr;

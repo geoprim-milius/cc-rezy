@@ -148,6 +148,15 @@ void RezLayer::drawMeOnly( CC_DRAW_CONTEXT& context )
 				f2.setBold( false );
 				context.display->displayText( it.text2, x + w, y, ccGenericGLDisplay::ALIGN_HLEFT | ccGenericGLDisplay::ALIGN_VBOTTOM, bk, &col2, &f2 );
 			}
+			if ( !it.text3.isEmpty() )
+			{
+				// výška pod číslem
+				QFontMetrics fm( f );
+				const ccColor::Rgba col3( it.color3.r, it.color3.g, it.color3.b, 255 );
+				QFont f3 = f;
+				f3.setBold( false );
+				context.display->displayText( it.text3, x, y - fm.height(), ccGenericGLDisplay::ALIGN_HLEFT | ccGenericGLDisplay::ALIGN_VBOTTOM, bk, &col3, &f3 );
+			}
 		}
 	}
 }
