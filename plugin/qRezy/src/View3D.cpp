@@ -916,6 +916,60 @@ void View3D::leaveAux( bool refocus )
 	}
 }
 
+bool View3D::pickPoint( const QPoint& pos, CCVector3d& P ) const
+{
+	if ( !m_win || !m_clone || !m_clone->isVisible() )
+	{
+		return false;
+	}
+	// bod mračna nejblíž kliknutí na obrazovce (v ořezu), z nich nejblíž k oku
+	ccGLCameraParameters cam;
+	m_win->getGLCameraParameters( cam );
+	const double dpr = m_win->getDevicePixelRatio();
+	const double cx = pos.x() * dpr;
+	const double cy = cam.viewport[3] - 1 - pos.y() * dpr;
+	const double tol = 6.0 * dpr;
+	const double c = std::cos( m_angle );
+	const double sn = std::sin( m_angle );
+	const CCVector3d axes[3] = { CCVector3d( c, sn, 0 ), CCVector3d( -sn, c, 0 ), CCVector3d( 0, 0, 1 ) };
+	double lo[3];
+	double hi[3];
+	for ( int i = 0; i < 3; ++i )
+	{
+		const double d = axes[i].dot( m_focus );
+		lo[i] = m_hasFocus ? d + m_rs[i]->v0() * m_scale : -1e300;
+		hi[i] = m_hasFocus ? d + m_rs[i]->v1() * m_scale : 1e300;
+	}
+	bool found = false;
+	double bestZ = 2.0;
+	for ( unsigned k = 0; k < m_clone->size(); ++k )
+	{
+		const CCVector3d Q = CCVector3d::fromArray( m_clone->getPoint( k )->u );
+		bool in = true;
+		for ( int i = 0; i < 3 && in; ++i )
+		{
+			const double v = axes[i].dot( Q );
+			in = v >= lo[i] && v <= hi[i];
+		}
+		if ( !in )
+		{
+			continue;
+		}
+		CCVector3d S;
+		if ( !cam.project( Q, S ) || std::abs( S.x - cx ) > tol || std::abs( S.y - cy ) > tol || S.z < 0.0 || S.z > 1.0 )
+		{
+			continue;
+		}
+		if ( S.z < bestZ )
+		{
+			bestZ = S.z;
+			P = Q;
+			found = true;
+		}
+	}
+	return found;
+}
+
 bool View3D::auxPoint( const QPoint& pos, CCVector3d& P ) const
 {
 	if ( !m_win )
@@ -1006,6 +1060,31 @@ bool View3D::eventFilter( QObject* obj, QEvent* event )
 			}
 			return true;
 		}
+	}
+	if ( obj == m_widget && !m_aux )
+	{
+		// prostřední klik (bez tažení) do mračna = špendlík ve výkresu
+		if ( event->type() == QEvent::MouseButtonPress && static_cast<QMouseEvent*>( event )->button() == Qt::MiddleButton )
+		{
+			m_midPress = static_cast<QMouseEvent*>( event )->pos();
+			m_midDown = true;
+		}
+		else if ( event->type() == QEvent::MouseButtonRelease && static_cast<QMouseEvent*>( event )->button() == Qt::MiddleButton && m_midDown )
+		{
+			m_midDown = false;
+			const QPoint pos = static_cast<QMouseEvent*>( event )->pos();
+			CCVector3d P;
+			if ( ( pos - m_midPress ).manhattanLength() < 5 && pickPoint( pos, P ) )
+			{
+				m_pinP = P;
+				m_pinPlan = false;
+				m_hasPin = true;
+				buildPin();
+				m_win->redraw();
+				Q_EMIT pinPicked( P.x, P.y, P.z );
+			}
+		}
+		return QDockWidget::eventFilter( obj, event );
 	}
 	if ( obj != m_widget || !m_aux )
 	{

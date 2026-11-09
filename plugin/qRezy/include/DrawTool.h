@@ -194,6 +194,9 @@ public:
 
 	//! střed okna v rovině kreslení (lokálně 3D)
 	bool viewCenter( CCVector3d& out ) const;
+	//! špendlík z 3D náhledu: značka v kresbě (lokální 3D) a posun okna, aby byl uprostřed
+	void showPin( const CCVector3d& P );
+	void clearPin();
 
 	//! natočení pohledu (rad) – směr osy X obrazovky ve světě
 	double viewAngle() const;
@@ -451,6 +454,8 @@ private:
 	int m_kotaFmt = 0;
 	int m_kotaScale = 70;
 	int m_kotaLevel = 16;
+	CCVector3d m_pin3;
+	bool m_hasPin = false;
 	int m_kotaColor = 135;
 	CCVector2d m_kotaTip;
 	double m_clGap = 0.10;

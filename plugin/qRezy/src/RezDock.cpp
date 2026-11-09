@@ -190,7 +190,7 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 		}
 	} );
 	connect( m_draw, &DrawTool::rotateViewRequested, this, [this]( double a ) { m_viewAngle = a; topView(); focusView(); } );
-	connect( m_draw, &DrawTool::show3DRequested, this, [this]( double x, double y, double z ) { show3DAt( x, y, z, true ); } );
+	connect( m_draw, &DrawTool::show3DRequested, this, [this]( double x, double y, double z ) { m_draw->clearPin(); show3DAt( x, y, z, true ); } );
 	connect( m_draw, &DrawTool::sectionDefined, this, &RezDock::createSection );
 	connect( m_draw, &DrawTool::thicknessWheel, this, &RezDock::thicknessStep );
 	connect( m_draw, &DrawTool::drawingChanged, this, &RezDock::refresh3DLines );
@@ -2033,6 +2033,10 @@ bool RezDock::ensure3D( bool aux )
 		m_app->getMainWindow()->addDockWidget( Qt::RightDockWidgetArea, v );
 		v->setFloating( true );
 		v->resize( 760, 600 );
+		if ( !aux )
+		{
+			connect( v, &View3D::pinPicked, this, [this]( double x, double y, double z ) { m_draw->showPin( CCVector3d( x, y, z ) ); } );
+		}
 		if ( aux )
 		{
 			v->move( v->pos() + QPoint( 60, 60 ) );

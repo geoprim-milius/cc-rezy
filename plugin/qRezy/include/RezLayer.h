@@ -25,6 +25,7 @@ public:
 		ccColor::Rgb color2 = ccColor::Rgb( 0, 230, 255 );
 		bool background = false; //!< tmavý podklad pod textem
 		std::vector<CCVector3d> segs; //!< úsečky po dvojicích (značka kóty), barva color
+		bool pin = false;    //!< špendlík (hrot v P, pevná velikost v pixelech)
 	};
 
 	RezLayer()

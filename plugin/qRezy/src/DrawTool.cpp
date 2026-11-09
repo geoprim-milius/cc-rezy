@@ -3522,6 +3522,39 @@ void DrawTool::showToolMenu( int group )
 	keepCrossCursor();
 }
 
+void DrawTool::showPin( const CCVector3d& P )
+{
+	m_pin3 = P;
+	m_hasPin = true;
+	refreshLayer();
+	// posunout okno, aby byl špendlík uprostřed
+	const QWidget* w = qobject_cast<const QWidget*>( m_winObject );
+	if ( m_win && w )
+	{
+		ccGLCameraParameters cam;
+		m_win->getGLCameraParameters( cam );
+		CCVector3d S;
+		if ( cam.project( P, S ) )
+		{
+			const double dpr = m_win->getDevicePixelRatio();
+			const double sx = S.x / dpr;
+			const double sy = ( cam.viewport[3] - S.y ) / dpr;
+			panBy( QPoint( static_cast<int>( std::lround( w->width() / 2.0 - sx ) ), static_cast<int>( std::lround( w->height() / 2.0 - sy ) ) ) );
+		}
+	}
+	redraw2D();
+}
+
+void DrawTool::clearPin()
+{
+	if ( m_hasPin )
+	{
+		m_hasPin = false;
+		refreshLayer();
+		redraw2D();
+	}
+}
+
 bool DrawTool::viewCenter( CCVector3d& out ) const
 {
 	const QWidget* w = qobject_cast<const QWidget*>( m_winObject );
@@ -4868,6 +4901,13 @@ void DrawTool::refreshLayer()
 		return;
 	}
 	m_layer->items.clear();
+	if ( m_hasPin )
+	{
+		RezLayer::Item pi;
+		pi.P = m_pin3;
+		pi.pin = true;
+		m_layer->items.push_back( pi );
+	}
 	// směr „nahoru“ na obrazovce (půdorys může být natočený)
 	CCVector3d up = m_frame.V;
 	if ( m_frame.plan )

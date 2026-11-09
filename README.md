@@ -97,6 +97,7 @@ posuvník *průhlednost* = mračno průhledně („rentgen“), čáry zůstanou
 (např. na překlady). Kresba řezu je v rovině řezu, kresba pohledu na líci objektu (odhad z mračna) –
 posuvník ji posouvá do hloubky. Na výkres nemá vliv. Kolečko zoomuje k místu pod myší.
 Levé tažení = otáčení, kolečko = zoom.
+**Prostřední klik do mračna ve 3D náhledu** = špendlík ve výkresu: okno výkresu se posune, aby místo bylo uprostřed, a ukáže červený špendlík (hledání schodů apod.). Funguje jen na viditelné body (zapnuté *body*). Špendlík zmizí při dalším prostředním kliku do výkresu.
 
 ## Změřené body
 Soubor „číslo Y X [Z] [kód]“ v S-JTSK (mezery, tabulátory nebo středníky). Body se ukážou v půdorysu

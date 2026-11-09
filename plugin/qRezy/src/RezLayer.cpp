@@ -1,5 +1,10 @@
 #include "RezLayer.h"
 
+#include <cmath>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #include <ccGenericGLDisplay.h>
 
 #include <QFont>
@@ -60,6 +65,37 @@ void RezLayer::drawMeOnly( CC_DRAW_CONTEXT& context )
 			continue;
 		}
 		const ccColor::Rgba col( it.color.r, it.color.g, it.color.b, 255 );
+		if ( it.pin )
+		{
+			// špendlík: jehla šikmo nahoru, kulatá hlavička
+			const double x = S.x - cx;
+			const double y = S.y - cy;
+			const double hx = x + 14.0;
+			const double hy = y + 26.0;
+			gl->glLineWidth( 3.0f );
+			gl->glColor3ub( 40, 40, 40 );
+			gl->glBegin( GL_LINES );
+			gl->glVertex2d( x, y );
+			gl->glVertex2d( hx, hy );
+			gl->glEnd();
+			gl->glLineWidth( 1.0f );
+			gl->glColor3ub( 235, 40, 40 );
+			gl->glBegin( GL_TRIANGLE_FAN );
+			gl->glVertex2d( hx, hy );
+			for ( int k = 0; k <= 24; ++k )
+			{
+				const double a = k * 2.0 * M_PI / 24.0;
+				gl->glVertex2d( hx + 8.0 * std::cos( a ), hy + 8.0 * std::sin( a ) );
+			}
+			gl->glEnd();
+			gl->glColor3ub( 255, 255, 255 );
+			gl->glPointSize( 4.0f );
+			gl->glBegin( GL_POINTS );
+			gl->glVertex2d( hx - 2.5, hy + 2.5 );
+			gl->glEnd();
+			gl->glPointSize( 1.0f );
+			continue;
+		}
 		if ( it.marker )
 		{
 			// křížek ve 2D (souřadnice od středu okna)

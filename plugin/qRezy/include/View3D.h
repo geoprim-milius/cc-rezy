@@ -56,6 +56,10 @@ public:
 
 	unsigned sourceID() const { return m_sourceID; }
 
+Q_SIGNALS:
+	//! prostřední klik do mračna ve 3D náhledu → místo (lokální souřadnice) pro špendlík ve výkresu
+	void pinPicked( double x, double y, double z );
+
 protected:
 	bool eventFilter( QObject* obj, QEvent* event ) override;
 	double scale() const { return m_scale; }
@@ -93,6 +97,9 @@ private:
 	CCVector3d m_pinP;
 	bool m_pinPlan = false;
 	bool m_hasPin = false;
+	QPoint m_midPress;
+	bool m_midDown = false;
+	bool pickPoint( const QPoint& pos, CCVector3d& P ) const;
 	std::vector<Line> m_lines;            //!< čáry bez posunu
 	class QSlider* m_shift = nullptr;     //!< posun kresby (cm)
 	QLabel* m_shiftLabel = nullptr;
