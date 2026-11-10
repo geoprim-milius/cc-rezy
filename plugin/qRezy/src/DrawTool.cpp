@@ -4335,6 +4335,11 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			if ( event->type() == QEvent::KeyPress )
 				setMode( Mode::Line );
 		}
+		else if ( plain && k == Qt::Key_C )
+		{
+			if ( event->type() == QEvent::KeyPress )
+				QTimer::singleShot( 0, this, [this]() { Q_EMIT auxSectionRequested(); } );
+		}
 		else if ( plain && k == Qt::Key_A )
 		{
 			if ( event->type() == QEvent::KeyPress )

@@ -92,6 +92,7 @@ private:
 	void refreshCatCombo();
 	void fitPanelWidth(); //!< šířka panelu podle obsahu
 	void importDgn();     //!< načíst výkres V7 do aktivního půdorysu / řezu
+	void transferDrawing(); //!< přenést celý výkres (skupinu) na jiné mračno – např. podrobnější
 	//! rastr mračna (TIFF + .tfw) pro půdorys patra nebo řez/pohled v souřadnicích výkresu
 	bool writeCloudRaster( const QString& path, int viewId, double px, int dot, QString& info );
 	std::vector<std::array<double, 4>> slicePlanes() const; //!< roviny aktuálního řezu (pro čáru z mračna)

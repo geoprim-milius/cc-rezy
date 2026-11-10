@@ -796,8 +796,9 @@ void RezDock::buildToolbar()
 	connect( sec, &QAction::triggered, this, [startDef]() { startDef( 0 ); } );
 	QAction* fac = mkAct( "facade", QStringLiteral( "Pohled" ), QStringLiteral( "Nový pohled (fasáda) – rovina před objektem: 2 body, pak strana pohledu" ) );
 	connect( fac, &QAction::triggered, this, [startDef]() { startDef( 1 ); } );
-	QAction* aux = mkAct( "auxsec", QStringLiteral( "Pomocný\nřez" ), QStringLiteral( "2 body v půdorysu a strana; otevře okno pro měření výšek (nic se neukládá)" ) );
+	QAction* aux = mkAct( "auxsec", QStringLiteral( "Pomocný řez" ), QStringLiteral( "2 body v půdorysu a strana; otevře okno pro měření výšek (nic se neukládá)" ) );
 	connect( aux, &QAction::triggered, this, [startDef]() { startDef( 2 ); } );
+	connect( m_draw, &DrawTool::auxSectionRequested, this, [startDef]() { startDef( 2 ); } );
 	QAction* rot = mkAct( "rotate", QStringLiteral( "Otočit pohled" ), QStringLiteral( "2 body – směr 1. → 2. bod bude vodorovně doprava" ) );
 	connect( rot, &QAction::triggered, this, [this]()
 	{
@@ -976,6 +977,8 @@ void RezDock::buildToolbar()
 	} );
 	QAction* save = mkAct( "save", QStringLiteral( "Uložit V7" ), QStringLiteral( "Uložit výkres MicroStation V7 (patra, řezy a pohledy) a nastavení výstupu" ) );
 	connect( save, &QAction::triggered, this, &RezDock::openSaveDialog );
+	QAction* xfer = mkAct( "layers", QStringLiteral( "Přenést\nvýkres" ), QStringLiteral( "Přenést celý výkres (čáry, texty, kóty, patra, řezy, pohledy, body) na jiné načtené mračno – např. podrobnější. Rozdíl v posunu souřadnic se přepočítá." ) );
+	connect( xfer, &QAction::triggered, this, [this]() { transferDrawing(); } );
 	QAction* impDgn = mkAct( "open", QStringLiteral( "Načíst V7" ), QStringLiteral( "Načíst výkres MicroStation V7 (rozkreslený v MicroStationu) do aktivního půdorysu nebo řezu a dál ho doplňovat" ) );
 	connect( impDgn, &QAction::triggered, this, &RezDock::importDgn );
 
@@ -1015,6 +1018,7 @@ void RezDock::buildToolbar()
 		c.addSmall( T( DrawTool::Mode::Measure ), QStringLiteral( "D" ) );
 		RibbonColumn c2 = g.column();
 		c2.addSmall( T( DrawTool::Mode::EditText ), QStringLiteral( "A·B" ) );
+		c2.addSmall( aux, QStringLiteral( "C" ) );
 		RibbonGroup kg = r->addGroup( pDraw, QStringLiteral( "Kóta" ) );
 		kg.addBig( T( DrawTool::Mode::Kota ) );
 		RibbonColumn kc = kg.column();
@@ -1068,7 +1072,6 @@ void RezDock::buildToolbar()
 		connect( pinVis, &QAction::toggled, this, [this]( bool on ) { m_draw->setPinVisible( on ); focusView(); } );
 		RibbonColumn pc2 = p.column();
 		pc2.addSmall( pinVis );
-		pc2.addSmall( aux );
 		RibbonGroup bg = r->addGroup( pDraw, QStringLiteral( "Změřené body" ) );
 		bg.addBig( ptLoad );
 		RibbonColumn b1 = bg.column();
@@ -1127,6 +1130,7 @@ void RezDock::buildToolbar()
 		RibbonGroup g = r->addGroup( pOut, QStringLiteral( "Rozdělaná práce" ) );
 		g.addBig( proj );
 		g.addBig( openA );
+		g.addBig( xfer );
 		RibbonGroup d = r->addGroup( pOut, QStringLiteral( "MicroStation V7" ) );
 		d.addBig( save );
 		d.addBig( impDgn );
@@ -2893,6 +2897,135 @@ bool RezDock::writeCloudRaster( const QString& path, int viewId, double px, int 
 	}
 	info = QStringLiteral( "%1 × %2 px, %3 bodů" ).arg( w ).arg( h ).arg( cnt );
 	return true;
+}
+
+void RezDock::transferDrawing()
+{
+	ccGenericPointCloud* src = cloud();
+	ccHObject* group = m_draw ? m_draw->drawingGroup( false ) : nullptr;
+	if ( !src || !group || !m_app || !m_app->dbRootObject() )
+	{
+		QMessageBox::information( this, QStringLiteral( "Přenést výkres" ), QStringLiteral( "Nejdřív vyberte mračno, ke kterému výkres patří (v panelu Řezy)." ) );
+		return;
+	}
+	// kandidáti: ostatní mračna v databázi (ne vrcholy čar, ne body ze souboru, ne nic uvnitř výkresu)
+	std::vector<ccGenericPointCloud*> cands;
+	ccHObject::Container all;
+	m_app->dbRootObject()->filterChildren( all, true, CC_TYPES::POINT_CLOUD, false );
+	for ( ccHObject* o : all )
+	{
+		if ( o == src || o->hasMetaData( "qRezy.points" ) || ( o->getParent() && o->getParent()->isA( CC_TYPES::POLY_LINE ) ) )
+		{
+			continue;
+		}
+		bool inside = false;
+		for ( ccHObject* p = o->getParent(); p; p = p->getParent() )
+		{
+			if ( p == group )
+			{
+				inside = true;
+				break;
+			}
+		}
+		if ( !inside )
+		{
+			cands.push_back( ccHObjectCaster::ToGenericPointCloud( o ) );
+		}
+	}
+	if ( cands.empty() )
+	{
+		QMessageBox::information( this, QStringLiteral( "Přenést výkres" ), QStringLiteral( "Načtěte nejdřív nové (podrobnější) mračno – soubor otevřete v CloudCompare a při dotazu na posun souřadnic potvrďte stejný posun jako u současného mračna." ) );
+		return;
+	}
+	QStringList names;
+	for ( ccGenericPointCloud* c : cands )
+	{
+		names << QStringLiteral( "%1  (%2 bodů)" ).arg( c->getName() ).arg( QLocale( QLocale::Czech ).toString( static_cast<qulonglong>( c->size() ) ) );
+	}
+	bool ok = false;
+	const QString pick = QInputDialog::getItem( this, QStringLiteral( "Přenést výkres" ),
+	                                            QStringLiteral( "Výkres z mračna „%1“ přenést na:" ).arg( src->getName() ), names, 0, false, &ok );
+	if ( !ok )
+	{
+		return;
+	}
+	ccGenericPointCloud* dst = cands[static_cast<size_t>( std::max( 0, names.indexOf( pick ) ) )];
+	for ( unsigned i = 0; i < dst->getChildrenNumber(); ++i )
+	{
+		if ( dst->getChild( i )->isA( CC_TYPES::HIERARCHY_OBJECT ) && dst->getChild( i )->getName() == Drawing::GroupName )
+		{
+			QMessageBox::warning( this, QStringLiteral( "Přenést výkres" ), QStringLiteral( "Mračno „%1“ už svůj výkres má. Nejdřív ho smažte nebo vyberte jiné mračno." ).arg( dst->getName() ) );
+			return;
+		}
+	}
+	// posun souřadnic: lokální = (globální + posun) × měřítko
+	const double sS = src->getGlobalScale();
+	const double sD = dst->getGlobalScale();
+	if ( std::abs( sS - sD ) > 1e-9 * std::max( 1.0, std::abs( sS ) ) )
+	{
+		QMessageBox::warning( this, QStringLiteral( "Přenést výkres" ), QStringLiteral( "Mračna mají rozdílné měřítko souřadnic (Global scale %1 × %2) – přenos nejde. Načtěte nové mračno se stejným měřítkem." ).arg( sS ).arg( sD ) );
+		return;
+	}
+	const CCVector3d d = ( dst->getGlobalShift() - src->getGlobalShift() ) * sS;
+	const bool moved = d.norm() > 1e-9;
+	if ( moved )
+	{
+		if ( QMessageBox::question( this, QStringLiteral( "Přenést výkres" ),
+		                            QStringLiteral( "Mračna mají jiný posun souřadnic (Global shift). Výkres se přepočítá o %1 / %2 / %3 m, aby seděl na stejném místě.\n\nPokračovat?" )
+		                                .arg( d.x / sS, 0, 'f', 3 ).arg( d.y / sS, 0, 'f', 3 ).arg( d.z / sS, 0, 'f', 3 ) ) != QMessageBox::Yes )
+		{
+			return;
+		}
+		// všechny body (vrcholy čar, body ze souboru) + definice řezů
+		ccHObject::Container clouds;
+		group->filterChildren( clouds, true, CC_TYPES::POINT_CLOUD, false );
+		const CCVector3 df = d.toFloat();
+		for ( ccHObject* o : clouds )
+		{
+			auto* pc = static_cast<ccPointCloud*>( o );
+			for ( unsigned k = 0; k < pc->size(); ++k )
+			{
+				*const_cast<CCVector3*>( pc->getPoint( k ) ) += df;
+			}
+			pc->invalidateBoundingBox();
+		}
+		ccHObject::Container polys;
+		group->filterChildren( polys, true, CC_TYPES::POLY_LINE, false );
+		for ( ccHObject* o : polys )
+		{
+			auto* p = static_cast<ccPolyline*>( o );
+			p->invalidateBoundingBox();
+			if ( p->hasMetaData( "qRezy.secAx" ) )
+			{
+				p->setMetaData( "qRezy.secAx", p->getMetaData( "qRezy.secAx" ).toDouble() + d.x );
+				p->setMetaData( "qRezy.secAy", p->getMetaData( "qRezy.secAy" ).toDouble() + d.y );
+				p->setMetaData( "qRezy.secBx", p->getMetaData( "qRezy.secBx" ).toDouble() + d.x );
+				p->setMetaData( "qRezy.secBy", p->getMetaData( "qRezy.secBy" ).toDouble() + d.y );
+			}
+		}
+	}
+	// uložit stav panelu do skupiny, odpojit od starého mračna a připojit k novému
+	storeState( false );
+	const bool wasDrawing = m_drawAct && m_drawAct->isChecked();
+	if ( wasDrawing )
+	{
+		m_drawAct->setChecked( false );
+	}
+	clearClip();
+	m_app->removeFromDB( group, false );
+	dst->addChild( group );
+	m_app->addToDB( group, false, true, false, false );
+	m_cloudID = 0;
+	setCloud( dst );
+	src->setEnabled( false );
+	if ( wasDrawing )
+	{
+		m_drawAct->setChecked( true );
+	}
+	m_app->dispToConsole( QStringLiteral( "[Řezy] Výkres přenesen z mračna %1 na %2%3." ).arg( src->getName(), dst->getName(), moved ? QStringLiteral( " (přepočten posun souřadnic)" ) : QString() ) );
+	QMessageBox::information( this, QStringLiteral( "Přenést výkres" ),
+	                          QStringLiteral( "Výkres je teď u mračna „%1“. Staré mračno „%2“ je skryté – když vše sedí, můžete ho zavřít a práci uložit (Uložit práci)." ).arg( dst->getName(), src->getName() ) );
+	m_app->refreshAll();
 }
 
 void RezDock::importDgn()

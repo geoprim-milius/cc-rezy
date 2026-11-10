@@ -227,6 +227,8 @@ Q_SIGNALS:
 	void thicknessWheel( int direction );
 	//! výkres se změnil (přidání, úprava, smazání)
 	void drawingChanged();
+	//! klávesa C: pomocný řez
+	void auxSectionRequested();
 
 protected:
 	bool eventFilter( QObject* obj, QEvent* event ) override;

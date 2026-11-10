@@ -68,7 +68,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | S se šipkou | Sever nahoru | | |
 | dvě patra + | Nové patro | | samostatný půdorys; podlaha se odhadne z mračna, předchozí patro se zapne jako reference |
 | značka řezu | Nový svislý řez | | 2 body v půdorysu, pak klik na stranu, kam se díváte (šipky) |
-| pravítko | Pomocný řez | | 2 body v půdorysu a strana → okno 3D náhledu se přepne do řezu jen pro měření (nic se neukládá) |
+| pravítko | Pomocný řez | C | 2 body v půdorysu a strana → okno 3D náhledu se přepne do řezu jen pro měření (nic se neukládá) |
 | křížky 1 2 | Změřené body | | načíst seznam (číslo Y X [Z] [kód], S-JTSK), zobrazit/skrýt body (i uchopování), kódy |
 | dům | Nový pohled (fasáda) | | rovina před objektem: 2 body, pak strana pohledu; vidět je vše za rovinou do *Hloubky* |
 | kostka | 3D náhled | | výchozí šikmý pohled kolem středu okna (zároveň „reset“ 3D náhledu) |
@@ -109,6 +109,11 @@ Výšky si v řezech vynesete nástrojem **Kóta** jen tam, kde je potřebujete.
 Jednotlivé soubory jdou vypnout zaškrtnutím v seznamu objektů (skupina *Výkres (Řezy)*).
 **Výšky bodů** (karta Body): výška pod číslem bodu, *Bpv* nebo *místní* (k ±0,000 z panelu); jde vypnout zvlášť; jen na obrazovce, jen body s výškou.
 Barvy značky, čísla, kódu a výšky a tmavý podklad pod textem: *Barvy bodů…*
+
+## Výměna mračna (např. za podrobnější)
+Výstup → **Přenést výkres**: celý výkres (čáry, texty, kóty, patra, řezy, pohledy, body ze souboru, nastavení panelu) se přenese z aktuálního mračna na jiné načtené mračno.
+1. Uložte práci. 2. Otevřete nové mračno v CloudCompare. 3. V panelu Řezy musí být vybrané staré mračno (s výkresem) → **Přenést výkres** → vyberte nové mračno.
+Pokud mají mračna jiný posun souřadnic (Global shift), výkres se přepočítá, aby seděl na stejném místě. Staré mračno se skryje – když vše sedí, zavřete ho a uložte práci.
 
 ## Pomocný řez
 Natáhněte čáru v půdorysu a klikněte na stranu pohledu. Otevře se samostatné okno (3D náhled zůstane)
