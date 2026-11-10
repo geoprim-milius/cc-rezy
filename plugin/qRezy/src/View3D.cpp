@@ -341,7 +341,7 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		wl->setContentsMargins( 0, 0, 0, 0 );
 		wl->addWidget( new QLabel( QStringLiteral( "Do půdorysu:" ) ) );
 		m_writeMode = new QComboBox;
-		m_writeMode->addItem( QStringLiteral( "Okno – parapet, pak výška okna  →  2300(850)" ) );
+		m_writeMode->addItem( QStringLiteral( "Okno – podlaha, parapet, horní hrana (3 kliky)  →  2300(850)" ) );
 		m_writeMode->addItem( QStringLiteral( "Překlad  →  Vp=2060" ) );
 		m_writeMode->addItem( QStringLiteral( "Výška  →  2060" ) );
 		m_writeMode->setCurrentIndex( QSettings().value( QStringLiteral( "qRezy/auxWriteMode" ), 0 ).toInt() );
@@ -361,6 +361,13 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		{
 			QSettings().setValue( QStringLiteral( "qRezy/auxWriteMode" ), i );
 			m_parapetMM = -1;
+			m_mp.clear();
+			m_measStep = 0;
+			clearMeasure();
+			if ( m_aux )
+			{
+				updateMeasure( false );
+			}
 		} );
 	}
 	m_writeRow->setVisible( false );
@@ -1034,6 +1041,7 @@ void View3D::auxSection( const CCVector3d& A, const CCVector3d& B, const CCVecto
 	m_auxN = n;
 	m_zeroG = zeroGlobal;
 	m_measStep = 0;
+	m_mp.clear();
 	m_focus = m_auxA + U * ( len / 2.0 );
 	m_angle = std::atan2( U.y, U.x );
 	m_hasFocus = true;
@@ -1071,10 +1079,7 @@ void View3D::auxSection( const CCVector3d& A, const CCVector3d& B, const CCVecto
 		m_writeRow->setVisible( true );
 	}
 	m_parapetMM = -1;
-	if ( m_measPoly )
-	{
-		m_measPoly->setEnabled( false );
-	}
+	clearMeasure();
 	m_backBtn->setVisible( !m_auxOnly );
 	setWindowTitle( QStringLiteral( "Řezy – pomocný řez (měření)" ) );
 	m_info->setText( QStringLiteral( "<b>Pomocný řez</b> – klikněte 2 body = vzdálenost a převýšení; u kurzoru výška nad ±0,000 a v Bpv. "
@@ -1095,11 +1100,9 @@ void View3D::leaveAux( bool refocus )
 	}
 	m_aux = false;
 	m_measStep = 0;
+	m_mp.clear();
 	updateCross( QPoint(), false );
-	if ( m_measPoly )
-	{
-		m_measPoly->setEnabled( false );
-	}
+	clearMeasure();
 	m_backBtn->setVisible( false );
 	setWindowTitle( QStringLiteral( "Řezy – 3D náhled" ) );
 	if ( m_writeRow )
@@ -1210,6 +1213,11 @@ QString View3D::heightText( const CCVector3d& P ) const
 	return QStringLiteral( "%1 (Bpv %2)" ).arg( r, QString::number( zG, 'f', 3 ).replace( '.', ',' ) );
 }
 
+int View3D::measNeeded() const
+{
+	return ( m_writeMode && m_writeMode->currentIndex() == 0 ) ? 3 : 2;
+}
+
 void View3D::updateMeasure( bool live )
 {
 	if ( !m_win )
@@ -1217,43 +1225,35 @@ void View3D::updateMeasure( bool live )
 		return;
 	}
 	QString txt = QStringLiteral( "<b>Pomocný řez</b> – kurzor: výška %1" ).arg( heightText( m_mCursor ) );
-	if ( m_measStep >= 1 )
+	std::vector<CCVector3d> pts = m_mp;
+	if ( !pts.empty() && static_cast<int>( pts.size() ) < measNeeded() )
 	{
-		const CCVector3d B = ( m_measStep == 1 ) ? m_mCursor : m_m2;
-		const double du = std::abs( ( B - m_m1 ).dot( m_auxU ) ) / m_scale;
-		const double dz = ( B.z - m_m1.z ) / m_scale;
-		const double d = std::sqrt( du * du + dz * dz );
-		auto f = []( double v ) { return QString::number( v, 'f', 3 ).replace( '.', ',' ); };
-		txt += QStringLiteral( "<br>1. bod: %1 · 2. bod: %2<br><b>vodorovně %3 m · svisle %4 m · šikmo %5 m</b>" )
-		           .arg( heightText( m_m1 ), heightText( B ), f( du ), f( std::abs( dz ) ), f( d ) );
-
-		// čára měření (kousek před rovinou, aby ji body nezakryly)
-		if ( !m_measPoly )
-		{
-			auto* verts = new ccPointCloud( "measure" );
-			verts->reserve( 2 );
-			verts->addPoint( CCVector3( 0, 0, 0 ) );
-			verts->addPoint( CCVector3( 0, 0, 0 ) );
-			verts->setEnabled( false );
-			m_measPoly = new ccPolyline( verts );
-			m_measPoly->addChild( verts );
-			m_measPoly->addPointIndex( 0, 2 );
-			m_measPoly->setColor( ccColor::Rgb( 255, 220, 0 ) );
-			m_measPoly->showColors( true );
-			m_measPoly->setWidth( 3 );
-			m_measPoly->setDisplay( m_win );
-			m_win->addToOwnDB( m_measPoly );
-		}
-		auto* verts = static_cast<ccPointCloud*>( m_measPoly->getAssociatedCloud() );
-		const CCVector3d front = m_auxN * ( 2.0 * m_scale );
-		*const_cast<CCVector3*>( verts->getPointPersistentPtr( 0 ) ) = ( m_m1 + front ).toFloat();
-		*const_cast<CCVector3*>( verts->getPointPersistentPtr( 1 ) ) = ( B + front ).toFloat();
-		verts->invalidateBoundingBox();
-		m_measPoly->setEnabled( true );
-		m_measPoly->prepareDisplayForRefresh();
+		pts.push_back( m_mCursor ); // náhled k kurzoru
 	}
+	auto f = []( double v ) { return QString::number( v, 'f', 3 ).replace( '.', ',' ); };
+	const bool okno = measNeeded() == 3;
+	for ( size_t i = 0; i + 1 < pts.size(); ++i )
+	{
+		const CCVector3d& A = pts[i];
+		const CCVector3d& B = pts[i + 1];
+		const double du = std::abs( ( B - A ).dot( m_auxU ) ) / m_scale;
+		const double dz = std::abs( B.z - A.z ) / m_scale;
+		const QString what = okno ? ( i == 0 ? QStringLiteral( "parapet" ) : QStringLiteral( "okno" ) ) : QStringLiteral( "svisle" );
+		txt += QStringLiteral( "<br><b>%1 %2 m</b> · vodorovně %3 m · šikmo %4 m" ).arg( what, f( dz ), f( du ), f( std::sqrt( du * du + dz * dz ) ) );
+	}
+	if ( okno && m_mp.size() == 3 )
+	{
+		const int par = static_cast<int>( std::lround( std::abs( m_mp[1].z - m_mp[0].z ) / m_scale * 100.0 ) ) * 10;
+		const int win = static_cast<int>( std::lround( std::abs( m_mp[2].z - m_mp[1].z ) / m_scale * 100.0 ) ) * 10;
+		txt += QStringLiteral( "<br>→ <b>%1(%2)</b> – Enter = zapsat do půdorysu" ).arg( win ).arg( par );
+	}
+	else if ( okno && m_mp.empty() )
+	{
+		txt += QStringLiteral( "<br>Okno: 1. klik podlaha, 2. parapet, 3. horní hrana okna, pak Enter." );
+	}
+	setMeasures( pts, m_auxN, 2.0 * m_scale );
 	m_info->setText( txt );
-	m_win->redraw( !live || m_measStep == 0, false );
+	m_win->redraw( !live || m_mp.empty(), false );
 }
 
 bool View3D::eventFilter( QObject* obj, QEvent* event )
@@ -1327,16 +1327,20 @@ bool View3D::eventFilter( QObject* obj, QEvent* event )
 		if ( auxPoint( e->pos(), P ) )
 		{
 			m_mCursor = P;
-			if ( m_measStep == 1 )
+			if ( static_cast<int>( m_mp.size() ) >= measNeeded() )
 			{
-				m_m2 = P;
-				m_measStep = 2;
-				Q_EMIT measureDone( m_m1.x, m_m1.y, m_m1.z, m_m2.x, m_m2.y, m_m2.z, m_auxN.x, m_auxN.y );
+				m_mp.clear(); // nové měření
 			}
-			else
+			m_mp.push_back( P );
+			m_measStep = static_cast<int>( m_mp.size() );
+			if ( static_cast<int>( m_mp.size() ) == measNeeded() )
 			{
-				m_m1 = P;
-				m_measStep = 1;
+				QVector<double> xyz;
+				for ( const CCVector3d& Q : m_mp )
+				{
+					xyz << Q.x << Q.y << Q.z;
+				}
+				Q_EMIT measureDone( xyz, m_auxN.x, m_auxN.y );
 			}
 			updateMeasure( false );
 		}
@@ -1384,41 +1388,32 @@ void View3D::writeMeasured()
 	{
 		return;
 	}
-	if ( m_measStep != 2 )
+	const int need = measNeeded();
+	if ( static_cast<int>( m_mp.size() ) < need )
 	{
-		m_info->setText( QStringLiteral( "<b>Pomocný řez</b> – nejdřív změřte 2 body (klik, klik), pak Zapsat / Enter." ) );
+		m_info->setText( need == 3 ? QStringLiteral( "<b>Okno</b> – klikněte podlahu, parapet a horní hranu okna (3 body), pak Enter." )
+		                           : QStringLiteral( "<b>Pomocný řez</b> – nejdřív změřte 2 body (klik, klik), pak Enter." ) );
 		return;
 	}
-	// svislá vzdálenost, zaokrouhlená na cm, v mm
-	const double dz = std::abs( m_m2.z - m_m1.z ) / m_scale;
-	const int mm = static_cast<int>( std::lround( dz * 100.0 ) ) * 10;
+	// svislé vzdálenosti, zaokrouhlené na cm, v mm
+	auto mm = [this]( const CCVector3d& A, const CCVector3d& B ) { return static_cast<int>( std::lround( std::abs( B.z - A.z ) / m_scale * 100.0 ) ) * 10; };
 	const int mode = m_writeMode ? m_writeMode->currentIndex() : 2;
-	m_measStep = 0;
-	if ( m_measPoly )
-	{
-		m_measPoly->setEnabled( false );
-	}
-	if ( mode == 0 && m_parapetMM < 0 )
-	{
-		m_parapetMM = mm;
-		m_info->setText( QStringLiteral( "<b>Parapet %1</b> – teď změřte výšku okna (2 body) a znovu Zapsat / Enter." ).arg( mm ) );
-		m_win->redraw();
-		return;
-	}
 	QString txt;
 	if ( mode == 0 )
 	{
-		txt = QStringLiteral( "%1(%2)" ).arg( mm ).arg( m_parapetMM );
-		m_parapetMM = -1;
+		txt = QStringLiteral( "%1(%2)" ).arg( mm( m_mp[1], m_mp[2] ) ).arg( mm( m_mp[0], m_mp[1] ) ); // okno nad parapetem (parapet nad podlahou)
 	}
 	else if ( mode == 1 )
 	{
-		txt = QStringLiteral( "Vp=%1" ).arg( mm );
+		txt = QStringLiteral( "Vp=%1" ).arg( mm( m_mp[0], m_mp[1] ) );
 	}
 	else
 	{
-		txt = QString::number( mm );
+		txt = QString::number( mm( m_mp[0], m_mp[1] ) );
 	}
+	m_mp.clear();
+	m_measStep = 0;
+	clearMeasure();
 	m_info->setText( QStringLiteral( "<b>Zapsáno do půdorysu: %1</b>" ).arg( txt ) );
 	m_win->redraw();
 	Q_EMIT writeHeight( txt, mode );
@@ -1441,71 +1436,85 @@ void View3D::clearMeasure()
 	}
 }
 
-void View3D::setMeasure( const CCVector3d& A, const CCVector3d& B, const CCVector3d& N, const QString& label )
+void View3D::setMeasures( const std::vector<CCVector3d>& pts, const CCVector3d& N, double front )
 {
 	if ( !m_win )
 	{
 		return;
 	}
 	clearMeasure();
-	CCVector3d d = B - A;
-	if ( d.norm() < 1e-9 )
+	if ( pts.size() < 2 )
 	{
+		m_win->redraw();
 		return;
 	}
-	d.normalize();
 	CCVector3d n( N.x, N.y, 0.0 );
 	if ( n.norm() < 1e-9 )
 	{
 		n = CCVector3d( 1, 0, 0 );
 	}
 	n.normalize();
-	// patky: kolmo na kótu v rovině řezu + šikmá čárka (jako u kót)
-	CCVector3d perp = n.cross( d );
-	if ( perp.norm() < 1e-9 )
-	{
-		perp = CCVector3d( 0, 0, 1 );
-	}
-	perp.normalize();
+	const CCVector3d U( -n.y, n.x, 0.0 ); // vodorovně v rovině řezu
+	const CCVector3d Z( 0, 0, 1 );
+	const CCVector3d F = n * front;
 	const double t = 0.08 * m_scale;
-	const CCVector3d slash = ( d + perp ) * ( t / std::sqrt( 2.0 ) );
-	std::vector<std::pair<CCVector3d, CCVector3d>> segs = {
-		{ A, B },
-		{ A - perp * t, A + perp * t },
-		{ B - perp * t, B + perp * t },
-		{ A - slash, A + slash },
-		{ B - slash, B + slash },
-	};
-	m_measGroup = new ccHObject( "measure" );
-	for ( const auto& sg : segs )
+	struct Seg
 	{
-		auto* verts = new ccPointCloud( "v" );
-		verts->reserve( 2 );
-		verts->addPoint( sg.first.toFloat() );
-		verts->addPoint( sg.second.toFloat() );
-		verts->setEnabled( false );
-		auto* poly = new ccPolyline( verts );
-		poly->addChild( verts );
-		poly->addPointIndex( 0, 2 );
-		poly->setColor( ccColor::Rgb( 255, 220, 0 ) );
-		poly->showColors( true );
-		poly->setWidth( 3 );
-		m_measGroup->addChild( poly );
-	}
-	m_measGroup->setDisplay_recursive( m_win );
-	m_win->addToOwnDB( m_measGroup );
+		CCVector3d a;
+		CCVector3d b;
+		int width;
+	};
+	std::vector<Seg> segs;
 	if ( !m_measLayer )
 	{
 		m_measLayer = new RezLayer;
 		m_measLayer->setDisplay( m_win );
 		m_win->addToOwnDB( m_measLayer );
 	}
-	RezLayer::Item it;
-	it.P = ( A + B ) / 2.0;
-	it.text = label;
-	it.color = ccColor::Rgb( 255, 220, 0 );
-	it.background = true;
-	m_measLayer->items.push_back( it );
+	m_measLayer->items.clear();
+	for ( size_t i = 0; i + 1 < pts.size(); ++i )
+	{
+		const CCVector3d A = pts[i] + F;
+		const CCVector3d B = pts[i + 1] + F;
+		// svislá kóta v místě druhého bodu, od výšky prvního bodu
+		const CCVector3d C = A + U * ( ( B - A ).dot( U ) );
+		const CCVector3d B2 = C + Z * ( B.z - C.z );
+		if ( ( C - A ).norm() > 1e-6 )
+		{
+			segs.push_back( { A, C, 1 } ); // vynášecí čára
+		}
+		segs.push_back( { C, B2, 3 } );
+		for ( const CCVector3d& E : { C, B2 } )
+		{
+			segs.push_back( { E - U * t, E + U * t, 3 } );            // patka
+			const CCVector3d sl = ( U + Z ) * ( t / std::sqrt( 2.0 ) );
+			segs.push_back( { E - sl, E + sl, 2 } );                 // šikmá čárka
+		}
+		RezLayer::Item it;
+		it.P = ( C + B2 ) / 2.0;
+		it.text = QStringLiteral( "↕ %1" ).arg( QString::number( std::abs( B.z - A.z ) / m_scale, 'f', 3 ).replace( '.', ',' ) );
+		it.color = ccColor::Rgb( 255, 220, 0 );
+		it.background = true;
+		m_measLayer->items.push_back( it );
+	}
+	m_measGroup = new ccHObject( "measure" );
+	for ( const Seg& sg : segs )
+	{
+		auto* verts = new ccPointCloud( "v" );
+		verts->reserve( 2 );
+		verts->addPoint( sg.a.toFloat() );
+		verts->addPoint( sg.b.toFloat() );
+		verts->setEnabled( false );
+		auto* poly = new ccPolyline( verts );
+		poly->addChild( verts );
+		poly->addPointIndex( 0, 2 );
+		poly->setColor( ccColor::Rgb( 255, 220, 0 ) );
+		poly->showColors( true );
+		poly->setWidth( static_cast<PointCoordinateType>( sg.width ) );
+		m_measGroup->addChild( poly );
+	}
+	m_measGroup->setDisplay_recursive( m_win );
+	m_win->addToOwnDB( m_measGroup );
 	m_win->redraw();
 }
 

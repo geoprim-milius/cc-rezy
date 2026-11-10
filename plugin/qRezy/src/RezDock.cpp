@@ -2215,14 +2215,16 @@ bool RezDock::ensure3D( bool aux )
 		else
 		{
 			// měření v pomocném řezu → kóta i v 3D náhledu; zápis výšky do půdorysu
-			connect( v, &View3D::measureDone, this, [this]( double ax, double ay, double az, double bx, double by, double bz, double nx, double ny )
+			connect( v, &View3D::measureDone, this, [this]( const QVector<double>& xyz, double nx, double ny )
 			{
 				if ( m_view3D && m_view3D->isVisible() )
 				{
-					const double sc = cloud() ? cloud()->getGlobalScale() : 1.0;
-					const double dz = std::abs( bz - az ) / sc;
-					m_view3D->setMeasure( CCVector3d( ax, ay, az ), CCVector3d( bx, by, bz ), CCVector3d( nx, ny, 0 ),
-					                      QStringLiteral( "↕ %1 m" ).arg( QString::number( dz, 'f', 3 ).replace( '.', ',' ) ) );
+					std::vector<CCVector3d> pts;
+					for ( int i = 0; i + 2 < xyz.size(); i += 3 )
+					{
+						pts.emplace_back( xyz[i], xyz[i + 1], xyz[i + 2] );
+					}
+					m_view3D->setMeasures( pts, CCVector3d( nx, ny, 0 ), 0.0 );
 				}
 			} );
 			connect( v, &View3D::writeHeight, this, [this]( const QString& t, int kind ) { writeAuxHeight( t, kind ); } );
