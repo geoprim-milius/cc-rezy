@@ -254,18 +254,36 @@ namespace DgnV7
 			return false;
 		}
 		const double h = e.textHeight * m_uorPerMaster;
-		const int32_t w = static_cast<int32_t>( h * 0.8 * txt.size() );
-		const int32_t hi = static_cast<int32_t>( h );
+		const double wd = h * 0.8 * txt.size();
+		// rozsah natočeného obdélníku textu
+		const double ra = e.textAngleDeg * 3.14159265358979323846 / 180.0;
+		const double ca = std::cos( ra );
+		const double sa = std::sin( ra );
+		double minX = 0;
+		double maxX = 0;
+		double minY = 0;
+		double maxY = 0;
+		for ( int k = 0; k < 4; ++k )
+		{
+			const double u = ( k & 1 ) ? wd : 0.0;
+			const double v = ( k & 2 ) ? h : 0.0;
+			const double px = u * ca - v * sa;
+			const double py = u * sa + v * ca;
+			minX = std::min( minX, px );
+			maxX = std::max( maxX, px );
+			minY = std::min( minY, py );
+			maxY = std::max( maxY, py );
+		}
 
 		const size_t start = out.size();
 		out.push_back( static_cast<uint8_t>( clampi( e.sym.level, 1, 63 ) ) );
 		out.push_back( 17 );
 		putU16( out, 0 );
-		putRange( out, x );
-		putRange( out, y );
+		putRange( out, x + static_cast<int32_t>( std::floor( minX ) ) );
+		putRange( out, y + static_cast<int32_t>( std::floor( minY ) ) );
 		putRange( out, 0 );
-		putRange( out, x + w );
-		putRange( out, y + hi );
+		putRange( out, x + static_cast<int32_t>( std::ceil( maxX ) ) );
+		putRange( out, y + static_cast<int32_t>( std::ceil( maxY ) ) );
 		putRange( out, 0 );
 		putU16( out, 0 ); // grafická skupina
 		const size_t attIndexPos = out.size();
@@ -280,7 +298,7 @@ namespace DgnV7
 		const int32_t mult = static_cast<int32_t>( h * 1000.0 / 6.0 + 0.5 );
 		putI32( out, mult );
 		putI32( out, mult );
-		putI32( out, 0 ); // natočení
+		putI32( out, static_cast<int32_t>( std::lround( e.textAngleDeg * 360000.0 ) ) ); // natočení v 1/360000 °
 		putI32( out, x );
 		putI32( out, y );
 		out.push_back( static_cast<uint8_t>( txt.size() ) );

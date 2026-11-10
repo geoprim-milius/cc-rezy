@@ -198,6 +198,9 @@ public:
 	int heightFormat() const { return m_heightFmt; }
 	//! špendlík ve výkresu zobrazit / skrýt (poloha zůstane)
 	void setPinVisible( bool on );
+	//! text natočený podél směru (úhel v rovině pohledu, rad) na zadané hladině DGN (0 = výchozí hladina textů)
+	ccPolyline* addTextAt( const CCVector2d& P, const QString& text, double angle, int level );
+
 
 	//! střed okna v rovině kreslení (lokálně 3D)
 	bool viewCenter( CCVector3d& out ) const;

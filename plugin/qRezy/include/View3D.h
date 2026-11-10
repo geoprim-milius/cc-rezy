@@ -61,6 +61,10 @@ public:
 	};
 	void setSurveyPoints( const std::vector<SurveyPt>& pts, const ccColor::Rgb& marker, const ccColor::Rgb& name );
 
+	//! kóta měření z pomocného řezu (čára, patky, hodnota); clear = smazat
+	void setMeasure( const CCVector3d& A, const CCVector3d& B, const CCVector3d& N, const QString& label );
+	void clearMeasure();
+
 	//! nakreslené čáry (kopie pro toto okno)
 	void setLines( const std::vector<Line>& lines );
 
@@ -73,6 +77,10 @@ public:
 Q_SIGNALS:
 	//! prostřední klik do mračna ve 3D náhledu → místo (lokální souřadnice) pro špendlík ve výkresu
 	void pinPicked( double x, double y, double z );
+	//! pomocný řez: změřeny 2 body (lokální 3D) → kóta v 3D náhledu
+	void measureDone( double ax, double ay, double az, double bx, double by, double bz, double nx, double ny );
+	//! pomocný řez: zapsat výšku do půdorysu (kind 0 = okno, 1 = překlad, 2 = výška)
+	void writeHeight( const QString& text, int kind );
 
 protected:
 	bool eventFilter( QObject* obj, QEvent* event ) override;
@@ -154,6 +162,15 @@ private:
 	double m_zeroG = 0.0;
 	class QPushButton* m_backBtn = nullptr;
 	class ccPolyline* m_measPoly = nullptr;
+	// zápis výšky do půdorysu (jen pomocný řez)
+	class QWidget* m_writeRow = nullptr;
+	class QComboBox* m_writeMode = nullptr;
+	int m_parapetMM = -1;
+	void writeMeasured();
+	void auxZoom( double len );
+	// kóta měření v 3D náhledu
+	ccHObject* m_measGroup = nullptr;
+	class RezLayer* m_measLayer = nullptr;
 	int m_measStep = 0;
 	CCVector3d m_m1;
 	CCVector3d m_m2;

@@ -9,6 +9,9 @@
 
 #include <QFont>
 #include <QFontMetrics>
+#include <QImage>
+#include <QOpenGLTexture>
+#include <QPainter>
 #include <QOpenGLFunctions_2_1>
 
 #include <algorithm>
@@ -129,6 +132,52 @@ void RezLayer::drawMeOnly( CC_DRAW_CONTEXT& context )
 			const double px = std::sqrt( ( S2.x - S.x ) * ( S2.x - S.x ) + ( S2.y - S.y ) * ( S2.y - S.y ) );
 			const int fpx = static_cast<int>( std::max( 11.0, std::min( 300.0, px * 1.35 ) ) );
 			f.setPixelSize( fpx );
+			CCVector3d S3;
+			if ( it.dir.norm2() > 1e-12 && cam.project( it.P + it.dir * it.height, S3 ) && ( std::abs( S3.x - S.x ) + std::abs( S3.y - S.y ) ) > 1e-6 )
+			{
+				// natočený text: vykreslit do obrázku a ten natočit (displayText natáčet neumí)
+				const double th = std::atan2( S3.y - S.y, S3.x - S.x );
+				QFontMetrics fm( f );
+				const int w = fm.horizontalAdvance( it.text ) + 2;
+				const int h = fm.height();
+				QImage img( w, h, QImage::Format_RGBA8888_Premultiplied );
+				img.fill( Qt::transparent );
+				{
+					QPainter pnt( &img );
+					pnt.setFont( f );
+					pnt.setPen( QColor( it.color.r, it.color.g, it.color.b ) );
+					pnt.drawText( 1, fm.ascent(), it.text );
+				}
+				QOpenGLTexture tex( img.mirrored() );
+				tex.setMinificationFilter( QOpenGLTexture::Linear );
+				tex.setMagnificationFilter( QOpenGLTexture::Linear );
+				const double c = std::cos( th );
+				const double s = std::sin( th );
+				const double ox = S.x - cx;
+				const double oy = S.y - cy;
+				const double y0 = -fm.descent();
+				const double y1 = h - fm.descent();
+				auto V = [&]( double u, double v ) { gl->glVertex2d( ox + u * c - v * s, oy + u * s + v * c ); };
+				gl->glPushAttrib( GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_TEXTURE_BIT );
+				gl->glEnable( GL_TEXTURE_2D );
+				gl->glEnable( GL_BLEND );
+				gl->glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
+				tex.bind();
+				gl->glColor4f( 1.f, 1.f, 1.f, 1.f );
+				gl->glBegin( GL_QUADS );
+				gl->glTexCoord2d( 0, 0 );
+				V( 0, y0 );
+				gl->glTexCoord2d( 1, 0 );
+				V( w, y0 );
+				gl->glTexCoord2d( 1, 1 );
+				V( w, y1 );
+				gl->glTexCoord2d( 0, 1 );
+				V( 0, y1 );
+				gl->glEnd();
+				tex.release();
+				gl->glPopAttrib();
+				continue;
+			}
 			// displayText kreslí písmo pod zadaný bod → posun nahoru, aby P byl levý dolní roh textu (jako v DGN)
 			context.display->displayText( it.text, static_cast<int>( S.x ), static_cast<int>( S.y + 0.8 * fpx ), ccGenericGLDisplay::ALIGN_HLEFT | ccGenericGLDisplay::ALIGN_VBOTTOM, 0.0f, &col, &f );
 		}

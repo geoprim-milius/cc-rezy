@@ -811,7 +811,12 @@ ccPolyline* DrawTool::pickLine( const QPoint& pos, CCVector2d* clicked ) const
 			// výška na obrazovce: skutečná, ale aspoň 11 px (jako RezLayer)
 			const double th = std::max( QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale, 11.0 / 1.35 * pixelSize() );
 			CCVector2d upv( 0.0, 1.0 );
-			if ( m_frame.plan )
+			if ( s.poly->hasMetaData( "qRezy.textAng" ) )
+			{
+				const double a = s.poly->getMetaData( "qRezy.textAng" ).toDouble();
+				upv = CCVector2d( -std::sin( a ), std::cos( a ) );
+			}
+			else if ( m_frame.plan )
 			{
 				const double a = viewAngle();
 				upv = CCVector2d( -std::sin( a ), std::cos( a ) );
@@ -1482,7 +1487,16 @@ void DrawTool::translateItem( ccPolyline* poly, const CCVector2d& d, bool copy, 
 	}
 	if ( isText( poly ) )
 	{
-		addText( pts.front(), poly->getMetaData( "qRezy.text" ).toString(), undo );
+		if ( ccPolyline* n = addText( pts.front(), poly->getMetaData( "qRezy.text" ).toString(), undo ) )
+		{
+			for ( const char* key : { "qRezy.textLevel", "qRezy.textH", "qRezy.textAng" } )
+			{
+				if ( poly->hasMetaData( key ) )
+				{
+					n->setMetaData( key, poly->getMetaData( key ) );
+				}
+			}
+		}
 		return;
 	}
 	int c0;
@@ -2576,7 +2590,7 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			ccPolyline* n = addText( P, txt, &u );
 			if ( n )
 			{
-				for ( const char* key : { "qRezy.textLevel", "qRezy.textH", "qRezy.imported" } )
+				for ( const char* key : { "qRezy.textLevel", "qRezy.textH", "qRezy.imported", "qRezy.textAng" } )
 				{
 					if ( p->hasMetaData( key ) )
 					{
@@ -4680,6 +4694,23 @@ ccPolyline* DrawTool::addText( const CCVector2d& P, const QString& text, UndoIte
 	return poly;
 }
 
+ccPolyline* DrawTool::addTextAt( const CCVector2d& P, const QString& text, double angle, int level )
+{
+	UndoItem u;
+	ccPolyline* poly = addText( P, text, &u );
+	if ( poly )
+	{
+		poly->setMetaData( "qRezy.textAng", angle );
+		if ( level > 0 )
+		{
+			poly->setMetaData( "qRezy.textLevel", level );
+		}
+		pushUndo( std::move( u ) );
+		redraw2D();
+	}
+	return poly;
+}
+
 // ---------------------------------------------------------------- rozdělit řeznou čarou
 
 std::vector<std::pair<ccPolyline*, CCVector2d>> DrawTool::breakLineHits( const CCVector2d& A, const CCVector2d& B ) const
@@ -5092,6 +5123,11 @@ void DrawTool::refreshLayer()
 			}
 			RezLayer::Item it;
 			it.P = CCVector3d::fromArray( poly->getPoint( 0 )->u ); // levý dolní roh jako v DGN
+			if ( poly->hasMetaData( "qRezy.textAng" ) )
+			{
+				const double a = poly->getMetaData( "qRezy.textAng" ).toDouble();
+				it.dir = m_frame.U * std::cos( a ) + m_frame.V * std::sin( a );
+			}
 			it.up = up;
 			it.height = h;
 			it.text = ch->getMetaData( "qRezy.text" ).toString();
@@ -5345,6 +5381,10 @@ std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTa
 				const QString str = poly->getMetaData( "qRezy.text" ).toString();
 				const QByteArray bytes = codec ? codec->fromUnicode( str ) : str.toLatin1();
 				t.text = std::string( bytes.constData(), static_cast<size_t>( bytes.size() ) );
+				if ( poly->hasMetaData( "qRezy.textAng" ) )
+				{
+					t.textAngleDeg = poly->getMetaData( "qRezy.textAng" ).toDouble() * 57.29577951308232;
+				}
 				out.push_back( t );
 			}
 			continue;

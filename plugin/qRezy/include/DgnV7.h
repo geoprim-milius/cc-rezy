@@ -38,6 +38,7 @@ namespace DgnV7
 		double textHeight = 0.2; //!< výška písma v hlavních jednotkách
 		int font = 0;
 		int justification = 0;   //!< 0 = vlevo dole
+		double textAngleDeg = 0.0; //!< natočení textu (° proti směru hodinových ručiček)
 
 		// oblouk (typ 16): střed, poloměr, počáteční úhel a rozsah proti směru hodinových ručiček (°);
 		// pts = body po oblouku (rozsah prvku, náhrada ve 3D výkresu)

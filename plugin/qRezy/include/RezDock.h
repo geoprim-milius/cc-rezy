@@ -110,6 +110,9 @@ private:
 	void step( int direction );
 	void applyClip();
 	void clearClip();
+	CCVector2d m_auxPA; //!< čára pomocného řezu v půdorysu (lokálně)
+	CCVector2d m_auxPB;
+	void writeAuxHeight( const QString& text, int kind );
 	//! plátek řezu: u velkého mračna se zobrazuje jen kopie bodů v plátku (rychlé posouvání a zoom)
 	void showClip( ccGenericPointCloud* c, const std::vector<Tuple4Tpl<double>>& planes, double margin );
 	void extractSlab();

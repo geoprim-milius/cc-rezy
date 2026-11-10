@@ -2212,6 +2212,21 @@ bool RezDock::ensure3D( bool aux )
 		{
 			connect( v, &View3D::pinPicked, this, [this]( double x, double y, double z ) { m_draw->showPin( CCVector3d( x, y, z ) ); } );
 		}
+		else
+		{
+			// měření v pomocném řezu → kóta i v 3D náhledu; zápis výšky do půdorysu
+			connect( v, &View3D::measureDone, this, [this]( double ax, double ay, double az, double bx, double by, double bz, double nx, double ny )
+			{
+				if ( m_view3D && m_view3D->isVisible() )
+				{
+					const double sc = cloud() ? cloud()->getGlobalScale() : 1.0;
+					const double dz = std::abs( bz - az ) / sc;
+					m_view3D->setMeasure( CCVector3d( ax, ay, az ), CCVector3d( bx, by, bz ), CCVector3d( nx, ny, 0 ),
+					                      QStringLiteral( "↕ %1 m" ).arg( QString::number( dz, 'f', 3 ).replace( '.', ',' ) ) );
+				}
+			} );
+			connect( v, &View3D::writeHeight, this, [this]( const QString& t, int kind ) { writeAuxHeight( t, kind ); } );
+		}
 		if ( aux )
 		{
 			v->move( v->pos() + QPoint( 60, 60 ) );
@@ -2511,6 +2526,30 @@ void RezDock::openSaveDialog()
 	kf->addStretch( 1 );
 	l->addWidget( kBox );
 
+	// výšky zapsané z pomocného řezu
+	auto* hBox = new QGroupBox( QStringLiteral( "Výšky z pomocného řezu (texty v půdorysu) – hladiny" ) );
+	auto* hf = new QHBoxLayout( hBox );
+	auto mkLvl = [&]( const char* key, int def ) {
+		auto* sp = new QSpinBox;
+		sp->setRange( 1, 63 );
+		sp->setValue( st.value( QString::fromLatin1( key ), def ).toInt() );
+		return sp;
+	};
+	auto* hWin = mkLvl( "qRezy/hLevelWin", 17 );
+	auto* hLin = mkLvl( "qRezy/hLevelLin", 18 );
+	auto* hH = mkLvl( "qRezy/hLevelH", 19 );
+	hf->addWidget( new QLabel( QStringLiteral( "Okno:" ) ) );
+	hf->addWidget( hWin );
+	hf->addSpacing( 8 );
+	hf->addWidget( new QLabel( QStringLiteral( "Překlad:" ) ) );
+	hf->addWidget( hLin );
+	hf->addSpacing( 8 );
+	hf->addWidget( new QLabel( QStringLiteral( "Výška:" ) ) );
+	hf->addWidget( hH );
+	hf->addStretch( 1 );
+	hBox->setToolTip( QStringLiteral( "Texty zapsané u vložených dřív mají hladinu uloženou u sebe; změna platí pro nové zápisy" ) );
+	l->addWidget( hBox );
+
 	// rastr mračna
 	auto* rBox = new QGroupBox( QStringLiteral( "Rastr mračna (TIFF + .tfw) k půdorysům, řezům a pohledům" ) );
 	rBox->setCheckable( true );
@@ -2557,6 +2596,9 @@ void RezDock::openSaveDialog()
 	st.setValue( QStringLiteral( "qRezy/ptLevel" ), ptLevel->value() );
 	st.setValue( QStringLiteral( "qRezy/ptCrossHalf" ), ptCross->value() );
 	st.setValue( QStringLiteral( "qRezy/kotaLevel" ), kLevel->value() );
+	st.setValue( QStringLiteral( "qRezy/hLevelWin" ), hWin->value() );
+	st.setValue( QStringLiteral( "qRezy/hLevelLin" ), hLin->value() );
+	st.setValue( QStringLiteral( "qRezy/hLevelH" ), hH->value() );
 	st.setValue( QStringLiteral( "qRezy/kotaColor" ), kColor->value() );
 	m_draw->setKotaSymbology( kLevel->value(), kColor->value() );
 	st.setValue( QStringLiteral( "qRezy/ptTextH" ), ptTextH->value() );
@@ -3058,6 +3100,48 @@ bool RezDock::writeCloudRaster( const QString& path, int viewId, double px, int 
 	}
 	info = QStringLiteral( "%1 × %2 px, %3 bodů" ).arg( w ).arg( h ).arg( cnt );
 	return true;
+}
+
+void RezDock::writeAuxHeight( const QString& text, int kind )
+{
+	ccGenericPointCloud* c = cloud();
+	if ( !c || !m_draw )
+	{
+		return;
+	}
+	CCVector2d d = m_auxPB - m_auxPA;
+	if ( d.norm() < 1e-9 )
+	{
+		return;
+	}
+	d.normalize();
+	// čitelně: zleva doprava (nebo zdola nahoru)
+	if ( d.x < -1e-9 || ( std::abs( d.x ) <= 1e-9 && d.y < 0 ) )
+	{
+		d = d * -1.0;
+	}
+	if ( !isPlanView( m_activeView ) )
+	{
+		activateView( m_lastPlan );
+	}
+	if ( !m_draw->isActive() )
+	{
+		m_drawAct->setChecked( true );
+	}
+	QSettings st;
+	const double sc = c->getGlobalScale();
+	const double h = st.value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble();
+	const double w = 0.8 * h * text.size();
+	const CCVector2d perp( -d.y, d.x );
+	const CCVector2d M = ( m_auxPA + m_auxPB ) / 2.0;
+	// text uprostřed čáry, kousek nad ní
+	const CCVector2d P = M - d * ( w / 2.0 * sc ) + perp * ( 0.05 * sc );
+	static const char* keys[] = { "qRezy/hLevelWin", "qRezy/hLevelLin", "qRezy/hLevelH" };
+	static const int defs[] = { 17, 18, 19 };
+	const int k = std::max( 0, std::min( 2, kind ) );
+	const int level = st.value( QString::fromLatin1( keys[k] ), defs[k] ).toInt();
+	m_draw->addTextAt( P, text, std::atan2( d.y, d.x ), level );
+	m_app->dispToConsole( QStringLiteral( "[Řezy] Do půdorysu zapsáno %1 (hladina %2)." ).arg( text ).arg( level ) );
 }
 
 void RezDock::transferDrawing()
@@ -3588,6 +3672,8 @@ void RezDock::createSection( int kind, double ax, double ay, double bx, double b
 		// pomocný řez: jen okno pro měření, nic se neukládá
 		if ( ensure3D( true ) )
 		{
+			m_auxPA = CCVector2d( ax, ay );
+			m_auxPB = CCVector2d( bx, by );
 			m_viewAux->auxSection( CCVector3d( ax, ay, 0 ), CCVector3d( bx, by, 0 ), CCVector3d( N.x, N.y, 0 ), planZLocal(), m_zero->value(), m_thickness->value() );
 		}
 		return;

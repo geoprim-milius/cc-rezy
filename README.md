@@ -123,6 +123,14 @@ Pokud mají mračna jiný posun souřadnic (Global shift), výkres se přepočí
 Natáhněte čáru v půdorysu a klikněte na stranu pohledu. Otevře se samostatné okno (3D náhled zůstane)
 s pravoúhlým řezem (tloušťka = posuvník Hloubka). Levé kliknutí 2 body = vodorovně / svisle / šikmo,
 u kurzoru výška nad ±0,000 a v Bpv. Pravé tažení = posun, kolečko = zoom.
+Okno se otevře přiblížené od podlahy ke stropu (odhad z bodů v řezu). Změřená čára se ukáže i v 3D náhledu jako kóta (žlutá, s patkami a hodnotou).
+
+**Zápis výšky do půdorysu**: v řádku *Do půdorysu* vyberte druh, změřte 2 body a dejte **Zapsat** nebo **Enter**.
+Bere se svislý rozdíl (šikmý klik nevadí), zaokrouhlený na cm, zapsaný v mm, jako text doprostřed čáry pomocného řezu, podél ní:
+- *Okno*: nejdřív parapet nad podlahou → Zapsat, pak výška okna → Zapsat → `2300(850)`;
+- *Překlad*: `Vp=2060`;
+- *Výška*: `2060`.
+Každý druh má svou hladinu DGN (okno Uložit → Výšky z pomocného řezu; výchozí 17 / 18 / 19). Natočení textu se přenese i do DGN.
 
 ## Rozdělaná práce
 Ikona složky uloží projekt CloudCompare (.bin) – mračno, kresbu, řezy, patra, body i nastavení
