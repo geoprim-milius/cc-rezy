@@ -110,6 +110,16 @@ private:
 	void step( int direction );
 	void applyClip();
 	void clearClip();
+	//! plátek řezu: u velkého mračna se zobrazuje jen kopie bodů v plátku (rychlé posouvání a zoom)
+	void showClip( ccGenericPointCloud* c, const std::vector<Tuple4Tpl<double>>& planes, double margin );
+	void extractSlab();
+	void removeSlab();
+	class ccPointCloud* m_slab = nullptr;
+	unsigned m_slabSrc = 0;
+	std::vector<Tuple4Tpl<double>> m_slabWide;  //!< roviny výběru (s rezervou)
+	std::vector<Tuple4Tpl<double>> m_slabExact; //!< aktuální přesný ořez
+	double m_slabMargin = 0.0;
+	class QTimer* m_slabTimer = nullptr;
 	void updateLabels();
 	void topView();
 	void zeroFromFloor();

@@ -11,7 +11,13 @@
 #include <ccColorTypes.h>
 #include <ccDrawableObject.h>
 
+#include <ccBBox.h>
+
+#include "Extract.h"
+
 #include <vector>
+
+class QTimer;
 
 class ccMainAppInterface;
 class ccGLWindowInterface;
@@ -91,6 +97,14 @@ private:
 	ccPointCloud* m_clone = nullptr;
 	ccHObject* m_linesGroup = nullptr;
 	unsigned m_sourceID = 0;
+	//! výřez mračna v plné hustotě: roviny, ze kterých je m_clone vybraný (s rezervou)
+	ccBBox m_srcBB;
+	std::vector<Extract::Plane> m_regPlanes;
+	QTimer* m_regTimer = nullptr;
+	bool m_extracting = false;
+	std::vector<Extract::Plane> wantedPlanes( double margin ) const;
+	void updateRegion( bool now );
+	void extractRegion();
 	double m_scale = 1.0;
 	QLabel* m_info = nullptr;
 

@@ -1,4 +1,5 @@
 #include "RezDock.h"
+#include "Extract.h"
 #include "DgnV7.h"
 #include "DrawTool.h"
 #include "Drawing.h"
@@ -1633,7 +1634,17 @@ void RezDock::saveProject()
 	QAction* a = m_app->getMainWindow()->findChild<QAction*>( QStringLiteral( "actionSaveProject" ) );
 	if ( a )
 	{
+		// mračno skryté kvůli plátku se musí uložit jako viditelné
+		const bool slab = m_slab != nullptr;
+		if ( slab )
+		{
+			cloud()->setVisible( true );
+		}
 		a->trigger();
+		if ( slab && cloud() )
+		{
+			cloud()->setVisible( false );
+		}
 	}
 	else
 	{
@@ -1826,6 +1837,8 @@ void RezDock::applyClip()
 	}
 
 	c->removeAllClipPlanes();
+	std::vector<Tuple4Tpl<double>> planes;
+	double margin = 0.0;
 
 	SectionInfo si;
 	if ( m_activeView != 0 && sectionById( m_activeView, si ) )
@@ -1844,8 +1857,8 @@ void RezDock::applyClip()
 				p1.equation = Tuple4Tpl<double>( f.N.x, f.N.y, f.N.z, -( d - half ) );
 				ccClipPlane p2;
 				p2.equation = Tuple4Tpl<double>( -f.N.x, -f.N.y, -f.N.z, d + half );
-				c->addClipPlanes( p1 );
-				c->addClipPlanes( p2 );
+				planes.push_back( p1.equation );
+				planes.push_back( p2.equation );
 			}
 			else
 			{
@@ -1855,8 +1868,8 @@ void RezDock::applyClip()
 				p1.equation = Tuple4Tpl<double>( -f.N.x, -f.N.y, -f.N.z, d );
 				ccClipPlane p2;
 				p2.equation = Tuple4Tpl<double>( f.N.x, f.N.y, f.N.z, -( d - depth ) );
-				c->addClipPlanes( p1 );
-				c->addClipPlanes( p2 );
+				planes.push_back( p1.equation );
+				planes.push_back( p2.equation );
 			}
 			// do stran jen v délce čáry (+ 20 cm)
 			const double u0 = f.O.dot( f.U );
@@ -1866,8 +1879,8 @@ void RezDock::applyClip()
 			p3.equation = Tuple4Tpl<double>( f.U.x, f.U.y, f.U.z, -( u0 - m ) );
 			ccClipPlane p4;
 			p4.equation = Tuple4Tpl<double>( -f.U.x, -f.U.y, -f.U.z, u0 + len + m );
-			c->addClipPlanes( p3 );
-			c->addClipPlanes( p4 );
+			planes.push_back( p3.equation );
+			planes.push_back( p4.equation );
 		}
 	}
 	else if ( m_enabled->isChecked() )
@@ -1880,17 +1893,165 @@ void RezDock::applyClip()
 		lower.equation = Tuple4Tpl<double>( 0.0, 0.0, 1.0, -zLo );
 		ccClipPlane upper;
 		upper.equation = Tuple4Tpl<double>( 0.0, 0.0, -1.0, zHi );
-		c->addClipPlanes( lower );
-		c->addClipPlanes( upper );
+		planes.push_back( lower.equation );
+		planes.push_back( upper.equation );
 	}
 
+	// rezerva výběru: posun řezu PgUp/PgDn o pár kroků nemusí vybírat znovu
+	margin = ( 0.15 + m_thickness->value() + 2.0 * m_step->value() ) * c->getGlobalScale();
+	showClip( c, planes, margin );
+	storeState( false );
+}
+
+void RezDock::showClip( ccGenericPointCloud* c, const std::vector<Tuple4Tpl<double>>& planes, double margin )
+{
+	ccPointCloud* pc = ccHObjectCaster::ToPointCloud( c );
+	// malé mračno nebo bez ořezu: přímo ořezové roviny na mračnu (jako dřív)
+	const unsigned SlabMin = 8000000;
+	if ( planes.empty() || !pc || pc->size() < SlabMin || !c->getDisplay() )
+	{
+		removeSlab();
+		for ( const Tuple4Tpl<double>& e : planes )
+		{
+			ccClipPlane cp;
+			cp.equation = e;
+			c->addClipPlanes( cp );
+		}
+		c->prepareDisplayForRefresh();
+		m_app->refreshAll();
+		return;
+	}
+	m_slabExact = planes;
+	m_slabMargin = margin;
+	bool covered = m_slab && m_slabSrc == c->getUniqueID() && m_slabWide.size() == planes.size();
+	for ( size_t i = 0; covered && i < planes.size(); ++i )
+	{
+		covered = Extract::inside( planes[i], m_slabWide[i] );
+	}
+	if ( !covered )
+	{
+		if ( !m_slab || m_slabSrc != c->getUniqueID() )
+		{
+			extractSlab();
+			return;
+		}
+		// zatím ukázat, co je v kopii, a vybrat znovu po chvíli klidu (držení PgUp)
+		if ( !m_slabTimer )
+		{
+			m_slabTimer = new QTimer( this );
+			m_slabTimer->setSingleShot( true );
+			connect( m_slabTimer, &QTimer::timeout, this, [this]() { extractSlab(); } );
+		}
+		m_slabTimer->start( 300 );
+	}
+	m_slab->removeAllClipPlanes();
+	for ( const Tuple4Tpl<double>& e : planes )
+	{
+		ccClipPlane cp;
+		cp.equation = e;
+		m_slab->addClipPlanes( cp );
+	}
+	m_slab->prepareDisplayForRefresh();
+	m_app->refreshAll();
+}
+
+void RezDock::extractSlab()
+{
+	ccGenericPointCloud* c = cloud();
+	ccPointCloud* pc = c ? ccHObjectCaster::ToPointCloud( c ) : nullptr;
+	if ( !pc || m_slabExact.empty() || !c->getDisplay() )
+	{
+		return;
+	}
+	std::vector<Tuple4Tpl<double>> wide;
+	for ( const Tuple4Tpl<double>& e : m_slabExact )
+	{
+		wide.push_back( Extract::widened( e, m_slabMargin ) );
+	}
+	QApplication::setOverrideCursor( Qt::WaitCursor );
+	unsigned total = 0;
+	ccPointCloud* sl = Extract::byPlanes( pc, wide, 0, total );
+	QApplication::restoreOverrideCursor();
+	if ( !sl )
+	{
+		// nestačí paměť → raději ořez na celém mračnu
+		removeSlab();
+		const std::vector<Tuple4Tpl<double>> planes = m_slabExact;
+		m_slabExact.clear();
+		for ( const Tuple4Tpl<double>& e : planes )
+		{
+			ccClipPlane cp;
+			cp.equation = e;
+			c->addClipPlanes( cp );
+		}
+		m_app->refreshAll();
+		return;
+	}
+	removeSlab();
+	m_slab = sl;
+	m_slabSrc = c->getUniqueID();
+	m_slabWide = wide;
+	m_slab->setName( c->getName() + QStringLiteral( " (plátek řezu)" ) );
+	m_slab->setGlobalShift( c->getGlobalShift() );
+	m_slab->setGlobalScale( c->getGlobalScale() );
+	m_slab->showColors( c->colorsShown() && m_slab->hasColors() );
+	if ( pc->sfShown() && pc->getCurrentDisplayedScalarFieldIndex() >= 0 && pc->getCurrentDisplayedScalarFieldIndex() < static_cast<int>( m_slab->getNumberOfScalarFields() ) )
+	{
+		m_slab->setCurrentDisplayedScalarField( pc->getCurrentDisplayedScalarFieldIndex() );
+		m_slab->showSF( true );
+	}
+	m_slab->setPointSize( pc->getPointSize() );
+	m_slab->setEnabled( true );
+	m_slab->setVisible( true );
+	m_slab->setDisplay( c->getDisplay() );
+	for ( const Tuple4Tpl<double>& e : m_slabExact )
+	{
+		ccClipPlane cp;
+		cp.equation = e;
+		m_slab->addClipPlanes( cp );
+	}
+	if ( auto* win = static_cast<ccGLWindowInterface*>( c->getDisplay() ) )
+	{
+		win->addToOwnDB( m_slab );
+	}
+	// velké mračno se nekreslí (zůstává v seznamu objektů a v paměti)
+	c->setVisible( false );
+	m_app->dispToConsole( QStringLiteral( "[Řezy] Zobrazen plátek řezu: %1 bodů z %2." ).arg( m_slab->size() ).arg( c->size() ) );
 	c->prepareDisplayForRefresh();
 	m_app->refreshAll();
-	storeState( false );
+}
+
+void RezDock::removeSlab()
+{
+	if ( m_slabTimer )
+	{
+		m_slabTimer->stop();
+	}
+	if ( !m_slab )
+	{
+		return;
+	}
+	if ( auto* win = static_cast<ccGLWindowInterface*>( m_slab->getDisplay() ) )
+	{
+		win->removeFromOwnDB( m_slab );
+	}
+	delete m_slab;
+	m_slab = nullptr;
+	m_slabWide.clear();
+	if ( m_app && m_app->dbRootObject() )
+	{
+		if ( ccHObject* src = m_app->dbRootObject()->find( m_slabSrc ) )
+		{
+			src->setVisible( true );
+			src->prepareDisplayForRefresh();
+		}
+	}
+	m_slabSrc = 0;
 }
 
 void RezDock::clearClip()
 {
+	removeSlab();
 	if ( ccGenericPointCloud* c = cloud() )
 	{
 		c->removeAllClipPlanes();

@@ -8,6 +8,7 @@
 #include "ccMainAppInterface.h"
 #include "ccGuiParameters.h"
 
+#include <ccHObjectCaster.h>
 #include <ccPointCloud.h>
 #include <ccPolyline.h>
 #include <ccSphere.h>
@@ -15,7 +16,9 @@
 #include <CloudSamplingTools.h>
 #include <ReferenceCloud.h>
 
+#include <QApplication>
 #include <QCheckBox>
+#include <QTimer>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -439,12 +442,12 @@ void View3D::updateValueLabels()
 
 void View3D::updateRanges()
 {
-	if ( !m_clone || !m_hasFocus )
+	if ( m_sourceID == 0 || !m_hasFocus )
 	{
 		return;
 	}
 	// rozsah = celé mračno v osách pohledu, relativně k bodu (metry)
-	const ccBBox box = m_clone->getOwnBB();
+	const ccBBox box = m_srcBB;
 	const CCVector3 mn = box.minCorner();
 	const CCVector3 mx = box.maxCorner();
 	const double c = std::cos( m_angle );
@@ -536,50 +539,22 @@ void View3D::clearLines()
 
 bool View3D::setSource( ccPointCloud* cloud, unsigned maxPoints )
 {
+	Q_UNUSED( maxPoints );
 	if ( !m_win || !cloud )
 	{
 		return false;
 	}
-	if ( m_clone && m_sourceID == cloud->getUniqueID() )
+	if ( m_sourceID == cloud->getUniqueID() )
 	{
 		return true;
 	}
 	release();
-
-	// zředěná kopie (pro náhled stačí)
-	CCCoreLib::ReferenceCloud* sel = nullptr;
-	if ( cloud->size() > maxPoints )
-	{
-		sel = CCCoreLib::CloudSamplingTools::subsampleCloudRandomly( cloud, maxPoints );
-	}
-	else
-	{
-		sel = new CCCoreLib::ReferenceCloud( cloud );
-		sel->addPointIndex( 0, cloud->size() );
-	}
-	if ( !sel )
-	{
-		return false;
-	}
-	m_clone = cloud->partialClone( sel, nullptr, false );
-	delete sel;
-	if ( !m_clone )
-	{
-		m_app->dispToConsole( QStringLiteral( "[Řezy] Na 3D náhled nestačí paměť." ), ccMainAppInterface::WRN_CONSOLE_MESSAGE );
-		return false;
-	}
-	m_clone->setName( cloud->getName() + QStringLiteral( " (3D náhled)" ) );
-	m_clone->setGlobalShift( cloud->getGlobalShift() );
-	m_clone->setGlobalScale( cloud->getGlobalScale() );
+	// žádná zředěná kopie celého mračna: náhled bere body jen z ukazovaného výřezu, v plné hustotě (extractRegion)
+	m_sourceID = cloud->getUniqueID();
 	m_scale = cloud->getGlobalScale();
-	if ( cloud->hasColors() )
-	{
-		m_clone->showColors( true );
-	}
-	m_clone->setPointSize( 2 );
-	m_clone->setEnabled( true );
-	m_clone->setVisible( !m_showPoints || m_showPoints->isChecked() );
-	m_clone->setDisplay( m_win );
+	m_srcBB = cloud->getOwnBB();
+	m_regPlanes.clear();
+	m_hasFocus = false;
 	if ( !m_blend )
 	{
 		m_blend = new BlendGroup;
@@ -587,13 +562,117 @@ bool View3D::setSource( ccPointCloud* cloud, unsigned maxPoints )
 		m_win->addToOwnDB( m_blend );
 	}
 	m_blend->alpha = m_alpha->value() / 100.0f;
-	m_blend->addChild( m_clone, ccHObject::DP_NONE );
-	m_sourceID = cloud->getUniqueID();
-	m_hasFocus = false;
-	m_win->zoomGlobal();
-	m_win->redraw();
-	m_info->setText( QStringLiteral( "%1 bodů v náhledu. Prostřední klik do řezu = ukázat místo (posuvníky ořezu se zapnou)." ).arg( m_clone->size() ) );
+	m_info->setText( QStringLiteral( "Prostřední klik do výkresu = ukázat místo. Náhled bere body jen z výřezu (posuvníky), v plné hustotě." ) );
 	return true;
+}
+
+std::vector<Extract::Plane> View3D::wantedPlanes( double margin ) const
+{
+	std::vector<Extract::Plane> pl;
+	const double c = std::cos( m_angle );
+	const double s = std::sin( m_angle );
+	const CCVector3d axes[3] = { CCVector3d( c, s, 0 ), CCVector3d( -s, c, 0 ), CCVector3d( 0, 0, 1 ) };
+	for ( int i = 0; i < 3; ++i )
+	{
+		const CCVector3d& N = axes[i];
+		const double d = N.dot( m_focus );
+		const double lo = d + m_rs[i]->v0() * m_scale;
+		const double hi = d + m_rs[i]->v1() * m_scale;
+		const double m = margin > 0 ? std::max( 0.3, 0.25 * ( m_rs[i]->v1() - m_rs[i]->v0() ) ) * m_scale : 0.0;
+		pl.emplace_back( N.x, N.y, N.z, -lo + m );
+		pl.emplace_back( -N.x, -N.y, -N.z, hi + m );
+	}
+	return pl;
+}
+
+void View3D::updateRegion( bool now )
+{
+	if ( !m_hasFocus || m_sourceID == 0 || m_extracting )
+	{
+		return;
+	}
+	const std::vector<Extract::Plane> want = wantedPlanes( 0.0 );
+	bool covered = m_clone && m_regPlanes.size() == want.size();
+	for ( size_t i = 0; covered && i < want.size(); ++i )
+	{
+		covered = Extract::inside( want[i], m_regPlanes[i] );
+	}
+	if ( covered )
+	{
+		// výřez je mnohem větší, než je potřeba (po zúžení posuvníků) → po chvíli vybrat menší a uvolnit paměť
+		const std::vector<Extract::Plane> wide = wantedPlanes( 1.0 );
+		bool tooBig = false;
+		for ( size_t i = 0; i + 1 < wide.size(); i += 2 )
+		{
+			const double have = m_regPlanes[i].w + m_regPlanes[i + 1].w;
+			const double need = wide[i].w + wide[i + 1].w;
+			tooBig = tooBig || have > 3.0 * need;
+		}
+		if ( !tooBig )
+		{
+			return;
+		}
+	}
+	if ( now || !m_clone )
+	{
+		extractRegion();
+		return;
+	}
+	if ( !m_regTimer )
+	{
+		m_regTimer = new QTimer( this );
+		m_regTimer->setSingleShot( true );
+		connect( m_regTimer, &QTimer::timeout, this, [this]() { extractRegion(); } );
+	}
+	m_regTimer->start( 250 );
+}
+
+void View3D::extractRegion()
+{
+	ccHObject* obj = ( m_app && m_app->dbRootObject() ) ? m_app->dbRootObject()->find( m_sourceID ) : nullptr;
+	ccPointCloud* src = obj ? ccHObjectCaster::ToPointCloud( obj ) : nullptr;
+	if ( !src || !m_win )
+	{
+		return;
+	}
+	m_extracting = true;
+	QApplication::setOverrideCursor( Qt::WaitCursor );
+	const std::vector<Extract::Plane> planes = wantedPlanes( 1.0 );
+	const unsigned cap = 60000000;
+	unsigned total = 0;
+	ccPointCloud* cl = Extract::byPlanes( src, planes, cap, total );
+	QApplication::restoreOverrideCursor();
+	m_extracting = false;
+	if ( !cl )
+	{
+		m_app->dispToConsole( QStringLiteral( "[Řezy] Na výřez 3D náhledu nestačí paměť – zužte posuvníky." ), ccMainAppInterface::WRN_CONSOLE_MESSAGE );
+		return;
+	}
+	if ( m_clone && m_blend )
+	{
+		m_blend->detachChild( m_clone );
+	}
+	delete m_clone;
+	m_clone = cl;
+	m_regPlanes = planes;
+	m_clone->setName( src->getName() + QStringLiteral( " (3D náhled)" ) );
+	m_clone->setGlobalShift( src->getGlobalShift() );
+	m_clone->setGlobalScale( src->getGlobalScale() );
+	if ( src->hasColors() )
+	{
+		m_clone->showColors( true );
+	}
+	m_clone->setPointSize( 2 );
+	m_clone->setEnabled( true );
+	m_clone->setVisible( !m_showPoints || m_showPoints->isChecked() );
+	m_clone->setDisplay( m_win );
+	m_blend->addChild( m_clone, ccHObject::DP_NONE );
+	if ( !m_aux )
+	{
+		m_info->setText( total > cap ? QStringLiteral( "Výřez má %1 bodů – pro náhled zředěno na %2. Zužte posuvníky pro plnou hustotu." ).arg( total ).arg( m_clone->size() )
+		                             : QStringLiteral( "%1 bodů ve výřezu (plná hustota). Prostřední klik do mračna = špendlík ve výkresu." ).arg( m_clone->size() ) );
+	}
+	applyClip(); // výřez už pokrývá → jen ořez a překreslení
 }
 
 void View3D::setLines( const std::vector<Line>& lines )
@@ -643,7 +722,12 @@ void View3D::buildLines()
 
 void View3D::applyClip()
 {
-	if ( !m_win || !m_clone || !m_hasFocus )
+	if ( !m_win || !m_hasFocus )
+	{
+		return;
+	}
+	updateRegion( false ); // výřez v plné hustotě (hned, nebo po chvíli klidu)
+	if ( !m_clone )
 	{
 		return;
 	}
@@ -694,7 +778,7 @@ void View3D::applyClip()
 
 void View3D::focusOn( const CCVector3d& P, double viewAngle )
 {
-	if ( !m_win || !m_clone )
+	if ( !m_win || m_sourceID == 0 )
 	{
 		return;
 	}
@@ -847,7 +931,7 @@ void View3D::buildPin()
 
 void View3D::pinAt( const CCVector3d& P, double viewAngle, bool plan )
 {
-	if ( !m_win || !m_clone )
+	if ( !m_win || m_sourceID == 0 )
 	{
 		return;
 	}
@@ -891,7 +975,7 @@ void View3D::pinAt( const CCVector3d& P, double viewAngle, bool plan )
 
 void View3D::auxSection( const CCVector3d& A, const CCVector3d& B, const CCVector3d& N, double planZ, double zeroGlobal, double thickness )
 {
-	if ( !m_win || !m_clone )
+	if ( !m_win || m_sourceID == 0 )
 	{
 		return;
 	}
@@ -944,7 +1028,7 @@ void View3D::auxSection( const CCVector3d& A, const CCVector3d& B, const CCVecto
 	m_win->setInteractionMode( ccGLWindowInterface::MODE_PAN_ONLY );
 	m_win->setPivotVisibility( ccGLWindowInterface::PIVOT_HIDE );
 	m_win->setWindowCursor( Qt::BlankCursor ); // nitkový kříž kreslíme sami
-	const ccBBox bb = m_clone->getOwnBB();
+	const ccBBox bb = m_srcBB;
 	const CCVector3d P0 = m_auxA;
 	const CCVector3d P1 = m_auxA + U * len;
 	CCVector3 mn( static_cast<PointCoordinateType>( std::min( P0.x, P1.x ) ), static_cast<PointCoordinateType>( std::min( P0.y, P1.y ) ), bb.minCorner().z );

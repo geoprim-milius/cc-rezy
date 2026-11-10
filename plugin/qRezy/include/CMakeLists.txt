@@ -12,6 +12,7 @@ target_sources( ${PROJECT_NAME}
 		${CMAKE_CURRENT_LIST_DIR}/Ribbon.h
 		${CMAKE_CURRENT_LIST_DIR}/Theme.h
 		${CMAKE_CURRENT_LIST_DIR}/Tiff.h
+		${CMAKE_CURRENT_LIST_DIR}/Extract.h
 )
 
 target_include_directories( ${PROJECT_NAME}

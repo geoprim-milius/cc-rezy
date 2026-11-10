@@ -110,6 +110,10 @@ Jednotlivé soubory jdou vypnout zaškrtnutím v seznamu objektů (skupina *Výk
 **Výšky bodů** (karta Body): výška pod číslem bodu, *Bpv* nebo *místní* (k ±0,000 z panelu); jde vypnout zvlášť; jen na obrazovce, jen body s výškou.
 Barvy značky, čísla, kódu a výšky a tmavý podklad pod textem: *Barvy bodů…*
 
+## Velká mračna (rychlost)
+- **Výkres (půdorys, řez, pohled):** u mračna nad 8 milionů bodů se kreslí jen kopie bodů v plátku řezu (s rezervou pár kroků PgUp/PgDn) a velké mračno se skryje – posun a zoom jsou svižné. Při posunu řezu dál, než sahá rezerva, se plátek po chvilce klidu vybere znovu (krátké čekání). V konzoli je vidět „Zobrazen plátek řezu: N bodů“. Velké mračno zůstává v paměti a v seznamu objektů; *Uložit práci* ho uloží jako viditelné.
+- **3D náhled a pomocný řez:** neředí – berou všechny body jen z ukazovaného výřezu (posuvníky). Po posunu na jiné místo nebo roztažení posuvníků se výřez vybere znovu. Jen když by výřez měl přes 60 milionů bodů (např. *vše*), zředí se a náhled to napíše.
+
 ## Výměna mračna (např. za podrobnější)
 Výstup → **Přenést výkres**: celý výkres (čáry, texty, kóty, patra, řezy, pohledy, body ze souboru, nastavení panelu) se přenese z aktuálního mračna na jiné načtené mračno.
 1. Uložte práci. 2. Otevřete nové mračno v CloudCompare. 3. V panelu Řezy musí být vybrané staré mračno (s výkresem) → **Přenést výkres** → vyberte nové mračno.
