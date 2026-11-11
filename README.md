@@ -130,6 +130,7 @@ Bere se svislý rozdíl, zaokrouhlený na cm, zapsaný v mm, jako text doprostř
 - *Okno*: 3 kliky – podlaha, parapet, horní hrana okna (zobrazí se obě kóty) → `2300(850)` = výška okna nad parapetem (parapet nad podlahou);
 - *Překlad* (2 kliky): `Vp=2060`;
 - *Výška* (2 kliky): `2060`.
+Zaškrtnuté **ručně**: text se neumístí sám, ale visí na kurzoru (podél čáry řezu) a položíte ho klikem do půdorysu (Esc = zrušit) – když je na jednom místě víc údajů.
 Každý druh má svou hladinu DGN (okno Uložit → Výšky z pomocného řezu; výchozí 17 / 18 / 19). Natočení textu se přenese i do DGN.
 
 ## Rozdělaná práce

@@ -19,7 +19,7 @@
 
 void RezLayer::drawMeOnly( CC_DRAW_CONTEXT& context )
 {
-	if ( !MACRO_Draw2D( context ) || !MACRO_Foreground( context ) || !context.display || items.empty() )
+	if ( !MACRO_Draw2D( context ) || !MACRO_Foreground( context ) || !context.display || ( items.empty() && temp.empty() ) )
 	{
 		return;
 	}

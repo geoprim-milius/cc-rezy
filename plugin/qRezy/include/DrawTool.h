@@ -85,7 +85,8 @@ public:
 		Kota,         //!< výšková kóta („kačena“) v řezu / pohledu: hrot, strana poličky
 		BreakLine,    //!< rozdělit řeznou čarou: 2 body → všechny protnuté čáry se rozdělí v průsečíku
 		Pin,          //!< špendlík: klik → ukázat místo ve 3D náhledu
-		EditText      //!< upravit text: klik na text → nový obsah
+		EditText,     //!< upravit text: klik na text → nový obsah
+		PlaceText     //!< umístit připravený text (z pomocného řezu) ručně – text visí na kurzoru
 	};
 
 	enum class SnapType
@@ -200,6 +201,8 @@ public:
 	void setPinVisible( bool on );
 	//! text natočený podél směru (úhel v rovině pohledu, rad) na zadané hladině DGN (0 = výchozí hladina textů)
 	ccPolyline* addTextAt( const CCVector2d& P, const QString& text, double angle, int level );
+	//! připravený text k ručnímu umístění (text visí na kurzoru, střed dole; klik = vložit, Esc = zrušit)
+	void startPlaceText( const QString& text, double angle, int level );
 
 
 	//! střed okna v rovině kreslení (lokálně 3D)
@@ -471,6 +474,10 @@ private:
 	int m_kotaFmt = 0;
 	int m_kotaScale = 70;
 	int m_kotaLevel = 16;
+	QString m_placeText;
+	double m_placeAng = 0.0;
+	int m_placeLevel = 0;
+	CCVector2d placeOrigin( const CCVector2d& c ) const;
 	CCVector3d m_pin3;
 	bool m_hasPin = false;
 	int m_kotaColor = 135;

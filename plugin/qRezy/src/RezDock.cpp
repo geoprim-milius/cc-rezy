@@ -3142,6 +3142,13 @@ void RezDock::writeAuxHeight( const QString& text, int kind )
 	static const int defs[] = { 17, 18, 19 };
 	const int k = std::max( 0, std::min( 2, kind ) );
 	const int level = st.value( QString::fromLatin1( keys[k] ), defs[k] ).toInt();
+	if ( st.value( QStringLiteral( "qRezy/auxWriteManual" ), false ).toBool() )
+	{
+		// ručně: text visí na kurzoru, uživatel ho položí klikem
+		m_draw->startPlaceText( text, std::atan2( d.y, d.x ), level );
+		m_app->dispToConsole( QStringLiteral( "[Řezy] Umístěte text %1 klikem do půdorysu." ).arg( text ) );
+		return;
+	}
 	m_draw->addTextAt( P, text, std::atan2( d.y, d.x ), level );
 	m_app->dispToConsole( QStringLiteral( "[Řezy] Do půdorysu zapsáno %1 (hladina %2)." ).arg( text ).arg( level ) );
 }

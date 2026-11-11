@@ -346,6 +346,11 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		m_writeMode->addItem( QStringLiteral( "Výška  →  2060" ) );
 		m_writeMode->setCurrentIndex( QSettings().value( QStringLiteral( "qRezy/auxWriteMode" ), 0 ).toInt() );
 		wl->addWidget( m_writeMode, 1 );
+		auto* manual = new QCheckBox( QStringLiteral( "ručně" ) );
+		manual->setToolTip( QStringLiteral( "Text do půdorysu neumístit automaticky doprostřed čáry řezu, ale nechat ho na kurzoru a položit klikem (např. když je víc údajů přes sebe)" ) );
+		manual->setChecked( QSettings().value( QStringLiteral( "qRezy/auxWriteManual" ), false ).toBool() );
+		connect( manual, &QCheckBox::toggled, this, []( bool on ) { QSettings().setValue( QStringLiteral( "qRezy/auxWriteManual" ), on ); } );
+		wl->addWidget( manual );
 		auto* wb = new QPushButton( QStringLiteral( "Zapsat (Enter)" ) );
 		wb->setToolTip( QStringLiteral( "Svislou vzdálenost posledního měření (2 body) zaokrouhlit na cm a vložit v mm jako text doprostřed čáry pomocného řezu v půdorysu" ) );
 		wl->addWidget( wb );

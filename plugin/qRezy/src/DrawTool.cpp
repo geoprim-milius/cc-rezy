@@ -2569,6 +2569,18 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		keepCrossCursor();
 		break;
 	}
+	case Mode::PlaceText:
+	{
+		const CCVector2d P = cursorPoint( pos, st, nullptr );
+		if ( !m_placeText.isEmpty() )
+		{
+			addTextAt( placeOrigin( P ), m_placeText, m_placeAng, m_placeLevel );
+			m_placeText.clear();
+		}
+		const Mode back = ( m_prevMode == Mode::PlaceText ) ? Mode::Select : m_prevMode;
+		QTimer::singleShot( 0, this, [this, back]() { setMode( back ); } );
+		break;
+	}
 	case Mode::EditText:
 	{
 		ccPolyline* p = pickLine( pos );
@@ -3480,6 +3492,19 @@ void DrawTool::updateTip()
 		}
 	}
 
+	// ruční umístění textu z pomocného řezu: text na kurzoru
+	if ( m_mode == Mode::PlaceText && m_hasCursor && !m_placeText.isEmpty() )
+	{
+		RezLayer::Item it;
+		it.P = m_frame.to3D( placeOrigin( m_cursor ) );
+		it.up = upv;
+		it.height = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+		it.text = m_placeText;
+		it.color = yellow;
+		it.dir = m_frame.U * std::cos( m_placeAng ) + m_frame.V * std::sin( m_placeAng );
+		temp.push_back( it );
+	}
+
 	// přesun / kopie: posouvané texty a kóty u kurzoru
 	if ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && m_step == 2 && m_hasCursor )
 	{
@@ -3868,6 +3893,9 @@ void DrawTool::updateStatus()
 		break;
 	case Mode::EditText:
 		prompt = QStringLiteral( "Upravit text: klikněte na text" );
+		break;
+	case Mode::PlaceText:
+		prompt = QStringLiteral( "Umístit text „%1“: klikněte do půdorysu (Esc = zrušit)" ).arg( m_placeText );
 		break;
 	case Mode::BreakLine:
 		prompt = m_step == 0 ? QStringLiteral( "Rozdělit čarou: první bod řezné čáry" )
@@ -4804,6 +4832,22 @@ ccPolyline* DrawTool::addTextAt( const CCVector2d& P, const QString& text, doubl
 		redraw2D();
 	}
 	return poly;
+}
+
+void DrawTool::startPlaceText( const QString& text, double angle, int level )
+{
+	m_placeText = text;
+	m_placeAng = angle;
+	m_placeLevel = level;
+	setMode( Mode::PlaceText );
+}
+
+CCVector2d DrawTool::placeOrigin( const CCVector2d& c ) const
+{
+	// kurzor = střed spodní hrany textu
+	const double h = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+	const double w = 0.8 * h * m_placeText.size();
+	return c - CCVector2d( std::cos( m_placeAng ), std::sin( m_placeAng ) ) * ( w / 2.0 );
 }
 
 // ---------------------------------------------------------------- rozdělit řeznou čarou
