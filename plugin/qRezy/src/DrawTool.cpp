@@ -567,12 +567,12 @@ void DrawTool::setMode( Mode m )
 	}
 	m_mode = m;
 	// výběr zůstává jen pro výběr, přesun a kopii
-	if ( m != Mode::Select && m != Mode::Move && m != Mode::Copy )
+	if ( m != Mode::Select && m != Mode::Move && m != Mode::Copy && m != Mode::Rotate )
 	{
 		setSelection( {} );
 	}
 	resetTool();
-	if ( ( m == Mode::Move || m == Mode::Copy ) && !m_selSet.empty() )
+	if ( ( m == Mode::Move || m == Mode::Copy || m == Mode::Rotate ) && !m_selSet.empty() )
 	{
 		m_step = 1; // rovnou výchozí bod
 		updateTip();
@@ -2569,6 +2569,53 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		keepCrossCursor();
 		break;
 	}
+	case Mode::Rotate:
+	{
+		if ( m_step == 0 )
+		{
+			if ( ccPolyline* p = pickLine( pos ) )
+			{
+				select( p );
+				m_step = 1;
+			}
+		}
+		else if ( m_step == 1 )
+		{
+			m_base = cursorPoint( pos, st, nullptr ); // střed otáčení
+			m_step = 2;
+		}
+		else if ( m_step == 2 )
+		{
+			m_rotRef = cursorPoint( pos, st, &m_base ); // výchozí směr
+			if ( dist( m_rotRef, m_base ) > 1e-9 )
+			{
+				m_step = 3;
+			}
+		}
+		else
+		{
+			m_cursor = cursorPoint( pos, st, &m_base ); // cílový směr
+			const double ang = rotAngle();
+			const std::vector<ccPolyline*> targets = rotTargets();
+			UndoItem u;
+			for ( ccPolyline* p : targets )
+			{
+				rotateItem( p, m_base, ang, &u );
+			}
+			pushUndo( std::move( u ) );
+			if ( !m_selSet.empty() )
+			{
+				pruneSelection();
+				m_step = m_selSet.empty() ? 0 : 1;
+			}
+			else
+			{
+				select( nullptr );
+				m_step = 0;
+			}
+		}
+		break;
+	}
 	case Mode::PlaceText:
 	{
 		const CCVector2d P = cursorPoint( pos, st, nullptr );
@@ -3492,6 +3539,55 @@ void DrawTool::updateTip()
 		}
 	}
 
+	// otočení: paprsky ze středu a náhled otočených prvků
+	if ( m_mode == Mode::Rotate && m_hasCursor && m_step >= 2 )
+	{
+		if ( m_step == 2 )
+		{
+			segment( m_base, m_cursor, yellow, 1.5f );
+		}
+		else
+		{
+			segment( m_base, m_rotRef, cyan, 1.5f );
+			segment( m_base, m_cursor, yellow, 1.5f );
+			const double ang = rotAngle();
+			const double ca = std::cos( ang );
+			const double sa = std::sin( ang );
+			auto rot = [&]( const CCVector2d& P ) { const CCVector2d d = P - m_base; return m_base + CCVector2d( d.x * ca - d.y * sa, d.x * sa + d.y * ca ); };
+			const double th = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+			for ( ccPolyline* poly : rotTargets() )
+			{
+				if ( !poly || !lineExists( poly ) )
+				{
+					continue;
+				}
+				if ( isText( poly ) && !isKota( poly ) )
+				{
+					const CCVector2d P = m_frame.toUV( CCVector3d::fromArray( poly->getPoint( 0 )->u ) );
+					const double a = ( poly->hasMetaData( "qRezy.textAng" ) ? poly->getMetaData( "qRezy.textAng" ).toDouble() : 0.0 ) + ang;
+					RezLayer::Item it;
+					it.P = m_frame.to3D( rot( P ) );
+					it.up = upv;
+					it.height = th;
+					it.text = poly->getMetaData( "qRezy.text" ).toString();
+					it.color = yellow;
+					it.dir = m_frame.U * std::cos( a ) + m_frame.V * std::sin( a );
+					temp.push_back( it );
+					continue;
+				}
+				if ( isText( poly ) )
+				{
+					continue;
+				}
+				const std::vector<CCVector2d> pts = polyPoints( poly );
+				for ( size_t k = 0; k + 1 < pts.size(); ++k )
+				{
+					segment( rot( pts[k] ), rot( pts[k + 1] ), yellow, 2.0f );
+				}
+			}
+		}
+	}
+
 	// ruční umístění textu z pomocného řezu: text na kurzoru
 	if ( m_mode == Mode::PlaceText && m_hasCursor && !m_placeText.isEmpty() )
 	{
@@ -3672,7 +3768,7 @@ void DrawTool::showToolMenu( int group )
 			{ 1, "Kopie  (Copy)", true, Mode::Copy },
 			{ 2, "Přesun  (Move)", true, Mode::Move },
 			{ 3, "Měřítko  (Scale)", false, Mode::Line },
-			{ 4, "Otočit  (Rotate)", false, Mode::Line },
+			{ 4, "Otočit  (Rotate, 3 body)", true, Mode::Rotate },
 			{ 5, "Zrcadlit  (Mirror)", false, Mode::Line },
 			{ 6, "Pole  (Array)", false, Mode::Line },
 			{ 7, "Zarovnat  (Align By Edge)", false, Mode::Line },
@@ -3893,6 +3989,16 @@ void DrawTool::updateStatus()
 		break;
 	case Mode::EditText:
 		prompt = QStringLiteral( "Upravit text: klikněte na text" );
+		break;
+	case Mode::Rotate:
+		if ( m_step == 0 )
+			prompt = QStringLiteral( "Otočit: klikněte na prvek (nebo nejdřív vyberte víc prvků)" );
+		else if ( m_step == 1 )
+			prompt = QStringLiteral( "Otočit: střed otáčení" );
+		else if ( m_step == 2 )
+			prompt = QStringLiteral( "Otočit: výchozí směr (bod)" );
+		else
+			prompt = QStringLiteral( "Otočit: cílový směr (bod) – úhel %1°" ).arg( QString::number( rotAngle() * 57.29577951308232, 'f', 2 ).replace( '.', ',' ) );
 		break;
 	case Mode::PlaceText:
 		prompt = QStringLiteral( "Umístit text „%1“: klikněte do půdorysu (Esc = zrušit)" ).arg( m_placeText );
@@ -4832,6 +4938,68 @@ ccPolyline* DrawTool::addTextAt( const CCVector2d& P, const QString& text, doubl
 		redraw2D();
 	}
 	return poly;
+}
+
+std::vector<ccPolyline*> DrawTool::rotTargets() const
+{
+	std::vector<ccPolyline*> t = m_selSet;
+	if ( t.empty() && m_sel )
+	{
+		t.push_back( m_sel );
+	}
+	return t;
+}
+
+double DrawTool::rotAngle() const
+{
+	const CCVector2d r = m_rotRef - m_base;
+	const CCVector2d c = m_cursor - m_base;
+	if ( r.norm() < 1e-12 || c.norm() < 1e-12 )
+	{
+		return 0.0;
+	}
+	return std::atan2( c.y, c.x ) - std::atan2( r.y, r.x );
+}
+
+void DrawTool::rotateItem( ccPolyline* poly, const CCVector2d& C, double ang, UndoItem* undo )
+{
+	if ( !lineExists( poly ) )
+	{
+		return;
+	}
+	const double ca = std::cos( ang );
+	const double sa = std::sin( ang );
+	auto rot = [&]( const CCVector2d& P ) { const CCVector2d d = P - C; return C + CCVector2d( d.x * ca - d.y * sa, d.x * sa + d.y * ca ); };
+	if ( isText( poly ) )
+	{
+		const CCVector2d P = m_frame.toUV( CCVector3d::fromArray( poly->getPoint( 0 )->u ) );
+		if ( isKota( poly ) )
+		{
+			translateItem( poly, rot( P ) - P, false, undo ); // kóta zůstává svislá, jen se posune hrot
+			return;
+		}
+		// text: nová poloha a natočení (přidá se k dosavadnímu)
+		const double a0 = poly->hasMetaData( "qRezy.textAng" ) ? poly->getMetaData( "qRezy.textAng" ).toDouble() : 0.0;
+		if ( ccPolyline* n = addText( rot( P ), poly->getMetaData( "qRezy.text" ).toString(), undo ) )
+		{
+			for ( const char* key : { "qRezy.textLevel", "qRezy.textH", "qRezy.imported" } )
+			{
+				if ( poly->hasMetaData( key ) )
+				{
+					n->setMetaData( key, poly->getMetaData( key ) );
+				}
+			}
+			n->setMetaData( "qRezy.textAng", a0 + ang );
+			removeLine( poly, undo );
+		}
+		return;
+	}
+	std::vector<CCVector2d> pts = polyPoints( poly );
+	for ( CCVector2d& P : pts )
+	{
+		P = rot( P );
+	}
+	setPolyPoints( poly, pts, undo );
 }
 
 void DrawTool::startPlaceText( const QString& text, double angle, int level )

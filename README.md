@@ -44,6 +44,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | oblouk | Oblouk | E | tři body podle metody v pásu: *začátek–střed–konec* (střed = bod uprostřed oblouku, oblouk jde přes všechny tři body), *začátek–konec–střed* (třetí bod uprostřed oblouku), *střed kružnice* (začátek–střed kružnice–konec, směr podle pohybu myši); do DGN jako skutečný oblouk; lze vybrat, přesunout, kopírovat, smazat, změnit hladinu |
 | čára s body | Čára z mračna | | klik k bodům řezu (na líc zdi) → čára proložená body (náhled modře); klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a hned další, pravé = zahodit. Navazující čára se napojí v rohu, téměř kolmá se srovná na 90°. *Mezera* = kolik bodů smí chybět (dveře/okna = konec čáry), *tol.* = rozptyl líce |
 | kříž šipek | Přesun | 3 → 2 | čára → výchozí bod → cíl (nebo vzdálenost) |
+| dva obdélníky | Otočit | 3 → 4 | prvek (nebo výběr) → střed otáčení → výchozí směr → cílový směr; náhled během otáčení; čáry, oblouky i texty (text se natočí, u výškové kóty se jen posune hrot) |
 | dvě čáry | Kopie | 3 → 1 | čára → výchozí bod → cíle |
 | rovnoběžky | Rovnoběžně | 3 → 9 | čára → strana; vzdálenost z pole vedle nebo napsat + Enter |
 | čára s úchopem | Upravit prvek | 7 → 1 | klik u konce čáry (chytí bližší konec), pak nové místo nebo délka; mění jen tu jednu čáru |

@@ -671,6 +671,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Arc, "arc", "Oblouk", "Tři body podle metody vedle: začátek–střed oblouku–konec, začátek–konec–střed oblouku, nebo se středem kružnice. Do DGN jako skutečný oblouk." },
 		{ DrawTool::Mode::CloudLine, "cloudline", "Čára\nz mračna", "Klik k bodům řezu (na líc zdi) → čára proložená body; klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a další, pravé = zahodit. Navazující čára se napojí v rohu." },
 		{ DrawTool::Mode::Move, "move", "Přesun", "Čára (nebo výběr), výchozí bod, cíl nebo vzdálenost." },
+		{ DrawTool::Mode::Rotate, "rotel", "Otočit", "Prvek (nebo výběr), pak 3 body: střed otáčení, výchozí směr, cílový směr. Otočí čáry, oblouky i texty (3·4)." },
 		{ DrawTool::Mode::Copy, "copy", "Kopie", "Čára (nebo výběr), výchozí bod, cíle nebo vzdálenost." },
 		{ DrawTool::Mode::Offset, "offset", "Rovnoběžka", "Čára, strana; vzdálenost z pole vedle nebo napsat + Enter." },
 		{ DrawTool::Mode::Modify, "modify", "Upravit prvek", "Klik u konce čáry, pak nové místo konce." },
@@ -1037,7 +1038,7 @@ void RezDock::buildToolbar()
 		mc.addSmall( T( DrawTool::Mode::Move ), QStringLiteral( "3·2" ) );
 		mc.addSmall( T( DrawTool::Mode::Offset ), QStringLiteral( "3·9" ) );
 		RibbonColumn mc2 = m.column();
-		for ( int i = 0; i < 2; ++i )
+		mc2.addSmall( T( DrawTool::Mode::Rotate ), QStringLiteral( "3·4" ) );
 		{
 			auto* gap = new QWidget;
 			gap->setFixedHeight( 24 );

@@ -445,6 +445,20 @@ namespace Icons
 				p.drawText( QPointF( 13, 9 ), QStringLiteral( "1" ) );
 				p.drawText( QPointF( 24, 24 ), QStringLiteral( "2" ) );
 			}
+			else if ( n == "rotel" )
+			{
+				// obdélník a natočená kopie se šipkou
+				p.setPen( QPen( Ink, 1.6 ) );
+				p.drawRect( QRectF( 4, 16, 12, 8 ) );
+				p.save();
+				p.translate( 16, 16 );
+				p.rotate( -35 );
+				p.setPen( QPen( QColor( 70, 150, 230 ), 1.6 ) );
+				p.drawRect( QRectF( 0, -8, 12, 8 ) );
+				p.restore();
+				p.setPen( QPen( Ink, 1.4 ) );
+				p.drawArc( QRectF( 6, 4, 20, 20 ), 200 * 16, -110 * 16 );
+			}
 			else if ( n == "breakline" )
 			{
 				// dvě rozdělené čáry a červená řezná čára

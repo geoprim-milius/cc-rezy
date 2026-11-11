@@ -86,7 +86,8 @@ public:
 		BreakLine,    //!< rozdělit řeznou čarou: 2 body → všechny protnuté čáry se rozdělí v průsečíku
 		Pin,          //!< špendlík: klik → ukázat místo ve 3D náhledu
 		EditText,     //!< upravit text: klik na text → nový obsah
-		PlaceText     //!< umístit připravený text (z pomocného řezu) ručně – text visí na kurzoru
+		PlaceText,    //!< umístit připravený text (z pomocného řezu) ručně – text visí na kurzoru
+		Rotate        //!< otočit prvek / výběr třemi body: střed, výchozí směr, cílový směr
 	};
 
 	enum class SnapType
@@ -478,6 +479,10 @@ private:
 	double m_placeAng = 0.0;
 	int m_placeLevel = 0;
 	CCVector2d placeOrigin( const CCVector2d& c ) const;
+	CCVector2d m_rotRef;
+	void rotateItem( ccPolyline* poly, const CCVector2d& C, double ang, UndoItem* undo );
+	double rotAngle() const;
+	std::vector<ccPolyline*> rotTargets() const;
 	CCVector3d m_pin3;
 	bool m_hasPin = false;
 	int m_kotaColor = 135;
