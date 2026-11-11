@@ -3163,7 +3163,11 @@ void RezDock::writeAuxHeight( const QString& text, int kind, double atX, double 
 	const CCVector2d perp( -d.y, d.x );
 	// text nad místem, kde se odečítala výška (bod na čáře řezu); jinak uprostřed čáry
 	const CCVector2d M = std::isfinite( atX ) && std::isfinite( atY ) ? CCVector2d( atX, atY ) : ( m_auxPA + m_auxPB ) / 2.0;
-	const CCVector2d P = M - d * ( w / 2.0 * sc ) + perp * ( 0.05 * sc );
+	const bool rot90 = st.value( QStringLiteral( "qRezy/auxWriteRot90" ), false ).toBool();
+	// podél čáry: střed textu nad místem; otočený o 90°: text začíná kousek od čáry a jde kolmo od ní, vystředěný na místo
+	const CCVector2d P = rot90 ? M + perp * ( 0.05 * sc ) + d * ( h / 2.0 * sc )
+	                           : M - d * ( w / 2.0 * sc ) + perp * ( 0.05 * sc );
+	const double ang = std::atan2( d.y, d.x ) + ( rot90 ? 1.5707963267948966 : 0.0 );
 	static const char* keys[] = { "qRezy/hLevelWin", "qRezy/hLevelLin", "qRezy/hLevelH", "qRezy/hLevelCeil" };
 	static const int defs[] = { 17, 18, 19, 20 };
 	const int k = std::max( 0, std::min( 3, kind ) );
@@ -3171,11 +3175,11 @@ void RezDock::writeAuxHeight( const QString& text, int kind, double atX, double 
 	if ( st.value( QStringLiteral( "qRezy/auxWriteManual" ), false ).toBool() )
 	{
 		// ručně: text visí na kurzoru, uživatel ho položí klikem
-		m_draw->startPlaceText( text, std::atan2( d.y, d.x ), level );
+		m_draw->startPlaceText( text, ang, level );
 		m_app->dispToConsole( QStringLiteral( "[Řezy] Umístěte text %1 klikem do půdorysu." ).arg( text ) );
 		return;
 	}
-	m_draw->addTextAt( P, text, std::atan2( d.y, d.x ), level );
+	m_draw->addTextAt( P, text, ang, level );
 	m_app->dispToConsole( QStringLiteral( "[Řezy] Do půdorysu zapsáno %1 (hladina %2)." ).arg( text ).arg( level ) );
 }
 

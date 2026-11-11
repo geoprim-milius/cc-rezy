@@ -132,6 +132,7 @@ Bere se svislý rozdíl, zaokrouhlený na cm, zapsaný v mm, jako text podél č
 - *Překlad* (2 kliky): `Vp=2060`;
 - *Strop* (2 kliky): `Vs=2650` (výška stropu);
 - *Výška* (2 kliky): `2060`.
+Tlačítko **Text 90°** zapnuté = text otočený o 90° (kolmo na čáru řezu, začíná u čáry a čte se zdola nahoru), vypnuté = text podél čáry.
 Zaškrtnuté **ručně**: text se neumístí sám, ale visí na kurzoru (podél čáry řezu) a položíte ho klikem do půdorysu (Esc = zrušit) – když je na jednom místě víc údajů.
 
 **Podlaha**: tlačítko *Podlaha* a klik na podlahu v řezu = podlaha se zapamatuje (zelená čára, na tlačítku její výška). Pak se podlaha už neklikne: Strop / Překlad / Výška = **1 klik**, Okno = 2 kliky (parapet, horní hrana). Platí i pro další pomocné řezy; znovu kliknout na tlačítko = zrušit.

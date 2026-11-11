@@ -412,6 +412,14 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		manual->setToolTip( QStringLiteral( "Text do půdorysu neumístit automaticky doprostřed čáry řezu, ale nechat ho na kurzoru a položit klikem (např. když je víc údajů přes sebe)" ) );
 		manual->setChecked( QSettings().value( QStringLiteral( "qRezy/auxWriteManual" ), false ).toBool() );
 		connect( manual, &QCheckBox::toggled, this, []( bool on ) { QSettings().setValue( QStringLiteral( "qRezy/auxWriteManual" ), on ); } );
+		auto* rot = new QToolButton;
+		rot->setText( QStringLiteral( "Text 90°" ) );
+		rot->setCheckable( true );
+		rot->setFocusPolicy( Qt::NoFocus );
+		rot->setToolTip( QStringLiteral( "Zapnuto = text do půdorysu otočený o 90° (kolmo na čáru řezu), vypnuto = text podél čáry" ) );
+		rot->setChecked( QSettings().value( QStringLiteral( "qRezy/auxWriteRot90" ), false ).toBool() );
+		connect( rot, &QToolButton::toggled, this, []( bool on ) { QSettings().setValue( QStringLiteral( "qRezy/auxWriteRot90" ), on ); } );
+		wl->addWidget( rot );
 		wl->addWidget( manual );
 		auto* wb = new QPushButton( QStringLiteral( "Zapsat (Enter)" ) );
 		wb->setToolTip( QStringLiteral( "Svislou vzdálenost posledního měření (2 body) zaokrouhlit na cm a vložit v mm jako text doprostřed čáry pomocného řezu v půdorysu" ) );
