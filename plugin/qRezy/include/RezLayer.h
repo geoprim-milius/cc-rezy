@@ -40,6 +40,8 @@ public:
 
 	std::vector<Item> items;
 
+	std::vector<Item> temp; //!< dočasné položky (náhled při přesunu, měření)
+
 protected:
 	void drawMeOnly( CC_DRAW_CONTEXT& context ) override;
 };

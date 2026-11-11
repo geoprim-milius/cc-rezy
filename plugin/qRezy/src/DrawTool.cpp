@@ -3439,12 +3439,107 @@ void DrawTool::updateTip()
 		}
 	}
 
-	// výsledek měření
-	if ( m_mode == Mode::Measure && m_measDone )
+	// dočasné položky vrstvy (popisky měření, posouvané texty)
+	std::vector<RezLayer::Item> temp;
+	CCVector3d upv = m_frame.V;
+	if ( m_frame.plan )
 	{
-		segment( m_measA, m_measB, yellow, 2.0f );
-		addMarker( ovs, m_measA, SnapType::End, yellow );
-		addMarker( ovs, m_measB, SnapType::End, yellow );
+		const double a = viewAngle();
+		upv = CCVector3d( -std::sin( a ), std::cos( a ), 0.0 );
+	}
+
+	// měření (D): kóta s patkami a vzdáleností – během měření i výsledek
+	if ( m_mode == Mode::Measure && ( m_measDone || ( m_step == 1 && m_hasCursor ) ) )
+	{
+		const CCVector2d A = m_measA;
+		const CCVector2d B = m_measDone ? m_measB : m_cursor;
+		const double L = dist( A, B );
+		if ( L > 1e-9 )
+		{
+			const CCVector2d d = ( B - A ) / L;
+			const CCVector2d n( -d.y, d.x );
+			const double t = 6.0 * pixelSize();
+			segment( A, B, yellow, 2.0f );
+			for ( const CCVector2d& E : { A, B } )
+			{
+				segment( E - n * t, E + n * t, yellow, 2.0f );                                   // patka
+				segment( E - ( d + n ) * ( t * 0.7 ), E + ( d + n ) * ( t * 0.7 ), yellow, 2.0f ); // šikmá čárka
+			}
+			RezLayer::Item it;
+			it.P = m_frame.to3D( ( A + B ) / 2.0 );
+			it.up = upv;
+			it.text = QString::number( L / m_scale, 'f', 3 ).replace( '.', ',' ) + QStringLiteral( " m" );
+			it.color = yellow;
+			it.background = true;
+			temp.push_back( it );
+		}
+		if ( m_measDone )
+		{
+			addMarker( ovs, m_measA, SnapType::End, yellow );
+			addMarker( ovs, m_measB, SnapType::End, yellow );
+		}
+	}
+
+	// přesun / kopie: posouvané texty a kóty u kurzoru
+	if ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && m_step == 2 && m_hasCursor )
+	{
+		const CCVector3d shift = m_frame.to3D( m_cursor, false ) - m_frame.to3D( m_base, false );
+		std::vector<ccPolyline*> moving = m_selSet;
+		if ( moving.empty() && m_sel )
+		{
+			moving.push_back( m_sel );
+		}
+		const double th = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+		for ( ccPolyline* poly : moving )
+		{
+			if ( !poly || !isText( poly ) || poly->size() == 0 )
+			{
+				continue;
+			}
+			if ( isKota( poly ) )
+			{
+				const KotaGeom g = kotaGeom( poly );
+				RezLayer::Item li;
+				for ( const CCVector3d& Q : g.segs )
+				{
+					li.segs.push_back( Q + shift );
+				}
+				li.color = yellow;
+				temp.push_back( li );
+				for ( int k = 0; k < g.texts.size(); ++k )
+				{
+					RezLayer::Item ti;
+					ti.P = g.textPos[static_cast<size_t>( k )] + shift;
+					ti.up = upv;
+					ti.height = g.textH;
+					ti.text = g.texts[k];
+					ti.color = yellow;
+					temp.push_back( ti );
+				}
+				continue;
+			}
+			RezLayer::Item it;
+			it.P = CCVector3d::fromArray( poly->getPoint( 0 )->u ) + shift;
+			it.up = upv;
+			it.height = th;
+			it.text = poly->getMetaData( "qRezy.text" ).toString();
+			it.color = yellow;
+			if ( poly->hasMetaData( "qRezy.textAng" ) )
+			{
+				const double a = poly->getMetaData( "qRezy.textAng" ).toDouble();
+				it.dir = m_frame.U * std::cos( a ) + m_frame.V * std::sin( a );
+			}
+			temp.push_back( it );
+		}
+	}
+	if ( m_layer )
+	{
+		const bool had = !m_layer->temp.empty();
+		m_layer->temp = temp;
+		if ( had || !temp.empty() )
+		{
+			m_layer->prepareDisplayForRefresh();
+		}
 	}
 
 	// značka uchopení
@@ -3578,7 +3673,7 @@ void DrawTool::showToolMenu( int group )
 			{ 3, "Prodloužit/zkrátit  (Extend Line)", true, Mode::Extend },
 			{ 4, "Roh  (Trim To Intersection)", true, Mode::Corner },
 			{ 5, "Oříznout k prvku  (Trim To Element)", true, Mode::Trim },
-			{ 6, "Oříznout více  (Trim Multiple)", false, Mode::Line },
+			{ 6, "Rozdělit čarou  (řezná čára přes více čar)", true, Mode::BreakLine },
 			{ 7, "Vložit vrchol  (Insert Vertex)", true, Mode::InsertVertex },
 			{ 8, "Smazat vrchol  (Delete Vertex)", true, Mode::DeleteVertex },
 			{ 9, "Zaoblit  (Circular Fillet)", false, Mode::Line },

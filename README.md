@@ -53,10 +53,10 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | hranice | Oříznout k prvku | 7 → 5 | hraniční čára, pak čáry k oříznutí / prodloužení (klik na část, která zůstane) |
 | vrchol + | Vložit vrchol | 7 → 7 | klik na čáru, pak umístit nový vrchol (čára se zlomí) |
 | vrchol × | Smazat vrchol | 7 → 8 | klik na spoj dvou čar → jedna rovná čára |
-| čáry s červenou | Rozdělit čarou | | řezná čára 2 body → všechny čáry, které protne, se v průsečíku rozdělí (nic se nemaže); průsečíky se ukazují červeně, počet v nápovědě; jeden krok Zpět |
+| čáry s červenou | Rozdělit čarou | 7 → 6 | řezná čára 2 body → všechny čáry, které protne, se v průsečíku rozdělí (nic se nemaže); průsečíky se ukazují červeně, počet v nápovědě; jeden krok Zpět |
 | křížek | Mazat | 8 / Del | klik na čáru (s výběrem smaže hned výběr) |
-| metr | Měřit | D | dva body → délka, vodorovně/výškově (ΔX/ΔY), úhel |
-| A | Vložit text | A → A | klik = levý dolní roh, napsat (např. naměřenou výšku); přesun (3·2) a kopie (3·1) – stačí kliknout na písmena; mazání jako u čar; do DGN na hladinu z okna Uložit |
+| metr | Měřit | D | dva body → délka, vodorovně/výškově (ΔX/ΔY), úhel; ve výkresu kóta s patkami a délkou (i během měření) |
+| A | Vložit text | A → A | klik = levý dolní roh, napsat (např. naměřenou výšku); přesun (3·2) a kopie (3·1) – stačí kliknout na písmena, posouvaný text je vidět u kurzoru; mazání jako u čar; do DGN na hladinu z okna Uložit |
 | A | Upravit text | A → B | klik na text → změnit jeho obsah |
 | kačena | Kóta (výšková) | | jen v řezu a pohledu: klik na bod = hrot šipky (uchopí se na čáry a body), druhý klik = strana poličky (vlevo / vpravo). Zápis v pásu: *Bpv* (394.410), *místní* k ±0,000 z panelu (+3.315 / ±0.000 / -0.450), *oboje* (místní nad poličkou, Bpv pod ní); 3 desetinná místa. Velikost značky a textu podle měřítka výkresu (pole *1 :*, výchozí 1:70 = základní čára 0,70 m, text 0,175 m). Přesun / kopie / Upravit prvek – výška se přepočítá podle nové polohy. Do DGN čáry + text, hladina 16 a barva 135 (okno Uložit) |
 | šipka zpět | Zpět | Ctrl+Z | |

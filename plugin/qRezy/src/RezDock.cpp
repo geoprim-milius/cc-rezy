@@ -1056,7 +1056,7 @@ void RezDock::buildToolbar()
 		RibbonColumn u3 = u.column();
 		u3.addSmall( T( DrawTool::Mode::DeleteVertex ), QStringLiteral( "7·8" ) );
 		u3.addSmall( T( DrawTool::Mode::Delete ), QStringLiteral( "8" ) );
-		u3.addSmall( T( DrawTool::Mode::BreakLine ) );
+		u3.addSmall( T( DrawTool::Mode::BreakLine ), QStringLiteral( "7·6" ) );
 		RibbonGroup h = r->addGroup( pDraw, QStringLiteral( "Hladina" ) );
 		RibbonColumn hc = h.column();
 		hc.widget( m_catCombo );

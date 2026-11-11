@@ -34,8 +34,19 @@ void RezLayer::drawMeOnly( CC_DRAW_CONTEXT& context )
 	const double cy = cam.viewport[3] / 2.0;
 
 	QFont base = context.display->getTextDisplayFont();
-	for ( const Item& it : items )
+	std::vector<const Item*> all;
+	all.reserve( items.size() + temp.size() );
+	for ( const Item& i : items )
 	{
+		all.push_back( &i );
+	}
+	for ( const Item& i : temp )
+	{
+		all.push_back( &i );
+	}
+	for ( const Item* itp : all )
+	{
+		const Item& it = *itp;
 		if ( !it.segs.empty() )
 		{
 			gl->glColor3ub( it.color.r, it.color.g, it.color.b );
