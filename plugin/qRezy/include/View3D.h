@@ -83,7 +83,7 @@ Q_SIGNALS:
 	//! pomocný řez: změřeny 2 body (lokální 3D) → kóta v 3D náhledu
 	void measureDone( const QVector<double>& xyz, double nx, double ny );
 	//! pomocný řez: zapsat výšku do půdorysu (kind 0 = okno, 1 = překlad, 2 = výška)
-	void writeHeight( const QString& text, int kind );
+	void writeHeight( const QString& text, int kind, double x, double y ); //!< x, y = místo odečtu (místní)
 
 protected:
 	bool eventFilter( QObject* obj, QEvent* event ) override;
@@ -179,6 +179,14 @@ private:
 	class RezLayer* m_measLayer = nullptr;
 	int m_measStep = 0;
 	std::vector<CCVector3d> m_mp; //!< kliknuté body měření (okno 3, jinak 2)
-	int measNeeded() const;
+	int measNeeded() const; //!< počet kliků (bez definované podlahy)
+	int measTotal() const;  //!< počet bodů měření včetně podlahy (okno 3, jinak 2)
+	std::vector<CCVector3d> measPts( const std::vector<CCVector3d>& clicks ) const; //!< kliky + podlaha
+	void updateFloor();
+	class QToolButton* m_floorBtn = nullptr;
+	bool m_floorPick = false;
+	bool m_hasFloor = false;
+	double m_floorZ = 0.0;
+	ccHObject* m_floorGroup = nullptr;
 	CCVector3d m_mCursor;
 };

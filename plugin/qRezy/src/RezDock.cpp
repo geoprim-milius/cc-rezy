@@ -2244,7 +2244,7 @@ bool RezDock::ensure3D( bool aux )
 					m_view3D->setMeasures( pts, CCVector3d( nx, ny, 0 ), 0.0 );
 				}
 			} );
-			connect( v, &View3D::writeHeight, this, [this]( const QString& t, int kind ) { writeAuxHeight( t, kind ); } );
+			connect( v, &View3D::writeHeight, this, [this]( const QString& t, int kind, double x, double y ) { writeAuxHeight( t, kind, x, y ); } );
 		}
 		if ( aux )
 		{
@@ -3130,7 +3130,7 @@ bool RezDock::writeCloudRaster( const QString& path, int viewId, double px, int 
 	return true;
 }
 
-void RezDock::writeAuxHeight( const QString& text, int kind )
+void RezDock::writeAuxHeight( const QString& text, int kind, double atX, double atY )
 {
 	ccGenericPointCloud* c = cloud();
 	if ( !c || !m_draw )
@@ -3161,8 +3161,8 @@ void RezDock::writeAuxHeight( const QString& text, int kind )
 	const double h = st.value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble();
 	const double w = 0.8 * h * text.size();
 	const CCVector2d perp( -d.y, d.x );
-	const CCVector2d M = ( m_auxPA + m_auxPB ) / 2.0;
-	// text uprostřed čáry, kousek nad ní
+	// text nad místem, kde se odečítala výška (bod na čáře řezu); jinak uprostřed čáry
+	const CCVector2d M = std::isfinite( atX ) && std::isfinite( atY ) ? CCVector2d( atX, atY ) : ( m_auxPA + m_auxPB ) / 2.0;
 	const CCVector2d P = M - d * ( w / 2.0 * sc ) + perp * ( 0.05 * sc );
 	static const char* keys[] = { "qRezy/hLevelWin", "qRezy/hLevelLin", "qRezy/hLevelH", "qRezy/hLevelCeil" };
 	static const int defs[] = { 17, 18, 19, 20 };
