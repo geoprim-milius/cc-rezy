@@ -228,6 +228,17 @@ namespace DgnV7
 		return true;
 	}
 
+	void Writer::setOriginMaster( double x, double y, double z )
+	{
+		const double v[3] = { x, y, z };
+		for ( int i = 0; i < 3; ++i )
+		{
+			m_seedOrigin[i] = v[i] * m_uorPerMaster;
+			m_origin[i] = m_seedOrigin[i];
+		}
+		m_originSet = true;
+	}
+
 	bool Writer::toUOR( double v, int axis, int32_t& out ) const
 	{
 		const double raw = std::round( v * m_uorPerMaster + m_origin[axis] );
@@ -527,7 +538,7 @@ namespace DgnV7
 				shifted = true;
 			}
 		}
-		if ( shifted && out.size() >= 1240 + 24 )
+		if ( ( shifted || m_originSet ) && out.size() >= 1240 + 24 )
 		{
 			for ( int i = 0; i < 3; ++i )
 			{

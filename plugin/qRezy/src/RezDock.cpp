@@ -43,6 +43,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLocale>
 #include <QMainWindow>
 #include <QMessageBox>
 #include <QPushButton>
@@ -2402,6 +2403,38 @@ void RezDock::show3DAt( double x, double y, double z, bool pin )
 
 // ================================================================ výstup
 
+namespace
+{
+	//! globální počátek (GO) výkresu V7 v metrech; false = nelze přečíst
+	bool readDgnOrigin( const QString& path, double go[3] )
+	{
+		QFile f( path );
+		if ( !f.open( QIODevice::ReadOnly ) )
+		{
+			return false;
+		}
+		const QByteArray data = f.read( 64 * 1024 );
+		std::vector<uint8_t> bytes( data.begin(), data.end() );
+		DgnV7::Writer w;
+		std::string err;
+		if ( !w.loadSeedBytes( bytes, err ) )
+		{
+			return false;
+		}
+		for ( int i = 0; i < 3; ++i )
+		{
+			go[i] = w.seedOriginMaster( i );
+		}
+		return true;
+	}
+
+	QString originText( const double go[3] )
+	{
+		// souřadnice bodu UOR 0 (jak ji ukáže MicroStation)
+		return QStringLiteral( "%1; %2" ).arg( QLocale( QLocale::Czech ).toString( -go[0], 'f', 3 ), QLocale( QLocale::Czech ).toString( -go[1], 'f', 3 ) );
+	}
+}
+
 bool RezDock::chooseSeed( QWidget* parent )
 {
 	QSettings st;
@@ -2460,7 +2493,72 @@ void RezDock::openSaveDialog()
 	sl->addWidget( seedBtn );
 	sl->addWidget( symBtn );
 	l->addWidget( seedBox );
-	connect( seedBtn, &QPushButton::clicked, &dlg, [this, &dlg, updateSeed]() { chooseSeed( &dlg ); updateSeed(); } );
+	// globální počátek: ze seedu, nebo z cílového výkresu (aby výstup seděl i jako reference „coincident“)
+	auto* goBox = new QGroupBox( QStringLiteral( "Globální počátek výkresu (GO)" ) );
+	auto* gl = new QHBoxLayout( goBox );
+	auto* goLabel = new QLabel;
+	goLabel->setWordWrap( true );
+	auto updateGo = [goLabel]()
+	{
+		QSettings st;
+		const QString gf = st.value( QStringLiteral( "qRezy/goFile" ) ).toString();
+		double go[3];
+		if ( !gf.isEmpty() )
+		{
+			if ( readDgnOrigin( gf, go ) )
+			{
+				goLabel->setText( QStringLiteral( "z výkresu <b>%1</b> (%2)" ).arg( QFileInfo( gf ).fileName(), originText( go ) ) );
+			}
+			else
+			{
+				goLabel->setText( QStringLiteral( "<span style='color:#d33'>výkres %1 nelze přečíst – použije se GO ze seedu</span>" ).arg( QFileInfo( gf ).fileName() ) );
+			}
+			goLabel->setToolTip( gf );
+			return;
+		}
+		const QString seedF = st.value( QStringLiteral( "qRezy/seed" ) ).toString();
+		if ( !seedF.isEmpty() && readDgnOrigin( seedF, go ) )
+		{
+			goLabel->setText( QStringLiteral( "ze seedu (%1)" ).arg( originText( go ) ) );
+		}
+		else
+		{
+			goLabel->setText( QStringLiteral( "ze seedu" ) );
+		}
+		goLabel->setToolTip( QStringLiteral( "Souřadnice bodu UOR 0. Má být stejný jako ve výkresu, kam se výstup připojuje nebo kopíruje." ) );
+	};
+	updateGo();
+	auto* goPick = new QPushButton( QStringLiteral( "Z výkresu…" ) );
+	goPick->setToolTip( QStringLiteral( "Převzít globální počátek z vašeho výkresu (např. 02_pudorys_1NP.dgn) – výstup pak leží na stejném místě i při připojení jako reference." ) );
+	auto* goSeed = new QPushButton( QStringLiteral( "Ze seedu" ) );
+	gl->addWidget( goLabel, 1 );
+	gl->addWidget( goPick );
+	gl->addWidget( goSeed );
+	l->addWidget( goBox );
+	connect( goPick, &QPushButton::clicked, &dlg, [&dlg, updateGo]()
+	{
+		QSettings st;
+		const QString start = st.value( QStringLiteral( "qRezy/goFile" ), st.value( QStringLiteral( "qRezy/seed" ) ) ).toString();
+		const QString f = QFileDialog::getOpenFileName( &dlg, QStringLiteral( "Výkres V7, jehož globální počátek se použije" ), start, QStringLiteral( "MicroStation V7 (*.dgn);;Všechny soubory (*)" ) );
+		if ( f.isEmpty() )
+		{
+			return;
+		}
+		double go[3];
+		if ( !readDgnOrigin( f, go ) )
+		{
+			QMessageBox::warning( &dlg, QStringLiteral( "Řezy" ), QStringLiteral( "Z výkresu nelze přečíst hlavičku V7." ) );
+			return;
+		}
+		st.setValue( QStringLiteral( "qRezy/goFile" ), f );
+		updateGo();
+	} );
+	connect( goSeed, &QPushButton::clicked, &dlg, [updateGo]()
+	{
+		QSettings().remove( QStringLiteral( "qRezy/goFile" ) );
+		updateGo();
+	} );
+	connect( seedBtn, &QPushButton::clicked, &dlg, [this, &dlg, updateSeed, updateGo]() { chooseSeed( &dlg ); updateSeed(); updateGo(); } );
 	connect( symBtn, &QPushButton::clicked, &dlg, [this]() { editSymbology(); } );
 
 	// soubory: každé patro zvlášť, řezy a pohledy společně
@@ -2735,6 +2833,26 @@ void RezDock::exportV7( const std::vector<int>& floorIds, bool withSections )
 	{
 		QMessageBox::warning( this, QStringLiteral( "Řezy" ), QString::fromStdString( err ) );
 		return;
+	}
+	{
+		const QString gf = st.value( QStringLiteral( "qRezy/goFile" ) ).toString();
+		if ( !gf.isEmpty() )
+		{
+			double go[3];
+			if ( !readDgnOrigin( gf, go ) )
+			{
+				if ( QMessageBox::question( this, QStringLiteral( "Řezy" ),
+				                            QStringLiteral( "Výkres pro globální počátek nelze přečíst:\n%1\n\nPokračovat s počátkem ze seedu?" ).arg( gf ) )
+				     != QMessageBox::Yes )
+				{
+					return;
+				}
+			}
+			else
+			{
+				w.setOriginMaster( go[0], go[1], go[2] );
+			}
+		}
 	}
 
 	const QString lastOut = st.value( QStringLiteral( "qRezy/lastOut" ), QFileInfo( seed ).absolutePath() ).toString();

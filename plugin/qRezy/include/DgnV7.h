@@ -61,6 +61,13 @@ namespace DgnV7
 		bool is3D() const { return m_is3D; }
 		double uorPerMaster() const { return m_uorPerMaster; }
 
+		//! globální počátek (GO) ze seedu v hlavních jednotkách (m) – souřadnice bodu UOR 0 je −GO
+		double seedOriginMaster( int axis ) const { return m_seedOrigin[axis] / m_uorPerMaster; }
+
+		//! Přepíše globální počátek (v hlavních jednotkách, jako seedOriginMaster jiného výkresu) –
+		//! výstup pak má stejný GO jako cílový výkres (sedí i při připojení jako reference „coincident“)
+		void setOriginMaster( double x, double y, double z );
+
 		//! Zapíše výkres: hlavička ze seedu + prvky. Souřadnice v hlavních jednotkách (m).
 		bool write( const std::string& path, const std::vector<Element>& elements, std::string& error ) const;
 
@@ -79,6 +86,7 @@ namespace DgnV7
 		double m_uorPerMaster = 10000.0;
 		mutable double m_origin[3] = { 0.0, 0.0, 0.0 }; //!< globální počátek v UOR (při přetečení se posune)
 		double m_seedOrigin[3] = { 0.0, 0.0, 0.0 };
+		bool m_originSet = false; //!< GO přepsán (zapsat do hlavičky)
 	};
 
 	//! Prvek načtený z výkresu V7 (souřadnice v hlavních jednotkách, s globálním počátkem)

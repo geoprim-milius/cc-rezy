@@ -153,7 +153,7 @@ Velké souřadnice (S-JTSK) se do V7 vejdou díky automatickému posunu globáln
 (souřadnice v MicroStationu zůstanou skutečné).
 
 Ikona diskety: **seed** (existující výkres – převezmou se jednotky a nastavení, nemění se),
-**Hladiny a barvy**, umístění řezů/pohledů ve výkresu (X/Y = levý konec, ±0,000),
+**Globální počátek (GO)** – ze seedu, nebo tlačítkem *Z výkresu…* z vašeho cílového výkresu (výstup pak sedí i při připojení jako reference „coincident“; jiný GO v seedu = posun o rozdíl počátků), **Hladiny a barvy**, umístění řezů/pohledů ve výkresu (X/Y = levý konec, ±0,000),
 výšky relativně nebo absolutně (Bpv), výška popisů. Řezy a pohledy jsou ve výkresu 2D
 s popisem „Řez A-A'“ a „±0,000 = … m n. m. Bpv“ (hladina 14). Vložené texty mají vlastní
 výšku a hladinu (výchozí 15) v okně Uložit.
