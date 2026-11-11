@@ -126,13 +126,16 @@ s pravoúhlým řezem (tloušťka = posuvník Hloubka). Levé kliknutí 2 body =
 u kurzoru výška nad ±0,000 a v Bpv. Pravé tažení = posun, kolečko = zoom.
 Okno se otevře přiblížené od podlahy ke stropu (odhad z bodů v řezu). Měření se kreslí jako výšková kóta (svislá kótovací čára s patkami a hodnotou, šikmo kliknuté body nevadí) – v pomocném řezu i v 3D náhledu.
 
-**Zápis výšky do půdorysu**: v řádku *Do půdorysu* vyberte druh, změřte a dejte **Enter** (nebo Zapsat).
+**Zápis výšky do půdorysu**: v řádku *Do půdorysu* vyberte tlačítkem druh (Překlad / Strop / Výška / Okno), změřte a dejte **Enter** (nebo Zapsat).
 Bere se svislý rozdíl, zaokrouhlený na cm, zapsaný v mm, jako text doprostřed čáry pomocného řezu, podél ní:
 - *Okno*: 3 kliky – podlaha, parapet, horní hrana okna (zobrazí se obě kóty) → `2300(850)` = výška okna nad parapetem (parapet nad podlahou);
 - *Překlad* (2 kliky): `Vp=2060`;
+- *Strop* (2 kliky): `Vs=2650` (výška stropu);
 - *Výška* (2 kliky): `2060`.
 Zaškrtnuté **ručně**: text se neumístí sám, ale visí na kurzoru (podél čáry řezu) a položíte ho klikem do půdorysu (Esc = zrušit) – když je na jednom místě víc údajů.
-Každý druh má svou hladinu DGN (okno Uložit → Výšky z pomocného řezu; výchozí 17 / 18 / 19). Natočení textu se přenese i do DGN.
+
+**Špendlík v pomocném řezu**: prostřední klik do mračna v pomocném řezu = špendlík v půdorysu i v 3D náhledu (pohled pomocného řezu se nehýbe). A naopak: špendlík z výkresu nebo z 3D náhledu se ukáže i v pomocném řezu, pokud místo leží v řezu (z půdorysu jako jehla od podlahy ke stropu).
+Každý druh má svou hladinu DGN (okno Uložit → Výšky z pomocného řezu; výchozí okno 17 / překlad 18 / výška 19 / strop 20). Natočení textu se přenese i do DGN.
 
 ## Rozdělaná práce
 Ikona složky uloží projekt CloudCompare (.bin) – mračno, kresbu, řezy, patra, body i nastavení

@@ -63,6 +63,13 @@ public:
 	QSize sizeHint() const override;
 	QSize minimumSizeHint() const override;
 
+	//! výška pásu podle obsahu karet (aby nebyly uříznuté popisky skupin)
+	void fitHeight();
+
+protected:
+	void showEvent( QShowEvent* e ) override;
+	void changeEvent( QEvent* e ) override;
+
 private:
 	QTabBar* m_tabs = nullptr;
 	QStackedWidget* m_stack = nullptr;

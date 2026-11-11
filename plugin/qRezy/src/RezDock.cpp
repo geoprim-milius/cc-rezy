@@ -2211,10 +2211,26 @@ bool RezDock::ensure3D( bool aux )
 		v->resize( 760, 600 );
 		if ( !aux )
 		{
-			connect( v, &View3D::pinPicked, this, [this]( double x, double y, double z ) { m_draw->showPin( CCVector3d( x, y, z ) ); } );
+			connect( v, &View3D::pinPicked, this, [this]( double x, double y, double z )
+			{
+				m_draw->showPin( CCVector3d( x, y, z ) );
+				if ( m_viewAux && m_viewAux->isVisible() )
+				{
+					m_viewAux->auxPin( CCVector3d( x, y, z ), false );
+				}
+			} );
 		}
 		else
 		{
+			// špendlík z pomocného řezu → půdorys a 3D náhled (pohled pomocného řezu se nemění)
+			connect( v, &View3D::pinPicked, this, [this]( double x, double y, double z )
+			{
+				m_draw->showPin( CCVector3d( x, y, z ) );
+				if ( ensure3D() )
+				{
+					m_view3D->pinAt( CCVector3d( x, y, z ), m_viewAngle, false );
+				}
+			} );
 			// měření v pomocném řezu → kóta i v 3D náhledu; zápis výšky do půdorysu
 			connect( v, &View3D::measureDone, this, [this]( const QVector<double>& xyz, double nx, double ny )
 			{
@@ -2373,6 +2389,10 @@ void RezDock::show3DAt( double x, double y, double z, bool pin )
 	if ( pin )
 	{
 		m_view3D->pinAt( CCVector3d( x, y, zLocal ), ang, std::isnan( z ) );
+		if ( m_viewAux && m_viewAux->isVisible() )
+		{
+			m_viewAux->auxPin( CCVector3d( x, y, zLocal ), std::isnan( z ) );
+		}
 	}
 	else
 	{
@@ -2541,6 +2561,7 @@ void RezDock::openSaveDialog()
 	auto* hWin = mkLvl( "qRezy/hLevelWin", 17 );
 	auto* hLin = mkLvl( "qRezy/hLevelLin", 18 );
 	auto* hH = mkLvl( "qRezy/hLevelH", 19 );
+	auto* hCeil = mkLvl( "qRezy/hLevelCeil", 20 );
 	hf->addWidget( new QLabel( QStringLiteral( "Okno:" ) ) );
 	hf->addWidget( hWin );
 	hf->addSpacing( 8 );
@@ -2549,6 +2570,9 @@ void RezDock::openSaveDialog()
 	hf->addSpacing( 8 );
 	hf->addWidget( new QLabel( QStringLiteral( "Výška:" ) ) );
 	hf->addWidget( hH );
+	hf->addSpacing( 8 );
+	hf->addWidget( new QLabel( QStringLiteral( "Strop:" ) ) );
+	hf->addWidget( hCeil );
 	hf->addStretch( 1 );
 	hBox->setToolTip( QStringLiteral( "Texty zapsané u vložených dřív mají hladinu uloženou u sebe; změna platí pro nové zápisy" ) );
 	l->addWidget( hBox );
@@ -2602,6 +2626,7 @@ void RezDock::openSaveDialog()
 	st.setValue( QStringLiteral( "qRezy/hLevelWin" ), hWin->value() );
 	st.setValue( QStringLiteral( "qRezy/hLevelLin" ), hLin->value() );
 	st.setValue( QStringLiteral( "qRezy/hLevelH" ), hH->value() );
+	st.setValue( QStringLiteral( "qRezy/hLevelCeil" ), hCeil->value() );
 	st.setValue( QStringLiteral( "qRezy/kotaColor" ), kColor->value() );
 	m_draw->setKotaSymbology( kLevel->value(), kColor->value() );
 	st.setValue( QStringLiteral( "qRezy/ptTextH" ), ptTextH->value() );
@@ -3139,9 +3164,9 @@ void RezDock::writeAuxHeight( const QString& text, int kind )
 	const CCVector2d M = ( m_auxPA + m_auxPB ) / 2.0;
 	// text uprostřed čáry, kousek nad ní
 	const CCVector2d P = M - d * ( w / 2.0 * sc ) + perp * ( 0.05 * sc );
-	static const char* keys[] = { "qRezy/hLevelWin", "qRezy/hLevelLin", "qRezy/hLevelH" };
-	static const int defs[] = { 17, 18, 19 };
-	const int k = std::max( 0, std::min( 2, kind ) );
+	static const char* keys[] = { "qRezy/hLevelWin", "qRezy/hLevelLin", "qRezy/hLevelH", "qRezy/hLevelCeil" };
+	static const int defs[] = { 17, 18, 19, 20 };
+	const int k = std::max( 0, std::min( 3, kind ) );
 	const int level = st.value( QString::fromLatin1( keys[k] ), defs[k] ).toInt();
 	if ( st.value( QStringLiteral( "qRezy/auxWriteManual" ), false ).toBool() )
 	{

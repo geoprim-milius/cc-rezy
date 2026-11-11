@@ -53,6 +53,8 @@ public:
 	//! špendlík: posune a přiblíží náhled na místo (natočení, perspektiva a ořez zůstanou), ukáže špendlík;
 	//! plan = klik v půdorysu (jehla přes celou výšku ořezu)
 	void pinAt( const CCVector3d& localP, double viewAngle, bool plan );
+	//! špendlík v pomocném řezu (jen když místo leží v řezu; pohled se nemění)
+	void auxPin( const CCVector3d& localP, bool plan );
 
 	//! změřené body ze souboru (lokální 3D, číslo) a jejich barvy
 	struct SurveyPt
@@ -160,12 +162,15 @@ private:
 	CCVector3d m_auxA;
 	CCVector3d m_auxU;
 	CCVector3d m_auxN;
+	double m_auxLen = 0.0;
+	double m_auxFloor = 0.0; //!< odhad podlahy (místní z)
+	double m_auxCeil = 0.0;  //!< odhad stropu
 	double m_zeroG = 0.0;
 	class QPushButton* m_backBtn = nullptr;
 	class ccPolyline* m_measPoly = nullptr;
 	// zápis výšky do půdorysu (jen pomocný řez)
 	class QWidget* m_writeRow = nullptr;
-	class QComboBox* m_writeMode = nullptr;
+	class QButtonGroup* m_writeMode = nullptr; //!< 0 okno, 1 překlad, 2 výška, 3 strop
 	int m_parapetMM = -1;
 	void writeMeasured();
 	void auxZoom( double len );

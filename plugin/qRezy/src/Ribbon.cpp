@@ -1,6 +1,10 @@
 #include "Ribbon.h"
 
+#include <algorithm>
+
 #include <QAction>
+#include <QEvent>
+#include <QTimer>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -208,6 +212,45 @@ void Ribbon::finishPages()
 	if ( p >= 0 && p < m_tabs->count() )
 	{
 		m_tabs->setCurrentIndex( p );
+	}
+	fitHeight();
+}
+
+void Ribbon::fitHeight()
+{
+	// nejvyšší obsah ze všech karet (tři malé řádky + popisek skupiny se do pevné výšky nevešly)
+	int hMax = BodyH;
+	for ( QHBoxLayout* h : m_pages )
+	{
+		if ( QWidget* page = h->parentWidget() )
+		{
+			if ( QLayout* l = page->layout() )
+			{
+				l->invalidate();
+				l->activate();
+				hMax = std::max( hMax, l->sizeHint().height() );
+			}
+		}
+	}
+	const int want = hMax + 8; // + vodorovný posuvník
+	if ( m_stack->height() != want || m_stack->minimumHeight() != want )
+	{
+		m_stack->setFixedHeight( want );
+	}
+}
+
+void Ribbon::showEvent( QShowEvent* e )
+{
+	QWidget::showEvent( e );
+	QTimer::singleShot( 0, this, [this] { fitHeight(); } );
+}
+
+void Ribbon::changeEvent( QEvent* e )
+{
+	QWidget::changeEvent( e );
+	if ( e->type() == QEvent::StyleChange || e->type() == QEvent::FontChange )
+	{
+		QTimer::singleShot( 0, this, [this] { fitHeight(); } );
 	}
 }
 

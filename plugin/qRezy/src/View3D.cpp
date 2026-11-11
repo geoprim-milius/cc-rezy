@@ -17,7 +17,9 @@
 #include <ReferenceCloud.h>
 
 #include <QApplication>
+#include <QButtonGroup>
 #include <QCheckBox>
+#include <QToolButton>
 #include <QComboBox>
 #include <QShortcut>
 #include <QTimer>
@@ -340,12 +342,39 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		auto* wl = new QHBoxLayout( m_writeRow );
 		wl->setContentsMargins( 0, 0, 0, 0 );
 		wl->addWidget( new QLabel( QStringLiteral( "Do půdorysu:" ) ) );
-		m_writeMode = new QComboBox;
-		m_writeMode->addItem( QStringLiteral( "Okno – podlaha, parapet, horní hrana (3 kliky)  →  2300(850)" ) );
-		m_writeMode->addItem( QStringLiteral( "Překlad  →  Vp=2060" ) );
-		m_writeMode->addItem( QStringLiteral( "Výška  →  2060" ) );
-		m_writeMode->setCurrentIndex( QSettings().value( QStringLiteral( "qRezy/auxWriteMode" ), 0 ).toInt() );
-		wl->addWidget( m_writeMode, 1 );
+		// režimy jako přepínací tlačítka (rychlejší než seznam); id = qRezy/auxWriteMode
+		m_writeMode = new QButtonGroup( this );
+		m_writeMode->setExclusive( true );
+		struct WM
+		{
+			int id;
+			const char* name;
+			const char* tip;
+		};
+		const WM modes[] = {
+			{ 1, "Překlad", "Výška překladu – 2 kliky (podlaha, spodní hrana překladu)  →  Vp=2060" },
+			{ 3, "Strop", "Výška stropu – 2 kliky (podlaha, strop)  →  Vs=2650" },
+			{ 2, "Výška", "Výška – 2 kliky  →  2060" },
+			{ 0, "Okno", "Okno – 3 kliky (podlaha, parapet, horní hrana okna)  →  2300(850) = okno nad parapetem (parapet nad podlahou)" },
+		};
+		int cur = QSettings().value( QStringLiteral( "qRezy/auxWriteMode" ), 0 ).toInt();
+		if ( cur < 0 || cur > 3 )
+		{
+			cur = 0;
+		}
+		for ( const WM& m : modes )
+		{
+			auto* b = new QToolButton;
+			b->setText( QString::fromUtf8( m.name ) );
+			b->setToolTip( QString::fromUtf8( m.tip ) );
+			b->setCheckable( true );
+			b->setChecked( m.id == cur );
+			b->setMinimumWidth( 64 );
+			b->setFocusPolicy( Qt::NoFocus );
+			m_writeMode->addButton( b, m.id );
+			wl->addWidget( b );
+		}
+		wl->addStretch( 1 );
 		auto* manual = new QCheckBox( QStringLiteral( "ručně" ) );
 		manual->setToolTip( QStringLiteral( "Text do půdorysu neumístit automaticky doprostřed čáry řezu, ale nechat ho na kurzoru a položit klikem (např. když je víc údajů přes sebe)" ) );
 		manual->setChecked( QSettings().value( QStringLiteral( "qRezy/auxWriteManual" ), false ).toBool() );
@@ -362,8 +391,12 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 			sc->setContext( Qt::WidgetWithChildrenShortcut );
 			connect( sc, &QShortcut::activated, this, [this]() { writeMeasured(); } );
 		}
-		connect( m_writeMode, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this]( int i )
+		connect( m_writeMode, &QButtonGroup::idToggled, this, [this]( int i, bool on )
 		{
+			if ( !on )
+			{
+				return;
+			}
 			QSettings().setValue( QStringLiteral( "qRezy/auxWriteMode" ), i );
 			m_parapetMM = -1;
 			m_mp.clear();
@@ -944,10 +977,34 @@ void View3D::buildPin()
 	// velikost podle viditelného okolí
 	const double r = std::max( { std::abs( m_rs[0]->v0() ), std::abs( m_rs[0]->v1() ), std::abs( m_rs[1]->v0() ), std::abs( m_rs[1]->v1() ) } ) * m_scale;
 	const double h = std::max( 0.15 * m_scale, 0.3 * r );
-	const double head = 0.12 * h;
+	double head = 0.12 * h;
 	CCVector3d bottom = m_pinP;
 	CCVector3d top = m_pinP + CCVector3d( 0, 0, h );
-	if ( m_pinPlan )
+	if ( m_aux )
+	{
+		// pomocný řez: jen když místo leží v řezu (kamera se nehýbe); jehla před mračnem, ať ji body nezakryjí
+		const double sc = m_scale;
+		const double u = ( m_pinP - m_auxA ).dot( m_auxU );
+		const double dn = std::abs( ( m_pinP - m_focus ).dot( m_auxN ) );
+		const double halfT = std::max( std::abs( m_rs[1]->v0() ), std::abs( m_rs[1]->v1() ) ) * sc;
+		if ( u < -0.3 * sc || u > m_auxLen + 0.3 * sc || dn > halfT + 1.0 * sc )
+		{
+			return;
+		}
+		const CCVector3d F = m_auxN * ( 2.0 * sc - ( m_pinP - m_focus ).dot( m_auxN ) );
+		head = 0.08 * sc;
+		if ( m_pinPlan )
+		{
+			bottom = CCVector3d( m_pinP.x, m_pinP.y, m_auxFloor ) + F;
+			top = CCVector3d( m_pinP.x, m_pinP.y, m_auxCeil ) + F;
+		}
+		else
+		{
+			bottom = m_pinP + F;
+			top = bottom + CCVector3d( 0, 0, 0.8 * sc );
+		}
+	}
+	else if ( m_pinPlan )
 	{
 		// půdorys: výška místa není dána → jehla přes celou výšku ořezu
 		bottom.z = m_focus.z + m_rs[2]->v0() * m_scale;
@@ -1019,6 +1076,19 @@ void View3D::pinAt( const CCVector3d& P, double viewAngle, bool plan )
 	}
 }
 
+void View3D::auxPin( const CCVector3d& P, bool plan )
+{
+	if ( !m_win || !m_aux )
+	{
+		return;
+	}
+	m_pinP = P;
+	m_pinPlan = plan;
+	m_hasPin = true;
+	buildPin();
+	m_win->redraw();
+}
+
 // ---------------------------------------------------------------- pomocný řez
 
 void View3D::auxSection( const CCVector3d& A, const CCVector3d& B, const CCVector3d& N, double planZ, double zeroGlobal, double thickness )
@@ -1079,6 +1149,10 @@ void View3D::auxSection( const CCVector3d& A, const CCVector3d& B, const CCVecto
 	m_win->setWindowCursor( Qt::BlankCursor ); // nitkový kříž kreslíme sami
 	updateRegion( true ); // body výřezu hned (kvůli odhadu podlahy a stropu)
 	auxZoom( len );
+	if ( m_hasPin )
+	{
+		buildPin(); // špendlík zůstává, pokud leží v novém řezu
+	}
 	if ( m_writeRow )
 	{
 		m_writeRow->setVisible( true );
@@ -1220,7 +1294,7 @@ QString View3D::heightText( const CCVector3d& P ) const
 
 int View3D::measNeeded() const
 {
-	return ( m_writeMode && m_writeMode->currentIndex() == 0 ) ? 3 : 2;
+	return ( m_writeMode && m_writeMode->checkedId() == 0 ) ? 3 : 2;
 }
 
 void View3D::updateMeasure( bool live )
@@ -1306,6 +1380,23 @@ bool View3D::eventFilter( QObject* obj, QEvent* event )
 	if ( obj != m_widget || !m_aux )
 	{
 		return QDockWidget::eventFilter( obj, event );
+	}
+	// prostřední klik (bez tažení) do pomocného řezu = špendlík tady, v půdorysu i v 3D náhledu
+	if ( event->type() == QEvent::MouseButtonPress && static_cast<QMouseEvent*>( event )->button() == Qt::MiddleButton )
+	{
+		m_midPress = static_cast<QMouseEvent*>( event )->pos();
+		m_midDown = true;
+	}
+	else if ( event->type() == QEvent::MouseButtonRelease && static_cast<QMouseEvent*>( event )->button() == Qt::MiddleButton && m_midDown )
+	{
+		m_midDown = false;
+		const QPoint pos = static_cast<QMouseEvent*>( event )->pos();
+		CCVector3d P;
+		if ( ( pos - m_midPress ).manhattanLength() < 5 && ( pickPoint( pos, P ) || auxPoint( pos, P ) ) )
+		{
+			auxPin( P, false );
+			Q_EMIT pinPicked( P.x, P.y, P.z );
+		}
 	}
 	switch ( event->type() )
 	{
@@ -1402,7 +1493,7 @@ void View3D::writeMeasured()
 	}
 	// svislé vzdálenosti, zaokrouhlené na cm, v mm
 	auto mm = [this]( const CCVector3d& A, const CCVector3d& B ) { return static_cast<int>( std::lround( std::abs( B.z - A.z ) / m_scale * 100.0 ) ) * 10; };
-	const int mode = m_writeMode ? m_writeMode->currentIndex() : 2;
+	const int mode = m_writeMode ? m_writeMode->checkedId() : 2;
 	QString txt;
 	if ( mode == 0 )
 	{
@@ -1411,6 +1502,10 @@ void View3D::writeMeasured()
 	else if ( mode == 1 )
 	{
 		txt = QStringLiteral( "Vp=%1" ).arg( mm( m_mp[0], m_mp[1] ) );
+	}
+	else if ( mode == 3 )
+	{
+		txt = QStringLiteral( "Vs=%1" ).arg( mm( m_mp[0], m_mp[1] ) );
 	}
 	else
 	{
@@ -1576,6 +1671,9 @@ void View3D::auxZoom( double len )
 			ceilZ = c;
 		}
 	}
+	m_auxLen = len;
+	m_auxFloor = floorZ;
+	m_auxCeil = ceilZ;
 	const CCVector3d P0 = m_auxA - m_auxU * ( 0.2 * sc );
 	const CCVector3d P1 = m_auxA + m_auxU * ( len + 0.2 * sc );
 	CCVector3 mn( static_cast<PointCoordinateType>( std::min( P0.x, P1.x ) ), static_cast<PointCoordinateType>( std::min( P0.y, P1.y ) ), static_cast<PointCoordinateType>( floorZ - 0.15 * sc ) );
