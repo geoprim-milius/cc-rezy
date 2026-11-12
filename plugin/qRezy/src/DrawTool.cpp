@@ -2248,13 +2248,11 @@ void DrawTool::detectRoom( const CCVector2d& click )
 	QApplication::restoreOverrideCursor();
 	if ( m_clBatch.empty() )
 	{
-		m_flash = QStringLiteral( "Místnost: v plátku kolem kliknutí nejsou zdi" );
+		m_flash = QStringLiteral( "Místnost: nenašel jsem obrys – klikněte dál od zdi, doprostřed místnosti" );
 	}
-	else if ( open > 0.25 )
+	else if ( open > 0.99 )
 	{
-		m_flash = QStringLiteral( "Místnost: %1 čar – pozor, místnost není uzavřená (%2 % směrů bez zdi), zkontrolujte náhled" )
-		              .arg( m_clBatch.size() )
-		              .arg( static_cast<int>( open * 100.0 + 0.5 ) );
+		m_flash = QStringLiteral( "Místnost: %1 čar – pozor, plocha utekla otvorem ven (místnost není uzavřená), zkontrolujte náhled" ).arg( m_clBatch.size() );
 	}
 }
 
@@ -2265,12 +2263,7 @@ void DrawTool::detectBatch()
 	std::vector<CCVector2d> pts;
 	slicePoints2D( pts, nullptr, 0.0 );
 	const CloudLines::Params p = cloudParams();
-	std::vector<CloudLines::Seg> segs = CloudLines::extract( pts, p );
-	if ( p.square )
-	{
-		CloudLines::squareUp( segs );
-	}
-	CloudLines::joinCorners( segs, 0.6 * m_scale );
+	std::vector<CloudLines::Seg> segs = CloudLines::batch( pts, p );
 	// vynechat úseky, které už jsou nakreslené (oba konce u rovnoběžné čáry)
 	std::vector<Segment> drawn;
 	for ( const Segment& sg : collectSegments() )

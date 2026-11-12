@@ -27,14 +27,19 @@ namespace CloudLines
 	//! všechny přímé úseky v bodech (body se nejdřív zředí na mřížku ~tol/2)
 	std::vector<Seg> extract( const std::vector<CCVector2d>& pts, const Params& p );
 
-	//! srovnat úseky do převládajícího směru (do 3°), otočení kolem středu
-	void squareUp( std::vector<Seg>& segs );
+	//! srovnat úseky do převládajícího směru (do 3°), otočení kolem středu – jen když se konce neposunou o víc než maxShift
+	void squareUp( std::vector<Seg>& segs, double maxShift );
 
-	//! rohy mezi úseky: konce, jejichž průsečík leží do „reach“ od konce (L), nebo konec k jiné čáře (T)
-	void joinCorners( std::vector<Seg>& segs, double reach );
+	//! rohy mezi úseky: konce, jejichž průsečík leží do „reach“ od konce (L), nebo konec k jiné čáře (T).
+	//! Vrací pro každý konec (2 na úsek), jestli je napojený.
+	std::vector<char> joinCorners( std::vector<Seg>& segs, double reach, double scale );
 
-	//! obrys místnosti kolem bodu „inside“: viditelné body z místa kliknutí → úseky → uzavřený obrys s rohy.
-	//! openRays = podíl paprsků, které nenarazily na zeď (místnost není uzavřená)
+	//! hromadně: všechny úseky ≥ minLen s rohy + krátké hrany ústupků, které spojují dvě čáry
+	std::vector<Seg> batch( const std::vector<CCVector2d>& pts, const Params& p );
+
+	//! obrys místnosti kolem bodu „inside“: volná plocha „rozlitá“ od kliknutí (otvory se zavřou), body u jejího
+	//! okraje → úseky seřazené podél obrysu → uzavřený obrys s rohy.
+	//! openRays = podíl obrysu bez zdi (otvory); 1 = plocha utekla ven (místnost není uzavřená)
 	std::vector<Seg> room( const std::vector<CCVector2d>& pts, const CCVector2d& inside, const Params& p, double& openRays );
 
 	//! průsečík dvou přímek (false = rovnoběžné)
