@@ -2071,6 +2071,48 @@ bool DrawTool::detectCloudLine( const CCVector2d& click )
 		}
 	}
 	const double tMid = 0.5 * ( tMin + tMax );
+	const double epsJ = 0.01 * sc;
+	// konec staré čáry je volný = nekončí na něm ani na něj nenavazuje jiná čára (roh už hotový → neprodlužovat)
+	auto endFree = [&]( const Segment& sg, const CCVector2d& P )
+	{
+		for ( const Segment& o : others )
+		{
+			if ( o.poly != sg.poly && dist( closestOnSegment( o.a, o.b, P ), P ) < epsJ )
+			{
+				return false;
+			}
+		}
+		return true;
+	};
+	// prodloužení P→Q nesmí přetnout jinou čáru (např. druhý líc zdi) – jinak by spojilo přes mezeru
+	auto crosses = [&]( const CCVector2d& P, const CCVector2d& Q, const void* skip1, const void* skip2 )
+	{
+		if ( dist( P, Q ) < epsJ )
+		{
+			return false;
+		}
+		for ( const Segment& o : others )
+		{
+			if ( o.poly == skip1 || o.poly == skip2 )
+			{
+				continue;
+			}
+			CCVector2d X;
+			if ( !lineIntersection( P, Q, o.a, o.b, X ) )
+			{
+				continue;
+			}
+			const double u = paramOn( P, Q, X );
+			const double v = paramOn( o.a, o.b, X );
+			const double mu = epsJ / dist( P, Q );
+			const double mv = epsJ / dist( o.a, o.b );
+			if ( u > mu && u < 1.0 - mu && v > -mv && v < 1.0 + mv )
+			{
+				return true;
+			}
+		}
+		return false;
+	};
 	for ( int e = 0; e < 2; ++e )
 	{
 		const CCVector2d A = P0 + D * tMin;
@@ -2103,12 +2145,29 @@ bool DrawTool::detectCloudLine( const CCVector2d& click )
 			const double dA = dist( I, sg.a );
 			const double dB = dist( I, sg.b );
 			const double t = paramOn( sg.a, sg.b, I );
+			if ( crosses( E, I, sg.poly, nullptr ) )
+			{
+				continue; // mezi koncem nové čáry a průsečíkem leží jiná čára
+			}
 			double score;
 			int end;
-			if ( std::min( dA, dB ) <= reachJ )
+			const bool outside = t < 0.0 || t > 1.0;
+			if ( std::min( dA, dB ) <= reachJ && outside )
 			{
+				// L: prodloužit starou čáru – jen volný konec a bez přetnutí jiné čáry
+				const CCVector2d& Eo = dA <= dB ? sg.a : sg.b;
+				if ( !endFree( sg, Eo ) || crosses( Eo, I, sg.poly, nullptr ) )
+				{
+					continue;
+				}
 				score = dE + std::min( dA, dB );
 				end = dA <= dB ? 0 : 1;
+			}
+			else if ( std::min( dA, dB ) <= reachJ )
+			{
+				// průsečík na staré čáře u konce: zkrátit ji jen když je konec volný, jinak T (hotový roh nerozbít)
+				score = dE + std::min( dA, dB );
+				end = endFree( sg, dA <= dB ? sg.a : sg.b ) ? ( dA <= dB ? 0 : 1 ) : -1;
 			}
 			else if ( t > 0.0 && t < 1.0 )
 			{

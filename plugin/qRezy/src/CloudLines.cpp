@@ -1419,11 +1419,34 @@ namespace CloudLines
 		{
 			poly.pop_back();
 		}
+		// převládající směr obrysu (délkově vážený, modulo 90°)
+		double sx = 0.0;
+		double sy = 0.0;
+		for ( size_t i = 0; i < poly.size(); ++i )
+		{
+			const CCVector2d e = poly[( i + 1 ) % poly.size()] - poly[i];
+			const double a = 4.0 * std::atan2( e.y, e.x );
+			const double l = e.norm();
+			sx += l * std::cos( a );
+			sy += l * std::sin( a );
+		}
+		const double dom = 0.25 * std::atan2( sy, sx );
+		// odchylka hrany od pravoúhlé sítě (0–45°)
+		auto skew = [&]( const CCVector2d& e )
+		{
+			double a = std::fmod( std::atan2( e.y, e.x ) - dom, 0.5 * Pi );
+			if ( a < 0.0 )
+			{
+				a += 0.5 * Pi;
+			}
+			return std::min( a, 0.5 * Pi - a );
+		};
 		bool changed = true;
-		while ( changed && poly.size() > 3 )
+		int guard = 0;
+		while ( changed && poly.size() > 3 && ++guard < 1000 )
 		{
 			changed = false;
-			const int nv = static_cast<int>( poly.size() );
+			int nv = static_cast<int>( poly.size() );
 			for ( int i = 0; i < nv; ++i )
 			{
 				const CCVector2d u = poly[( i + nv - 1 ) % nv] - poly[i];
@@ -1443,6 +1466,54 @@ namespace CloudLines
 					changed = true;
 					break;
 				}
+			}
+			if ( changed || !p.square )
+			{
+				continue;
+			}
+			// šikmá hrana přes roh (v rohu málo bodů) mezi dvěma pravoúhlými zdmi → prodloužit zdi do rohu;
+			// mezi dvěma rovnoběžnými zdmi → kolmý odskok uprostřed
+			nv = static_cast<int>( poly.size() );
+			for ( int i = 0; i < nv && nv > 3; ++i )
+			{
+				const int i0 = ( i + nv - 1 ) % nv;
+				const int i1 = i;
+				const int i2 = ( i + 1 ) % nv;
+				const int i3 = ( i + 2 ) % nv;
+				const CCVector2d e = poly[i2] - poly[i1];
+				const CCVector2d ep = poly[i1] - poly[i0];
+				const CCVector2d en = poly[i3] - poly[i2];
+				if ( e.norm() > 1.5 * sc || skew( e ) < 8.0 * Deg || skew( ep ) > 3.0 * Deg || skew( en ) > 3.0 * Deg )
+				{
+					continue;
+				}
+				const double cpn = std::abs( ep.dot( en ) ) / ( ep.norm() * en.norm() );
+				if ( cpn < std::sin( 10.0 * Deg ) )
+				{
+					// sousední zdi kolmé → roh průsečíkem
+					CCVector2d I;
+					if ( !intersect( poly[i0], poly[i1], poly[i2], poly[i3], I ) || dist( I, poly[i1] ) > 1.5 * sc || dist( I, poly[i2] ) > 1.5 * sc )
+					{
+						continue;
+					}
+					poly[i1] = I;
+					poly.erase( poly.begin() + i2 );
+				}
+				else if ( cpn > std::cos( 10.0 * Deg ) )
+				{
+					// rovnoběžné zdi s odskokem → kolmá hrana v půlce šikmé
+					const CCVector2d M = ( poly[i1] + poly[i2] ) * 0.5;
+					CCVector2d dp = ep / ep.norm();
+					CCVector2d dn = en / en.norm();
+					poly[i1] = poly[i0] + dp * ( M - poly[i0] ).dot( dp );
+					poly[i2] = poly[i3] - dn * ( poly[i3] - M ).dot( dn );
+				}
+				else
+				{
+					continue;
+				}
+				changed = true;
+				break;
 			}
 		}
 		std::vector<Seg> outl;
