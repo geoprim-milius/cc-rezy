@@ -2300,11 +2300,12 @@ void DrawTool::detectRoom( const CCVector2d& click )
 	QApplication::setOverrideCursor( Qt::WaitCursor );
 	std::vector<CCVector2d> pts;
 	slicePoints2D( pts, &click, 25.0 * m_scale );
-	double open = 1.0;
-	bool flood = false;
+	double openRays = 1.0;
+	double openFlood = 1.0;
 	if ( pts.size() >= 20 )
 	{
-		// algoritmus z v1.15 (paprsky z kliknutí) – uživateli funguje lépe; rozlití volné plochy jen když nic nenajde
+		// obě metody: paprsky z kliknutí (v1.15) a rozlití volné plochy; pravoúhlost do 5°,
+		// shodné hrany = fáze 1, hrany jen jedné metody ležící na bodech = fáze 2
 		const CloudLines::Params p = cloudParams();
 		CloudLinesV15::Params p15;
 		p15.tol = p.tol;
@@ -2312,86 +2313,48 @@ void DrawTool::detectRoom( const CCVector2d& click )
 		p15.minLen = p.minLen;
 		p15.scale = p.scale;
 		p15.square = p.square;
-		for ( const CloudLinesV15::Seg& sg : CloudLinesV15::room( pts, click, p15, open ) )
+		std::vector<CloudLines::Seg> rays;
+		for ( const CloudLinesV15::Seg& sg : CloudLinesV15::room( pts, click, p15, openRays ) )
 		{
 			CloudLines::Seg s;
 			s.a = sg.a;
 			s.b = sg.b;
-			m_clBatch.push_back( s );
+			rays.push_back( s );
 		}
-		if ( m_clBatch.empty() )
-		{
-			m_clBatch = CloudLines::room( pts, click, p, open );
-			flood = true;
-		}
-		for ( CloudLines::Seg& sg : m_clBatch )
-		{
-			sg.cls = 0;
-		}
+		const std::vector<CloudLines::Seg> flood = CloudLines::room( pts, click, p, openFlood );
+		m_clBatch = CloudLines::combineRoom( rays, flood, pts, p, ( p.square ? 5.0 : 90.0 ) / RadToDeg );
 	}
 	QApplication::restoreOverrideCursor();
 	if ( m_clBatch.empty() )
 	{
 		m_flash = QStringLiteral( "Místnost: nenašel jsem obrys – klikněte dál od zdi, doprostřed místnosti" );
 	}
-	else if ( flood && open > 0.99 )
+	else
 	{
-		m_flash = QStringLiteral( "Místnost: %1 čar – pozor, plocha utekla otvorem ven (místnost není uzavřená), zkontrolujte náhled" ).arg( m_clBatch.size() );
-	}
-	else if ( !flood && open > 0.25 )
-	{
-		m_flash = QStringLiteral( "Místnost: %1 čar – pozor, místnost není uzavřená (%2 % směrů bez zdi), zkontrolujte náhled" )
-		              .arg( m_clBatch.size() )
-		              .arg( static_cast<int>( open * 100.0 + 0.5 ) );
+		m_flash = roomPrompt();
+		if ( openFlood > 0.99 && openRays > 0.25 )
+		{
+			m_flash += QStringLiteral( " – pozor, místnost není uzavřená" );
+		}
 	}
 }
 
-void DrawTool::detectBatch()
+QString DrawTool::roomPrompt() const
 {
-	m_clBatch.clear();
-	QApplication::setOverrideCursor( Qt::WaitCursor );
-	std::vector<CCVector2d> pts;
-	slicePoints2D( pts, nullptr, 0.0 );
-	const CloudLines::Params p = cloudParams();
-	std::vector<CloudLines::Seg> segs = CloudLines::batch( pts, p );
-	// vynechat úseky, které už jsou nakreslené (oba konce u rovnoběžné čáry)
-	std::vector<Segment> drawn;
-	for ( const Segment& sg : collectSegments() )
-	{
-		if ( !sg.ref && !sg.arc && sg.poly && !isText( sg.poly ) )
-		{
-			drawn.push_back( sg );
-		}
-	}
-	const double nearTol = 2.0 * p.tol + 0.01 * m_scale;
-	for ( const CloudLines::Seg& sg : segs )
-	{
-		bool dup = false;
-		for ( const Segment& d : drawn )
-		{
-			if ( dist( closestOnSegment( d.a, d.b, sg.a ), sg.a ) < nearTol && dist( closestOnSegment( d.a, d.b, sg.b ), sg.b ) < nearTol )
-			{
-				dup = true;
-				break;
-			}
-		}
-		if ( !dup )
-		{
-			m_clBatch.push_back( sg );
-		}
-	}
-	QApplication::restoreOverrideCursor();
-	m_flash = m_clBatch.empty() ? QStringLiteral( "Hromadně: v plátku nejsou žádné nové přímé úseky" ) : batchPrompt();
-}
-
-int DrawTool::batchPhase() const
-{
-	int ph = 3;
+	static const char* names[] = { "obě metody se shodují", "jen jedna metoda – zkontrolujte" };
+	const int ph = std::max( 0, std::min( 1, batchPhase() ) );
+	int n = 0;
+	int n2 = 0;
 	for ( const CloudLines::Seg& sg : m_clBatch )
 	{
-		ph = std::min( ph, sg.cls );
+		n += sg.cls == ph ? 1 : 0;
+		n2 += sg.cls > ph ? 1 : 0;
 	}
-	return ph;
+	return QStringLiteral( "Místnost %1/2 (%2): %3 čar%4 – Enter nebo klik do místnosti = potvrdit, pravé = přeskočit, klik do jiné = další místnost" )
+	    .arg( ph + 1 )
+	    .arg( QString::fromUtf8( names[ph] ) )
+	    .arg( n )
+	    .arg( n2 > 0 ? QStringLiteral( " (pak ještě %1)" ).arg( n2 ) : QString() );
 }
 
 QString DrawTool::batchPrompt() const
@@ -2413,7 +2376,8 @@ void DrawTool::skipBatchPhase()
 {
 	const int ph = batchPhase();
 	m_clBatch.erase( std::remove_if( m_clBatch.begin(), m_clBatch.end(), [ph]( const CloudLines::Seg& sg ) { return sg.cls == ph; } ), m_clBatch.end() );
-	m_flash = m_clBatch.empty() ? QStringLiteral( "Hromadně: hotovo" ) : batchPrompt();
+	const bool room = m_mode == Mode::CloudRoom;
+	m_flash = m_clBatch.empty() ? ( room ? QStringLiteral( "Místnost: hotovo" ) : QStringLiteral( "Hromadně: hotovo" ) ) : ( room ? roomPrompt() : batchPrompt() );
 }
 
 void DrawTool::acceptBatch()
@@ -2436,7 +2400,8 @@ void DrawTool::acceptBatch()
 	}
 	pushUndo( std::move( u ) );
 	m_clBatch.erase( std::remove_if( m_clBatch.begin(), m_clBatch.end(), [ph]( const CloudLines::Seg& sg ) { return sg.cls == ph; } ), m_clBatch.end() );
-	m_flash = m_clBatch.empty() ? QStringLiteral( "Přidáno čar: %1" ).arg( n ) : QStringLiteral( "Přidáno čar: %1. " ).arg( n ) + batchPrompt();
+	m_flash = m_clBatch.empty() ? QStringLiteral( "Přidáno čar: %1" ).arg( n )
+	                            : QStringLiteral( "Přidáno čar: %1. " ).arg( n ) + ( m_mode == Mode::CloudRoom ? roomPrompt() : batchPrompt() );
 }
 
 // ---------------------------------------------------------------- režimy
@@ -2603,13 +2568,14 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		}
 		if ( !m_clBatch.empty() )
 		{
-			// klik ve stejné místnosti = jen potvrdit; jinde = potvrdit a další místnost
+			// klik ve stejné místnosti = potvrdit aktuální fázi; jinde = potvrdit fázi, zbytek zahodit a další místnost
 			const bool same = dist( click, m_clRoomClick ) < 0.5 * m_scale;
 			acceptBatch();
 			if ( same )
 			{
 				break;
 			}
+			m_clBatch.clear();
 		}
 		detectRoom( click );
 		break;
@@ -4502,7 +4468,7 @@ void DrawTool::updateStatus()
 		                 : QStringLiteral( "Čára z mračna: klikněte k bodům řezu (na líc zdi)" );
 		break;
 	case Mode::CloudRoom:
-		prompt = !m_clBatch.empty() ? QStringLiteral( "Místnost: %1 čar – Enter nebo klik do místnosti = potvrdit, klik do jiné = potvrdit a další, pravé = zahodit" ).arg( m_clBatch.size() )
+		prompt = !m_clBatch.empty() ? roomPrompt()
 		                            : QStringLiteral( "Místnost: klikněte dovnitř místnosti (plátek nejlépe u stropu – bez oken a dveří)" );
 		break;
 	case Mode::CloudBatch:
@@ -4706,9 +4672,9 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			m_perpLock = false;
 			m_clHas = false; // čára z mračna: reset = zahodit náhled
 			m_clJoins.clear();
-			if ( m_mode == Mode::CloudBatch && !m_clBatch.empty() )
+			if ( ( m_mode == Mode::CloudBatch || m_mode == Mode::CloudRoom ) && !m_clBatch.empty() )
 			{
-				skipBatchPhase(); // hromadně: pravé = přeskočit jen aktuální fázi
+				skipBatchPhase(); // hromadně / místnost: pravé = přeskočit jen aktuální fázi
 			}
 			else
 			{

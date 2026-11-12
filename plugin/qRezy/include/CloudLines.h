@@ -46,6 +46,11 @@ namespace CloudLines
 	//! openRays = podíl obrysu bez zdi (otvory); 1 = plocha utekla ven (místnost není uzavřená)
 	std::vector<Seg> room( const std::vector<CCVector2d>& pts, const CCVector2d& inside, const Params& p, double& openRays );
 
+	//! Místnost ze dvou metod (paprsky v1.15 a rozlití): hrany mimo pravoúhlost (> angTol od převládajícího směru, kromě
+	//! dlouhé šikmé zdi na bodech) pryč; shodné hrany cls 0, hrany jen jedné metody ležící na bodech cls 1 (při sporu
+	//! vyhrává lépe sedící na bodech, při shodě rozlití – ústupky); duplicity pryč, rohy průsečíkem, osamělé kousky pryč
+	std::vector<Seg> combineRoom( const std::vector<Seg>& rays, const std::vector<Seg>& flood, const std::vector<CCVector2d>& pts, const Params& p, double angTol );
+
 	//! průsečík dvou přímek (false = rovnoběžné)
 	bool intersect( const CCVector2d& a1, const CCVector2d& b1, const CCVector2d& a2, const CCVector2d& b2, CCVector2d& I );
 }

@@ -312,6 +312,7 @@ private:
 	void acceptBatch();
 	int batchPhase() const;       //!< nejjistější fáze, která v náhledu zbývá (0–2)
 	QString batchPrompt() const;
+	QString roomPrompt() const;
 	void skipBatchPhase();
 	void setLine( ccPolyline* poly, const CCVector2d& a, const CCVector2d& b, UndoItem* undo );
 	void removeLine( ccPolyline* poly, UndoItem* undo );

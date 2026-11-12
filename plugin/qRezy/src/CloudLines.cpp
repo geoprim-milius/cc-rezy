@@ -1524,4 +1524,344 @@ namespace CloudLines
 		}
 		return outl;
 	}
+	std::vector<Seg> combineRoom( const std::vector<Seg>& rays, const std::vector<Seg>& flood, const std::vector<CCVector2d>& pts, const Params& p, double angTol )
+	{
+		const double sc = p.scale;
+		auto len = []( const Seg& s ) { return dist( s.a, s.b ); };
+		// body pro podporu čar (zředěné na 1 cm)
+		const std::vector<CCVector2d> q = thin( pts, 0.01 * sc );
+		Hash hs;
+		hs.build( q, 0.05 * sc );
+		const double latSup = 0.02 * sc;
+		auto support = [&]( const Seg& s )
+		{
+			const double L = len( s );
+			const int n = std::max( 2, static_cast<int>( L / ( 0.05 * sc ) ) );
+			int hit = 0;
+			for ( int k = 0; k < n; ++k )
+			{
+				const CCVector2d P = s.a + ( s.b - s.a ) * ( static_cast<double>( k ) / ( n - 1 ) );
+				bool ok = false;
+				hs.around( P, 1, [&]( int i ) { ok = ok || dist( q[i], P ) < latSup; } );
+				hit += ok ? 1 : 0;
+			}
+			return static_cast<double>( hit ) / n;
+		};
+		// podíl délky s pokrytý čarami others (rovnoběžné do ang, příčně do lat)
+		auto cover = [&]( const Seg& s, const std::vector<const Seg*>& others, double lat, double ang )
+		{
+			const double L = len( s );
+			if ( L < 1e-9 )
+			{
+				return 1.0;
+			}
+			const CCVector2d d = ( s.b - s.a ) / L;
+			const CCVector2d n( -d.y, d.x );
+			std::vector<std::pair<double, double>> iv;
+			for ( const Seg* o : others )
+			{
+				const double lo = len( *o );
+				if ( lo < 1e-9 || std::abs( ( ( o->b - o->a ) / lo ).dot( d ) ) < std::cos( ang ) )
+				{
+					continue;
+				}
+				if ( std::max( std::abs( ( o->a - s.a ).dot( n ) ), std::abs( ( o->b - s.a ).dot( n ) ) ) > lat )
+				{
+					continue;
+				}
+				double t0 = ( o->a - s.a ).dot( d );
+				double t1 = ( o->b - s.a ).dot( d );
+				if ( t0 > t1 )
+				{
+					std::swap( t0, t1 );
+				}
+				t0 = std::max( t0, 0.0 );
+				t1 = std::min( t1, L );
+				if ( t1 > t0 )
+				{
+					iv.emplace_back( t0, t1 );
+				}
+			}
+			std::sort( iv.begin(), iv.end() );
+			double tot = 0.0;
+			double e = 0.0;
+			for ( const auto& v : iv )
+			{
+				const double t0 = std::max( v.first, e );
+				if ( v.second > t0 )
+				{
+					tot += v.second - t0;
+					e = v.second;
+				}
+			}
+			return tot / L;
+		};
+		// převládající směr (délkově vážený průměr 4·úhlu)
+		double sx = 0.0;
+		double sy = 0.0;
+		for ( const std::vector<Seg>* v : { &rays, &flood } )
+		{
+			for ( const Seg& s : *v )
+			{
+				const double a = 4.0 * std::atan2( s.b.y - s.a.y, s.b.x - s.a.x );
+				sx += len( s ) * std::cos( a );
+				sy += len( s ) * std::sin( a );
+			}
+		}
+		const double dom = 0.25 * std::atan2( sy, sx );
+		auto skew = [&]( const Seg& s )
+		{
+			double a = std::fmod( std::atan2( s.b.y - s.a.y, s.b.x - s.a.x ) - dom, 0.5 * Pi );
+			if ( a < 0.0 )
+			{
+				a += 0.5 * Pi;
+			}
+			return std::min( a, 0.5 * Pi - a );
+		};
+		struct Cand
+		{
+			Seg s;
+			int cls;
+			int method; // 0 rozlití, 1 paprsky
+			double sup;
+		};
+		std::vector<Cand> cand;
+		const std::vector<Seg>* src[2] = { &flood, &rays };
+		for ( int mi = 0; mi < 2; ++mi )
+		{
+			std::vector<const Seg*> other;
+			for ( const Seg& o : *src[1 - mi] )
+			{
+				other.push_back( &o );
+			}
+			for ( const Seg& s : *src[mi] )
+			{
+				if ( len( s ) < 0.03 * sc )
+				{
+					continue;
+				}
+				const double sup = support( s );
+				// pravoúhlost: šikmá jen dlouhá zeď celou délkou na bodech
+				if ( skew( s ) > angTol && !( len( s ) > 2.0 * sc && sup > 0.8 ) )
+				{
+					continue;
+				}
+				if ( cover( s, other, 0.03 * sc, 3.0 * Deg ) > 0.8 )
+				{
+					if ( mi == 0 )
+					{
+						cand.push_back( { s, 0, mi, sup } );
+					}
+				}
+				else if ( sup > 0.6 )
+				{
+					cand.push_back( { s, 1, mi, sup } );
+				}
+			}
+		}
+		// neshoda: kus jedné metody v pásu 30 cm u čar druhé → vyhrává lépe sedící na bodech (při shodě rozlití – ústupky)
+		std::vector<Cand> keep;
+		for ( const Cand& c : cand )
+		{
+			if ( c.cls == 1 )
+			{
+				std::vector<const Seg*> rival;
+				double ws = 0.0;
+				double wl = 0.0;
+				for ( const Cand& o : cand )
+				{
+					if ( o.method != c.method && cover( c.s, { &o.s }, 0.3 * sc, angTol ) > 0.02 )
+					{
+						rival.push_back( &o.s );
+						ws += o.sup * len( o.s );
+						wl += len( o.s );
+					}
+				}
+				if ( !rival.empty() && cover( c.s, rival, 0.3 * sc, angTol ) > 0.7 ) // druhá metoda má skoro celou hranu jinak
+				{
+					const double rs = ws / wl;
+					if ( c.sup < rs - 0.02 || ( std::abs( c.sup - rs ) <= 0.02 && c.method == 1 ) )
+					{
+						continue;
+					}
+				}
+			}
+			keep.push_back( c );
+		}
+		// duplicity do 5 cm: jistější, rozlití, lepší podpora, delší
+		std::sort( keep.begin(), keep.end(), [&]( const Cand& x, const Cand& y )
+		{
+			if ( x.cls != y.cls )
+				return x.cls < y.cls;
+			if ( x.method != y.method )
+				return x.method < y.method;
+			if ( x.sup != y.sup )
+				return x.sup > y.sup;
+			return len( x.s ) > len( y.s );
+		} );
+		std::vector<Seg> good;
+		for ( const Cand& c : keep )
+		{
+			bool dup = false;
+			for ( const Seg& g : good )
+			{
+				if ( cover( c.s, { &g }, 0.12 * sc, angTol ) > 0.5 ) // překryv podél zdi; ústupky jdou za sebou, nepřekrývají se
+				{
+					dup = true;
+					break;
+				}
+			}
+			if ( !dup )
+			{
+				Seg s = c.s;
+				s.cls = c.cls;
+				good.push_back( s );
+			}
+		}
+		const double eps = 0.05 * sc;
+		auto onOther = [&]( const CCVector2d& P, size_t i )
+		{
+			for ( size_t j = 0; j < good.size(); ++j )
+			{
+				if ( j == i )
+				{
+					continue;
+				}
+				const CCVector2d d = good[j].b - good[j].a;
+				const double l2 = d.norm2();
+				if ( l2 < 1e-18 )
+				{
+					continue;
+				}
+				const double t = std::max( 0.0, std::min( 1.0, ( P - good[j].a ).dot( d ) / l2 ) );
+				if ( dist( good[j].a + d * t, P ) < eps )
+				{
+					return true;
+				}
+			}
+			return false;
+		};
+		// rohy: volný konec → průsečík s kolmou čarou (do 1,5 m), u L i její volný konec
+		for ( int it = 0; it < 3; ++it )
+		{
+			for ( size_t i = 0; i < good.size(); ++i )
+			{
+				for ( int e = 0; e < 2; ++e )
+				{
+					const CCVector2d E = e == 0 ? good[i].a : good[i].b;
+					const CCVector2d F = e == 0 ? good[i].b : good[i].a;
+					if ( onOther( E, i ) || len( good[i] ) < 1e-9 )
+					{
+						continue;
+					}
+					const CCVector2d ds = ( good[i].b - good[i].a ) / len( good[i] );
+					double bd = 1.5 * sc;
+					int bj = -1;
+					int bf = 0;
+					bool bin = false;
+					CCVector2d bI;
+					for ( size_t j = 0; j < good.size(); ++j )
+					{
+						if ( j == i || len( good[j] ) < 1e-9 )
+						{
+							continue;
+						}
+						const CCVector2d dt = ( good[j].b - good[j].a ) / len( good[j] );
+						if ( std::abs( ds.dot( dt ) ) > std::sin( 20.0 * Deg ) )
+						{
+							continue;
+						}
+						CCVector2d I;
+						if ( !intersect( good[i].a, good[i].b, good[j].a, good[j].b, I ) )
+						{
+							continue;
+						}
+						if ( ( I - E ).dot( E - F ) < -0.05 * len( good[i] ) )
+						{
+							continue;
+						}
+						const int f = dist( I, good[j].a ) < dist( I, good[j].b ) ? 0 : 1;
+						const double tu = ( I - good[j].a ).dot( good[j].b - good[j].a ) / ( len( good[j] ) * len( good[j] ) );
+						const bool inside = tu > 0.0 && tu < 1.0;
+						const CCVector2d Tf = f == 0 ? good[j].a : good[j].b;
+						if ( !inside && ( dist( I, Tf ) > 1.5 * sc || onOther( Tf, j ) ) )
+						{
+							continue;
+						}
+						if ( dist( I, E ) < bd )
+						{
+							bd = dist( I, E );
+							bj = static_cast<int>( j );
+							bf = f;
+							bin = inside;
+							bI = I;
+						}
+					}
+					if ( bj >= 0 )
+					{
+						( e == 0 ? good[i].a : good[i].b ) = bI;
+						if ( !bin )
+						{
+							( bf == 0 ? good[bj].a : good[bj].b ) = bI;
+						}
+					}
+				}
+			}
+		}
+		// kusy jedné zdi v zákrytu (příčně do 5 cm, mezera do 1,5 m) spojit
+		for ( size_t i = 0; i < good.size(); ++i )
+		{
+			for ( int e = 0; e < 2; ++e )
+			{
+				CCVector2d& E = e == 0 ? good[i].a : good[i].b;
+				const CCVector2d F = e == 0 ? good[i].b : good[i].a;
+				if ( onOther( E, i ) || len( good[i] ) < 1e-9 )
+				{
+					continue;
+				}
+				const CCVector2d ds = ( E - F ) / dist( E, F );
+				for ( size_t j = 0; j < good.size(); ++j )
+				{
+					if ( j == i || len( good[j] ) < 1e-9 )
+					{
+						continue;
+					}
+					const CCVector2d dt = ( good[j].b - good[j].a ) / len( good[j] );
+					if ( std::abs( ds.dot( dt ) ) < std::cos( 3.0 * Deg ) )
+					{
+						continue;
+					}
+					const int f = dist( E, good[j].a ) < dist( E, good[j].b ) ? 0 : 1;
+					CCVector2d& G = f == 0 ? good[j].a : good[j].b;
+					const double along = ( G - E ).dot( ds );
+					const CCVector2d n( -ds.y, ds.x );
+					if ( along > 0.0 && along < 1.5 * sc && std::abs( ( G - E ).dot( n ) ) < 0.05 * sc && !onOther( G, j ) )
+					{
+						const CCVector2d M = ( E + G ) * 0.5;
+						E = M;
+						G = M;
+						break;
+					}
+				}
+			}
+		}
+		// osamělé kousky (oba konce volné) a krátké pahýly pryč, opakovaně
+		bool ch = true;
+		while ( ch )
+		{
+			ch = false;
+			for ( size_t i = 0; i < good.size(); ++i )
+			{
+				const bool fa = !onOther( good[i].a, i );
+				const bool fb = !onOther( good[i].b, i );
+				if ( ( fa && fb ) || ( ( fa || fb ) && len( good[i] ) < 0.3 * sc ) ) // osamělý kousek nebo krátký pahýl
+				{
+					good.erase( good.begin() + static_cast<long>( i ) );
+					ch = true;
+					break;
+				}
+			}
+		}
+		return good;
+	}
 }
