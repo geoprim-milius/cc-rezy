@@ -1206,7 +1206,7 @@ void View3D::auxSection( const CCVector3d& A, const CCVector3d& B, const CCVecto
 	m_backBtn->setVisible( !m_auxOnly );
 	setWindowTitle( QStringLiteral( "Řezy – pomocný řez (měření)" ) );
 	m_info->setText( QStringLiteral( "<b>Pomocný řez</b> – klikněte 2 body = vzdálenost a převýšení; u kurzoru výška nad ±0,000 a v Bpv. "
-	                                 "Pravé tažení = posun, kolečko = zoom." ) );
+	                                 "Pravé tažení = posun, pravý klik = zrušit měření, kolečko = zoom." ) );
 	m_win->redraw();
 	if ( !isVisible() )
 	{
@@ -1519,6 +1519,36 @@ bool View3D::eventFilter( QObject* obj, QEvent* event )
 	if ( obj != m_widget || !m_aux )
 	{
 		return QDockWidget::eventFilter( obj, event );
+	}
+	// pravý klik (bez tažení – pravé tažení = posun) zruší rozpracované měření, když není definovaná podlaha;
+	// při výběru podlahy (Def. podlahy) zruší výběr
+	if ( event->type() == QEvent::MouseButtonPress && static_cast<QMouseEvent*>( event )->button() == Qt::RightButton )
+	{
+		m_rightPress = static_cast<QMouseEvent*>( event )->pos();
+		m_rightDown = true;
+	}
+	else if ( event->type() == QEvent::MouseButtonRelease && static_cast<QMouseEvent*>( event )->button() == Qt::RightButton && m_rightDown )
+	{
+		m_rightDown = false;
+		if ( ( static_cast<QMouseEvent*>( event )->pos() - m_rightPress ).manhattanLength() < 5 )
+		{
+			if ( m_floorPick )
+			{
+				m_floorPick = false;
+				updateFloor();
+				updateMeasure( false );
+				m_info->setText( m_info->text() + QStringLiteral( "<br>Výběr podlahy zrušen." ) );
+			}
+			else if ( !m_hasFloor && !m_mp.empty() )
+			{
+				m_mp.clear();
+				m_measStep = 0;
+				clearMeasure();
+				Q_EMIT measureDone( QVector<double>(), m_auxN.x, m_auxN.y ); // smaže kótu i ve 3D náhledu
+				updateMeasure( false );
+				m_info->setText( m_info->text() + QStringLiteral( "<br>Měření zrušeno." ) );
+			}
+		}
 	}
 	// prostřední klik (bez tažení) do pomocného řezu = špendlík tady, v půdorysu i v 3D náhledu
 	if ( event->type() == QEvent::MouseButtonPress && static_cast<QMouseEvent*>( event )->button() == Qt::MiddleButton )

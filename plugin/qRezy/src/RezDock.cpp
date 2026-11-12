@@ -2408,6 +2408,15 @@ void RezDock::migrateSeedLayers()
 {
 	// jednou: hladiny podle zakládacího seedu pudorys_v7.dgn (12. 11.)
 	QSettings st;
+	if ( st.value( QStringLiteral( "qRezy/textLevelVer" ), 0 ).toInt() < 1 )
+	{
+		// vložené texty (Text A·A) do KOTY (16) – dřív výchozí 15 (v zakládacím seedu RAMECEK)
+		st.setValue( QStringLiteral( "qRezy/textLevelVer" ), 1 );
+		if ( st.value( QStringLiteral( "qRezy/userTextLevel" ), 15 ).toInt() == 15 )
+		{
+			st.setValue( QStringLiteral( "qRezy/userTextLevel" ), 16 );
+		}
+	}
 	if ( st.value( QStringLiteral( "qRezy/layersVer" ), 0 ).toInt() >= 2 )
 	{
 		return;
@@ -2650,7 +2659,7 @@ void RezDock::openSaveDialog()
 	tf->addRow( QStringLiteral( "Vložené texty – výška:" ), uTextH );
 	auto* uTextL = new QSpinBox;
 	uTextL->setRange( 1, 63 );
-	uTextL->setValue( st.value( QStringLiteral( "qRezy/userTextLevel" ), 15 ).toInt() );
+	uTextL->setValue( st.value( QStringLiteral( "qRezy/userTextLevel" ), 16 ).toInt() );
 	tf->addRow( QStringLiteral( "Vložené texty – hladina:" ), uTextL );
 	secL->addLayout( tf );
 	l->addWidget( secBox );
@@ -2808,7 +2817,7 @@ void RezDock::exportV7( const std::vector<int>& floorIds, bool withSections )
 	const double sc = c->getGlobalScale();
 	const bool absH = st.value( QStringLiteral( "qRezy/absHeights" ), false ).toBool();
 	const double textH = st.value( QStringLiteral( "qRezy/textHeight" ), 0.25 ).toDouble();
-	const int userTextLevel = st.value( QStringLiteral( "qRezy/userTextLevel" ), 15 ).toInt();
+	const int userTextLevel = st.value( QStringLiteral( "qRezy/userTextLevel" ), 16 ).toInt();
 	const double userTextH = st.value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble();
 	const double zeroG = m_zero->value();
 	const std::vector<SectionInfo> sections = loadSections();

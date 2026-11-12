@@ -136,6 +136,8 @@ Bere se svislý rozdíl, zaokrouhlený na cm, zapsaný v mm, jako text podél č
 Tlačítko **Text 90°** zapnuté = text otočený o 90° (kolmo na čáru řezu, začíná u čáry a čte se zdola nahoru), vypnuté = text podél čáry.
 Zaškrtnuté **ručně**: text se neumístí sám, ale visí na kurzoru (podél čáry řezu) a položíte ho klikem do půdorysu (Esc = zrušit) – když je na jednom místě víc údajů.
 
+**Pravý klik** (bez tažení) zruší rozpracované měření – jen když není definovaná podlaha; při výběru podlahy zruší výběr. Pravé tažení dál posouvá pohled.
+
 **Def. podlahy**: tlačítko *Def. podlahy* a klik na podlahu v řezu = podlaha se zapamatuje (zelená čára, na tlačítku její výška). Pak se podlaha už neklikne: Strop / Překlad / Výška = **1 klik**, Okno = 2 kliky (parapet, horní hrana). Platí i pro další pomocné řezy; znovu kliknout na tlačítko = zrušit.
 
 **Špendlík v pomocném řezu**: prostřední klik do mračna v pomocném řezu = špendlík v půdorysu i v 3D náhledu (pohled pomocného řezu se nehýbe). A naopak: špendlík z výkresu nebo z 3D náhledu se ukáže i v pomocném řezu, pokud místo leží v řezu (z půdorysu jako jehla od podlahy ke stropu).
@@ -157,7 +159,7 @@ Ikona diskety: **seed** (existující výkres – převezmou se jednotky a nasta
 **Globální počátek (GO)** – ze seedu, nebo tlačítkem *Z výkresu…* z vašeho cílového výkresu (výstup pak sedí i při připojení jako reference „coincident“; jiný GO v seedu = posun o rozdíl počátků), **Hladiny a barvy**, umístění řezů/pohledů ve výkresu (X/Y = levý konec, ±0,000),
 výšky relativně nebo absolutně (Bpv), výška popisů. Řezy a pohledy jsou ve výkresu 2D
 s popisem „Řez A-A'“ a „±0,000 = … m n. m. Bpv“ (hladina 14). Vložené texty mají vlastní
-výšku a hladinu (výchozí 15) v okně Uložit.
+výšku a hladinu (výchozí 16 = KOTY) v okně Uložit.
 
 **Rastr mračna (TIFF + .tfw)** – zaškrtnout v okně Uložit: ke každému půdorysu patra a ke každému řezu
 a pohledu se uloží barevný obrázek mračna (LZW TIFF, výchozí 1 cm/pixel, velikost tečky 2 px) a world file .tfw.

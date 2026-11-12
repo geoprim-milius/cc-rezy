@@ -139,6 +139,8 @@ private:
 	bool m_hasPin = false;
 	QPoint m_midPress;
 	bool m_midDown = false;
+	QPoint m_rightPress;
+	bool m_rightDown = false;
 	bool pickPoint( const QPoint& pos, CCVector3d& P ) const;
 	std::vector<Line> m_lines;            //!< čáry bez posunu
 	class QSlider* m_shift = nullptr;     //!< posun kresby (cm)
