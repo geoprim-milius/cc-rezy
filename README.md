@@ -139,7 +139,7 @@ Zaškrtnuté **ručně**: text se neumístí sám, ale visí na kurzoru (podél 
 **Def. podlahy**: tlačítko *Def. podlahy* a klik na podlahu v řezu = podlaha se zapamatuje (zelená čára, na tlačítku její výška). Pak se podlaha už neklikne: Strop / Překlad / Výška = **1 klik**, Okno = 2 kliky (parapet, horní hrana). Platí i pro další pomocné řezy; znovu kliknout na tlačítko = zrušit.
 
 **Špendlík v pomocném řezu**: prostřední klik do mračna v pomocném řezu = špendlík v půdorysu i v 3D náhledu (pohled pomocného řezu se nehýbe). A naopak: špendlík z výkresu nebo z 3D náhledu se ukáže i v pomocném řezu, pokud místo leží v řezu (z půdorysu jako jehla od podlahy ke stropu).
-Každý druh má svou hladinu DGN (okno Uložit → Výšky z pomocného řezu; výchozí okno 17 / překlad 18 / výška 19 / strop 20). Natočení textu se přenese i do DGN.
+Každý druh má svou hladinu DGN (okno Uložit → Výšky z pomocného řezu; výchozí podle zakládacího seedu: okno a výška KOTY 16, překlad, strop a podlaha VYSKY 9; barva textu podle hladiny KOTY 135, VYSKY 162). Natočení textu se přenese i do DGN.
 
 ## Rozdělaná práce
 Ikona složky uloží projekt CloudCompare (.bin) – mračno, kresbu, řezy, patra, body i nastavení
