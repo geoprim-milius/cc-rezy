@@ -345,7 +345,7 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		m_floorBtn = new QToolButton;
 		m_floorBtn->setCheckable( true );
 		m_floorBtn->setFocusPolicy( Qt::NoFocus );
-		m_floorBtn->setText( QStringLiteral( "Podlaha" ) );
+		m_floorBtn->setText( QStringLiteral( "Def. podlahy" ) );
 		m_floorBtn->setToolTip( QStringLiteral( "Definovat podlahu: klikněte na tlačítko a pak na podlahu v řezu. Potom se podlaha už neklikne – "
 		                                        "Strop / Překlad / Výška = 1 klik, Okno = 2 kliky (parapet, horní hrana). Znovu kliknout na tlačítko = zrušit podlahu." ) );
 		wl->addWidget( m_floorBtn );
@@ -366,7 +366,7 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 			updateFloor();
 			if ( m_floorPick )
 			{
-				m_info->setText( QStringLiteral( "<b>Podlaha</b> – klikněte na podlahu v řezu." ) );
+				m_info->setText( QStringLiteral( "<b>Def. podlahy</b> – klikněte na podlahu v řezu." ) );
 			}
 			else if ( m_aux )
 			{
@@ -389,9 +389,10 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 			{ 3, "Strop", "Výška stropu – 2 kliky (podlaha, strop)  →  Vs=2650" },
 			{ 2, "Výška", "Výška – 2 kliky  →  2060" },
 			{ 0, "Okno", "Okno – 3 kliky (podlaha, parapet, horní hrana okna)  →  2300(850) = okno nad parapetem (parapet nad podlahou)" },
+			{ 4, "Podlaha", "Výška podlahy – 1 klik na podlahu  →  +0,150 (245,320) = relativně k ±0,000 a v Bpv" },
 		};
 		int cur = QSettings().value( QStringLiteral( "qRezy/auxWriteMode" ), 0 ).toInt();
-		if ( cur < 0 || cur > 3 )
+		if ( cur < 0 || cur > 4 )
 		{
 			cur = 0;
 		}
@@ -1335,20 +1336,39 @@ QString View3D::heightText( const CCVector3d& P ) const
 	return QStringLiteral( "%1 (Bpv %2)" ).arg( r, QString::number( zG, 'f', 3 ).replace( '.', ',' ) );
 }
 
+bool View3D::floorMode() const
+{
+	return m_writeMode && m_writeMode->checkedId() == 4;
+}
+
 int View3D::measTotal() const
 {
+	if ( floorMode() )
+	{
+		return 1; // výška podlahy = 1 klik
+	}
 	return ( m_writeMode && m_writeMode->checkedId() == 0 ) ? 3 : 2;
 }
 
 int View3D::measNeeded() const
 {
-	return measTotal() - ( m_hasFloor ? 1 : 0 );
+	return floorMode() ? 1 : measTotal() - ( m_hasFloor ? 1 : 0 );
+}
+
+QString View3D::floorText( const CCVector3d& P ) const
+{
+	// „+0,150 (245,320)“ – relativně k ±0,000 a v Bpv
+	const double zG = m_clone ? m_clone->toGlobal3d( P ).z : P.z;
+	const double rel = zG - m_zeroG;
+	QString r = QString::number( std::abs( rel ), 'f', 3 ).replace( '.', ',' );
+	r = ( std::abs( rel ) < 0.0005 ) ? QStringLiteral( "±0,000" ) : ( ( rel > 0 ? QStringLiteral( "+" ) : QStringLiteral( "-" ) ) + r );
+	return QStringLiteral( "%1 (%2)" ).arg( r, QString::number( zG, 'f', 3 ).replace( '.', ',' ) );
 }
 
 std::vector<CCVector3d> View3D::measPts( const std::vector<CCVector3d>& clicks ) const
 {
 	std::vector<CCVector3d> r;
-	if ( m_hasFloor && !clicks.empty() )
+	if ( m_hasFloor && !clicks.empty() && !floorMode() )
 	{
 		r.push_back( CCVector3d( clicks.front().x, clicks.front().y, m_floorZ ) ); // podlaha pod prvním klikem
 	}
@@ -1364,11 +1384,11 @@ void View3D::updateFloor()
 		if ( m_hasFloor )
 		{
 			const QString h = heightText( CCVector3d( m_auxA.x, m_auxA.y, m_floorZ ) );
-			m_floorBtn->setText( QStringLiteral( "Podlaha %1" ).arg( h.section( ' ', 0, 0 ) ) );
+			m_floorBtn->setText( QStringLiteral( "Def. podlahy %1" ).arg( h.section( ' ', 0, 0 ) ) );
 		}
 		else
 		{
-			m_floorBtn->setText( m_floorPick ? QStringLiteral( "Podlaha – klikněte…" ) : QStringLiteral( "Podlaha" ) );
+			m_floorBtn->setText( m_floorPick ? QStringLiteral( "Def. podlahy – klikněte…" ) : QStringLiteral( "Def. podlahy" ) );
 		}
 	}
 	if ( !m_win )
@@ -1416,7 +1436,7 @@ void View3D::updateMeasure( bool live )
 	}
 	QString txt = QStringLiteral( "<b>Pomocný řez</b> – kurzor: výška %1" ).arg( heightText( m_mCursor ) );
 	std::vector<CCVector3d> clicks = m_mp;
-	if ( ( !clicks.empty() || m_hasFloor ) && static_cast<int>( clicks.size() ) < measNeeded() )
+	if ( ( !clicks.empty() || m_hasFloor ) && !floorMode() && static_cast<int>( clicks.size() ) < measNeeded() )
 	{
 		clicks.push_back( m_mCursor ); // náhled ke kurzoru (s podlahou hned od první čáry)
 	}
@@ -1438,6 +1458,11 @@ void View3D::updateMeasure( bool live )
 		const int par = static_cast<int>( std::lround( std::abs( full[1].z - full[0].z ) / m_scale * 100.0 ) ) * 10;
 		const int win = static_cast<int>( std::lround( std::abs( full[2].z - full[1].z ) / m_scale * 100.0 ) ) * 10;
 		txt += QStringLiteral( "<br>→ <b>%1(%2)</b> – Enter = zapsat do půdorysu" ).arg( win ).arg( par );
+	}
+	else if ( floorMode() )
+	{
+		txt += m_mp.empty() ? QStringLiteral( "<br>Podlaha: klikněte na podlahu, pak Enter." )
+		                    : QStringLiteral( "<br>→ <b>%1</b> – Enter = zapsat do půdorysu" ).arg( floorText( m_mp.front() ) );
 	}
 	else if ( okno && m_mp.empty() )
 	{
@@ -1614,7 +1639,11 @@ void View3D::writeMeasured()
 	const int need = measNeeded();
 	if ( static_cast<int>( m_mp.size() ) < need )
 	{
-		if ( measTotal() == 3 )
+		if ( floorMode() )
+		{
+			m_info->setText( QStringLiteral( "<b>Podlaha</b> – nejdřív klikněte na podlahu, pak Enter." ) );
+		}
+		else if ( measTotal() == 3 )
 		{
 			m_info->setText( m_hasFloor ? QStringLiteral( "<b>Okno</b> – klikněte parapet a horní hranu okna (2 body), pak Enter." )
 			                            : QStringLiteral( "<b>Okno</b> – klikněte podlahu, parapet a horní hranu okna (3 body), pak Enter." ) );
@@ -1643,6 +1672,10 @@ void View3D::writeMeasured()
 	else if ( mode == 3 )
 	{
 		txt = QStringLiteral( "Vs=%1" ).arg( mm( P[0], P[1] ) );
+	}
+	else if ( mode == 4 )
+	{
+		txt = floorText( P[0] );
 	}
 	else
 	{

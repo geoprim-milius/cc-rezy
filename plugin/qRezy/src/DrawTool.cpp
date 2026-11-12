@@ -17,6 +17,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QInputDialog>
+#include <QMap>
 #include <QSettings>
 #include <QTextCodec>
 #include <QTextStream>
@@ -4521,7 +4522,7 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			if ( event->type() == QEvent::KeyPress )
 				undo();
 		}
-		else if ( k >= Qt::Key_F1 && k <= Qt::Key_F4 && !ctrl )
+		else if ( k >= Qt::Key_F1 && k <= Qt::Key_F5 && !ctrl )
 		{
 			if ( event->type() == QEvent::KeyPress )
 			{
@@ -4530,7 +4531,7 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 					setCategory( id );
 			}
 		}
-		else if ( k == Qt::Key_F5 && !ctrl )
+		else if ( k == Qt::Key_F6 && !ctrl )
 		{
 			if ( event->type() == QEvent::KeyPress )
 				setHidden( !m_hidden );
@@ -5605,6 +5606,16 @@ std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTa
 {
 	QTextCodec* codec = QTextCodec::codecForName( "Windows-1250" );
 	std::vector<DgnV7::Element> out;
+	// barva textů podle hladiny (jako v zakládacím seedu: KOTY 16 = 135, VYSKY 9 = 162); qRezy/textLevelColors „hladina=barva;…“
+	QMap<int, int> textColors;
+	for ( const QString& kv : QSettings().value( QStringLiteral( "qRezy/textLevelColors" ), QStringLiteral( "16=135;9=162" ) ).toString().split( ';', Qt::SkipEmptyParts ) )
+	{
+		const QStringList p = kv.split( '=' );
+		if ( p.size() == 2 )
+		{
+			textColors.insert( p[0].trimmed().toInt(), p[1].trimmed().toInt() );
+		}
+	}
 	ccHObject* group = const_cast<DrawTool*>( this )->drawingGroup( false );
 	if ( !group )
 	{
@@ -5679,7 +5690,7 @@ std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTa
 			DgnV7::Element t;
 			t.isText = true;
 			t.sym.level = poly->hasMetaData( "qRezy.textLevel" ) ? poly->getMetaData( "qRezy.textLevel" ).toInt() : textLevel;
-			t.sym.color = 0;
+			t.sym.color = textColors.value( t.sym.level, 0 );
 			t.textHeight = poly->hasMetaData( "qRezy.textH" ) ? poly->getMetaData( "qRezy.textH" ).toDouble() : textHeight;
 			DgnV7::Point2 P;
 			if ( map( view, CCVector3d::fromArray( poly->getPoint( 0 )->u ), P ) )

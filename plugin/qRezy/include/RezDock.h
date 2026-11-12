@@ -131,6 +131,7 @@ private:
 	void exportV7( const std::vector<int>& floorIds, bool sections );
 	void openSaveDialog();
 	bool chooseSeed( QWidget* parent );
+	void migrateSeedLayers();
 	void editSymbology();
 	void focusView();
 	bool ensure3D( bool aux = false ); //!< aux = samostatné okno pomocného řezu

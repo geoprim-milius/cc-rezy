@@ -180,7 +180,9 @@ private:
 	int m_measStep = 0;
 	std::vector<CCVector3d> m_mp; //!< kliknuté body měření (okno 3, jinak 2)
 	int measNeeded() const; //!< počet kliků (bez definované podlahy)
-	int measTotal() const;  //!< počet bodů měření včetně podlahy (okno 3, jinak 2)
+	int measTotal() const;  //!< počet bodů měření včetně podlahy (okno 3, podlaha 1, jinak 2)
+	bool floorMode() const; //!< režim zápisu Podlaha (výška podlahy)
+	QString floorText( const CCVector3d& P ) const;
 	std::vector<CCVector3d> measPts( const std::vector<CCVector3d>& clicks ) const; //!< kliky + podlaha
 	void updateFloor();
 	class QToolButton* m_floorBtn = nullptr;

@@ -39,7 +39,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | Ikona | Nástroj | Klávesa | Postup |
 |---|---|---|---|
 | tužka | Kreslit (zap/vyp) | | |
-| šipka | Výběr | 1 | klik = vybrat, Ctrl+klik = přidat/ubrat, okno tažením (zleva = jen uvnitř, zprava = i křížem), Ctrl+A = vše; modré úchopy na koncích = přesun konce; s výběrem Del/8 smaže, 3→1/3→2 kopie/přesun celého výběru, F1–F4 / hladina a F5 změní hladinu / zakrytí |
+| šipka | Výběr | 1 | klik = vybrat, Ctrl+klik = přidat/ubrat, okno tažením (zleva = jen uvnitř, zprava = i křížem), Ctrl+A = vše; modré úchopy na koncích = přesun konce; s výběrem Del/8 smaže, 3→1/3→2 kopie/přesun celého výběru, F1–F5 / hladina a F6 změní hladinu / zakrytí |
 | čára | Čára | Q | body, pravé kliknutí ukončí; **Enter bez čísla = další úsek kolmo na předchozí** (jen ten jeden úsek, pro další kolmici zase Enter) |
 | oblouk | Oblouk | E | tři body podle metody v pásu: *začátek–střed–konec* (střed = bod uprostřed oblouku, oblouk jde přes všechny tři body), *začátek–konec–střed* (třetí bod uprostřed oblouku), *střed kružnice* (začátek–střed kružnice–konec, směr podle pohybu myši); do DGN jako skutečný oblouk; lze vybrat, přesunout, kopírovat, smazat, změnit hladinu |
 | čára s body | Čára z mračna | | klik k bodům řezu (na líc zdi) → čára proložená body (náhled modře); klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a hned další, pravé = zahodit. Navazující čára se napojí v rohu, téměř kolmá se srovná na 90°. *Mezera* = kolik bodů smí chybět (dveře/okna = konec čáry), *tol.* = rozptyl líce |
@@ -64,7 +64,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | pravý úhel | Orto | F8 | podle natočení pohledu |
 | zelený kříž | Trasování | F11 | podržte kurzor na konci/středu čáry → bod se „získá“ (zelené +); pomocné čáry vodorovně/svisle od získaných bodů i od posledního bodu, **v prodloužení čáry**, na jejímž konci/středu je získaný bod, a **šikmo přes poslední dva získané body**; uchopí se na ně, na jejich průsečíky i na průsečík s čarou; funguje i s Ortho a s kolmicí (Enter); napsané číslo = vzdálenost od získaného bodu |
 | čárkovaná | Zakrytá čára | F5 | |
-| hladina | Zdi / Překlady / Trámy / Drobné prvky (+ vlastní) | F1–F4 | hladiny jde přidávat, mazat a řadit v *Hladiny a barvy…* (F1–F4 = první čtyři) |
+| hladina | ZDI / ZDI_SLABE / PREKLADY / OKNA / HRANA_NAD_ŘEZEM / DVERE / KOMUNIKACE (+ vlastní) | F1–F5 | výchozí podle zakládacího seedu pudorys_v7.dgn (hladiny 2 / 6 / 5 / 7 / 4 / 3 / 10); hladiny jde přidávat, mazat a řadit v *Hladiny a barvy…* (F1–F5 = prvních pět); zakrytá čára F6 |
 | otočení | Natočit pohled | | 2 body: směr 1. → 2. bod bude vodorovně doprava |
 | S se šipkou | Sever nahoru | | |
 | dvě patra + | Nové patro | | samostatný půdorys; podlaha se odhadne z mračna, předchozí patro se zapne jako reference |
@@ -131,11 +131,12 @@ Bere se svislý rozdíl, zaokrouhlený na cm, zapsaný v mm, jako text podél č
 - *Okno*: 3 kliky – podlaha, parapet, horní hrana okna (zobrazí se obě kóty) → `2300(850)` = výška okna nad parapetem (parapet nad podlahou);
 - *Překlad* (2 kliky): `Vp=2060`;
 - *Strop* (2 kliky): `Vs=2650` (výška stropu);
+- *Podlaha* (1 klik): `+0,150 (245,320)` – výška podlahy relativně k ±0,000 a v Bpv;
 - *Výška* (2 kliky): `2060`.
 Tlačítko **Text 90°** zapnuté = text otočený o 90° (kolmo na čáru řezu, začíná u čáry a čte se zdola nahoru), vypnuté = text podél čáry.
 Zaškrtnuté **ručně**: text se neumístí sám, ale visí na kurzoru (podél čáry řezu) a položíte ho klikem do půdorysu (Esc = zrušit) – když je na jednom místě víc údajů.
 
-**Podlaha**: tlačítko *Podlaha* a klik na podlahu v řezu = podlaha se zapamatuje (zelená čára, na tlačítku její výška). Pak se podlaha už neklikne: Strop / Překlad / Výška = **1 klik**, Okno = 2 kliky (parapet, horní hrana). Platí i pro další pomocné řezy; znovu kliknout na tlačítko = zrušit.
+**Def. podlahy**: tlačítko *Def. podlahy* a klik na podlahu v řezu = podlaha se zapamatuje (zelená čára, na tlačítku její výška). Pak se podlaha už neklikne: Strop / Překlad / Výška = **1 klik**, Okno = 2 kliky (parapet, horní hrana). Platí i pro další pomocné řezy; znovu kliknout na tlačítko = zrušit.
 
 **Špendlík v pomocném řezu**: prostřední klik do mračna v pomocném řezu = špendlík v půdorysu i v 3D náhledu (pohled pomocného řezu se nehýbe). A naopak: špendlík z výkresu nebo z 3D náhledu se ukáže i v pomocném řezu, pokud místo leží v řezu (z půdorysu jako jehla od podlahy ke stropu).
 Každý druh má svou hladinu DGN (okno Uložit → Výšky z pomocného řezu; výchozí okno 17 / překlad 18 / výška 19 / strop 20). Natočení textu se přenese i do DGN.

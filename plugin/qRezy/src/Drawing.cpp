@@ -104,13 +104,16 @@ namespace Drawing
 
 	std::vector<Layer> defaultLayers()
 	{
-		// výchozí hodnoty podle výkresu vykresy_old.dgn (Moskevská půda)
-		// styl čáry: -1 plná, -2 přerušovaná (trámy), -3 zakrytá
+		// výchozí hodnoty podle zakládacího seedu pudorys_v7.dgn (hladina, barva, tloušťka, styl z tabulky hladin)
+		// styl čáry: -1 Continuous, -2 PRE (přerušovaná), -3 ZAKRYTA; pořadí = F1–F5
 		std::vector<Layer> v;
-		v.push_back( { Walls, QStringLiteral( "Zdi" ), QColor( 230, 30, 30 ), { mk( 2, 196, 1, -1 ), mk( 2, 196, 1, -3 ) } } );
-		v.push_back( { Lintels, QStringLiteral( "Překlady" ), QColor( 30, 90, 255 ), { mk( 3, 83, 0, -1 ), mk( 3, 83, 0, -3 ) } } );
-		v.push_back( { Beams, QStringLiteral( "Trámy" ), QColor( 200, 0, 220 ), { mk( 5, 6, 0, -1 ), mk( 5, 6, 0, -2 ) } } );
-		v.push_back( { Details, QStringLiteral( "Drobné prvky" ), QColor( 0, 170, 60 ), { mk( 6, 0, 0, -1 ), mk( 6, 0, 0, -3 ) } } );
+		v.push_back( { Walls, QStringLiteral( "ZDI" ), QColor( 230, 30, 30 ), { mk( 2, 196, 1, -1 ), mk( 2, 196, 1, -3 ) } } );
+		v.push_back( { 4, QStringLiteral( "ZDI_SLABE" ), QColor( 255, 150, 40 ), { mk( 6, 0, 0, -3 ), mk( 6, 0, 0, -3 ) } } );
+		v.push_back( { Lintels, QStringLiteral( "PREKLADY" ), QColor( 60, 110, 255 ), { mk( 5, 133, 0, -2 ), mk( 5, 133, 0, -2 ) } } );
+		v.push_back( { Details, QStringLiteral( "OKNA" ), QColor( 0, 200, 220 ), { mk( 7, 135, 0, -1 ), mk( 7, 135, 0, -3 ) } } );
+		v.push_back( { 5, QStringLiteral( "HRANA_NAD_ŘEZEM" ), QColor( 220, 0, 220 ), { mk( 4, 0, 0, -2 ), mk( 4, 0, 0, -2 ) } } );
+		v.push_back( { 6, QStringLiteral( "DVERE" ), QColor( 220, 180, 0 ), { mk( 3, 83, 0, -1 ), mk( 3, 83, 0, -3 ) } } );
+		v.push_back( { 7, QStringLiteral( "KOMUNIKACE" ), QColor( 0, 170, 60 ), { mk( 10, 98, 0, -1 ), mk( 10, 98, 0, -3 ) } } );
 		return v;
 	}
 

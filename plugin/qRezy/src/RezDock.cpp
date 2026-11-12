@@ -146,7 +146,8 @@ namespace
 RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 	: QDockWidget( QStringLiteral( "Řezy" ), parent )
 	, m_app( app )
-{
+{	QTimer::singleShot( 0, this, [this]() { migrateSeedLayers(); } );
+
 	setObjectName( QStringLiteral( "qRezyDock" ) );
 	m_draw = new DrawTool( m_app, this );
 
@@ -667,7 +668,7 @@ void RezDock::buildToolbar()
 		const char* tip;
 	};
 	const ToolDef tools[] = {
-		{ DrawTool::Mode::Select, "select", "Výběr", "Klik, Ctrl+klik, okno tažením (zleva = uvnitř, zprava = křížem); úchopy na koncích. S výběrem: F1–F4/F5 změní hladinu/zakrytí, Del smaže, 3→1 / 3→2 kopie / přesun." },
+		{ DrawTool::Mode::Select, "select", "Výběr", "Klik, Ctrl+klik, okno tažením (zleva = uvnitř, zprava = křížem); úchopy na koncích. S výběrem: F1–F5 / F6 změní hladinu / zakrytí, Del smaže, 3→1 / 3→2 kopie / přesun." },
 		{ DrawTool::Mode::Line, "line", "Čára", "Body levým tlačítkem, pravé ukončí. Délka: čísla + Enter. Enter bez čísla = další úsek kolmo na předchozí." },
 		{ DrawTool::Mode::Arc, "arc", "Oblouk", "Tři body podle metody vedle: začátek–střed oblouku–konec, začátek–konec–střed oblouku, nebo se středem kružnice. Do DGN jako skutečný oblouk." },
 		{ DrawTool::Mode::CloudLine, "cloudline", "Čára\nz mračna", "Klik k bodům řezu (na líc zdi) → čára proložená body; klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a další, pravé = zahodit. Navazující čára se napojí v rohu." },
@@ -770,11 +771,11 @@ void RezDock::buildToolbar()
 	m_trackAct = mkAct( "tracking", QStringLiteral( "Trasování" ), QStringLiteral( "Podržte kurzor na konci / středu čáry, pak se ukážou pomocné čáry (F11)" ), true );
 	m_trackAct->setChecked( true );
 	connect( m_trackAct, &QAction::toggled, this, [this]( bool b ) { m_draw->setTracking( b ); focusView(); } );
-	m_hiddenAct = mkAct( "hidden", QStringLiteral( "Zakrytá čára" ), QStringLiteral( "Zakrytá čára / nad řezem (F5); s výběrem změní vybrané" ), true );
+	m_hiddenAct = mkAct( "hidden", QStringLiteral( "Zakrytá čára" ), QStringLiteral( "Zakrytá čára (F6); s výběrem změní vybrané" ), true );
 	connect( m_hiddenAct, &QAction::toggled, this, [this]( bool b ) { m_draw->setHidden( b ); focusView(); } );
 
 	m_catCombo = new QComboBox;
-	m_catCombo->setToolTip( QStringLiteral( "Hladina (F1–F4); s výběrem změní vybrané" ) );
+	m_catCombo->setToolTip( QStringLiteral( "Hladina (F1–F5); s výběrem změní vybrané" ) );
 	m_catCombo->setMinimumWidth( 150 );
 	refreshCatCombo();
 	connect( m_catCombo, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this]( int i ) { m_draw->setCategory( m_catCombo->itemData( i ).toInt() ); focusView(); } );
@@ -1062,7 +1063,7 @@ void RezDock::buildToolbar()
 		RibbonGroup h = r->addGroup( pDraw, QStringLiteral( "Hladina" ) );
 		RibbonColumn hc = h.column();
 		hc.widget( m_catCombo );
-		hc.addSmall( m_hiddenAct, QStringLiteral( "F5" ) );
+		hc.addSmall( m_hiddenAct, QStringLiteral( "F6" ) );
 		hc.addSmall( symb );
 		RibbonGroup p = r->addGroup( pDraw, QStringLiteral( "Pomůcky" ) );
 		RibbonColumn pc = p.column();
@@ -2403,6 +2404,46 @@ void RezDock::show3DAt( double x, double y, double z, bool pin )
 
 // ================================================================ výstup
 
+void RezDock::migrateSeedLayers()
+{
+	// jednou: hladiny podle zakládacího seedu pudorys_v7.dgn (12. 11.)
+	QSettings st;
+	if ( st.value( QStringLiteral( "qRezy/layersVer" ), 0 ).toInt() >= 2 )
+	{
+		return;
+	}
+	st.setValue( QStringLiteral( "qRezy/layersVer" ), 2 );
+	const bool hadLayers = !st.value( QStringLiteral( "qRezy/layers" ) ).toStringList().isEmpty();
+	if ( hadLayers
+	     && QMessageBox::question( this, QStringLiteral( "Řezy – hladiny" ),
+	                               QStringLiteral( "Nastavit hladiny podle zakládacího seedu?<br><br>"
+	                                               "<b>Kreslení:</b> F1 ZDI, F2 ZDI_SLABE, F3 PREKLADY, F4 OKNA, F5 HRANA_NAD_ŘEZEM, dále DVERE, KOMUNIKACE "
+	                                               "(zakrytá čára je nově F6).<br>"
+	                                               "<b>Texty z pomocného řezu:</b> okno a výška → KOTY (16), překlad, strop a podlaha → VYSKY (9).<br><br>"
+	                                               "Dosavadní seznam hladin se nahradí (čáry ve staré hladině Trámy se přesunou do PREKLADY, Drobné prvky budou OKNA). "
+	                                               "Později jde vrátit tlačítkem Výchozí v Hladiny a barvy." ) )
+	          != QMessageBox::Yes )
+	{
+		return;
+	}
+	Drawing::setLayers( Drawing::defaultLayers() );
+	st.setValue( QStringLiteral( "qRezy/hLevelWin" ), 16 );
+	st.setValue( QStringLiteral( "qRezy/hLevelH" ), 16 );
+	st.setValue( QStringLiteral( "qRezy/hLevelLin" ), 9 );
+	st.setValue( QStringLiteral( "qRezy/hLevelCeil" ), 9 );
+	st.setValue( QStringLiteral( "qRezy/hLevelFloor" ), 9 );
+	if ( m_draw )
+	{
+		if ( m_draw->countCategory( Drawing::Beams ) > 0 )
+		{
+			m_draw->moveCategory( Drawing::Beams, Drawing::Lintels ); // staré „Trámy“ → PREKLADY (obě přerušovaná)
+		}
+		m_draw->refreshLooks();
+	}
+	refreshCatCombo();
+	refresh3DLines();
+}
+
 namespace
 {
 	//! globální počátek (GO) výkresu V7 v metrech; false = nelze přečíst
@@ -2656,10 +2697,11 @@ void RezDock::openSaveDialog()
 		sp->setValue( st.value( QString::fromLatin1( key ), def ).toInt() );
 		return sp;
 	};
-	auto* hWin = mkLvl( "qRezy/hLevelWin", 17 );
-	auto* hLin = mkLvl( "qRezy/hLevelLin", 18 );
-	auto* hH = mkLvl( "qRezy/hLevelH", 19 );
-	auto* hCeil = mkLvl( "qRezy/hLevelCeil", 20 );
+	auto* hWin = mkLvl( "qRezy/hLevelWin", 16 );
+	auto* hLin = mkLvl( "qRezy/hLevelLin", 9 );
+	auto* hH = mkLvl( "qRezy/hLevelH", 16 );
+	auto* hCeil = mkLvl( "qRezy/hLevelCeil", 9 );
+	auto* hFloor = mkLvl( "qRezy/hLevelFloor", 9 );
 	hf->addWidget( new QLabel( QStringLiteral( "Okno:" ) ) );
 	hf->addWidget( hWin );
 	hf->addSpacing( 8 );
@@ -2671,6 +2713,9 @@ void RezDock::openSaveDialog()
 	hf->addSpacing( 8 );
 	hf->addWidget( new QLabel( QStringLiteral( "Strop:" ) ) );
 	hf->addWidget( hCeil );
+	hf->addSpacing( 8 );
+	hf->addWidget( new QLabel( QStringLiteral( "Podlaha:" ) ) );
+	hf->addWidget( hFloor );
 	hf->addStretch( 1 );
 	hBox->setToolTip( QStringLiteral( "Texty zapsané u vložených dřív mají hladinu uloženou u sebe; změna platí pro nové zápisy" ) );
 	l->addWidget( hBox );
@@ -2725,6 +2770,7 @@ void RezDock::openSaveDialog()
 	st.setValue( QStringLiteral( "qRezy/hLevelLin" ), hLin->value() );
 	st.setValue( QStringLiteral( "qRezy/hLevelH" ), hH->value() );
 	st.setValue( QStringLiteral( "qRezy/hLevelCeil" ), hCeil->value() );
+	st.setValue( QStringLiteral( "qRezy/hLevelFloor" ), hFloor->value() );
 	st.setValue( QStringLiteral( "qRezy/kotaColor" ), kColor->value() );
 	m_draw->setKotaSymbology( kLevel->value(), kColor->value() );
 	st.setValue( QStringLiteral( "qRezy/ptTextH" ), ptTextH->value() );
@@ -3286,9 +3332,9 @@ void RezDock::writeAuxHeight( const QString& text, int kind, double atX, double 
 	const CCVector2d P = rot90 ? M + perp * ( 0.05 * sc ) + d * ( h / 2.0 * sc )
 	                           : M - d * ( w / 2.0 * sc ) + perp * ( 0.05 * sc );
 	const double ang = std::atan2( d.y, d.x ) + ( rot90 ? 1.5707963267948966 : 0.0 );
-	static const char* keys[] = { "qRezy/hLevelWin", "qRezy/hLevelLin", "qRezy/hLevelH", "qRezy/hLevelCeil" };
-	static const int defs[] = { 17, 18, 19, 20 };
-	const int k = std::max( 0, std::min( 3, kind ) );
+	static const char* keys[] = { "qRezy/hLevelWin", "qRezy/hLevelLin", "qRezy/hLevelH", "qRezy/hLevelCeil", "qRezy/hLevelFloor" };
+	static const int defs[] = { 16, 9, 16, 9, 9 }; // KOTY / VYSKY podle zakládacího seedu
+	const int k = std::max( 0, std::min( 4, kind ) );
 	const int level = st.value( QString::fromLatin1( keys[k] ), defs[k] ).toInt();
 	if ( st.value( QStringLiteral( "qRezy/auxWriteManual" ), false ).toBool() )
 	{
@@ -4286,22 +4332,23 @@ void RezDock::editSymbology()
 	connect( downB, &QPushButton::clicked, &dlg, [&]() { moveRow( +1 ); } );
 	connect( defB, &QPushButton::clicked, &dlg, [&]()
 	{
-		if ( QMessageBox::question( &dlg, QStringLiteral( "Hladiny" ), QStringLiteral( "Vrátit výchozí čtyři hladiny (Zdi, Překlady, Trámy, Drobné prvky)? Přidané hladiny se smažou." ) ) != QMessageBox::Yes )
+		if ( QMessageBox::question( &dlg, QStringLiteral( "Hladiny" ), QStringLiteral( "Vrátit výchozí hladiny podle zakládacího seedu (ZDI, ZDI_SLABE, PREKLADY, OKNA, HRANA_NAD_ŘEZEM, DVERE, KOMUNIKACE)? Přidané hladiny se smažou." ) ) != QMessageBox::Yes )
 		{
 			return;
 		}
+		const std::vector<Drawing::Layer> defs = Drawing::defaultLayers();
 		for ( const Drawing::Layer& x : work )
 		{
-			if ( x.id > Drawing::Details )
+			if ( std::none_of( defs.begin(), defs.end(), [&x]( const Drawing::Layer& d ) { return d.id == x.id; } ) )
 			{
 				removed.push_back( x.id );
 			}
 		}
-		work = Drawing::defaultLayers();
+		work = defs;
 		fill( 0 );
 	} );
 
-	l->addWidget( new QLabel( QStringLiteral( "<small>Pořadí = klávesy F1–F4. Styl čáry: -1 plná, -2 přerušovaná, -3 zakrytá (podle vašeho seedu); 0 = bez vlastního stylu. "
+	l->addWidget( new QLabel( QStringLiteral( "<small>Pořadí = klávesy F1–F5. Styl čáry: -1 plná, -2 přerušovaná, -3 zakrytá (podle vašeho seedu); 0 = bez vlastního stylu. "
 	                                          "Barva V7 = číslo barvy MicroStationu (0–255), Barva = jen zobrazení zde.</small>" ) ) );
 	auto* bb = new QDialogButtonBox( QDialogButtonBox::Ok | QDialogButtonBox::Cancel );
 	l->addWidget( bb );
