@@ -2357,6 +2357,54 @@ QString DrawTool::roomPrompt() const
 	    .arg( n2 > 0 ? QStringLiteral( " (pak ještě %1)" ).arg( n2 ) : QString() );
 }
 
+void DrawTool::detectBatch()
+{
+	m_clBatch.clear();
+	QApplication::setOverrideCursor( Qt::WaitCursor );
+	std::vector<CCVector2d> pts;
+	slicePoints2D( pts, nullptr, 0.0 );
+	const CloudLines::Params p = cloudParams();
+	std::vector<CloudLines::Seg> segs = CloudLines::batch( pts, p );
+	// vynechat úseky, které už jsou nakreslené (oba konce u rovnoběžné čáry)
+	std::vector<Segment> drawn;
+	for ( const Segment& sg : collectSegments() )
+	{
+		if ( !sg.ref && !sg.arc && sg.poly && !isText( sg.poly ) )
+		{
+			drawn.push_back( sg );
+		}
+	}
+	const double nearTol = 2.0 * p.tol + 0.01 * m_scale;
+	for ( const CloudLines::Seg& sg : segs )
+	{
+		bool dup = false;
+		for ( const Segment& d : drawn )
+		{
+			if ( dist( closestOnSegment( d.a, d.b, sg.a ), sg.a ) < nearTol && dist( closestOnSegment( d.a, d.b, sg.b ), sg.b ) < nearTol )
+			{
+				dup = true;
+				break;
+			}
+		}
+		if ( !dup )
+		{
+			m_clBatch.push_back( sg );
+		}
+	}
+	QApplication::restoreOverrideCursor();
+	m_flash = m_clBatch.empty() ? QStringLiteral( "Hromadně: v plátku nejsou žádné nové přímé úseky" ) : batchPrompt();
+}
+
+int DrawTool::batchPhase() const
+{
+	int ph = 3;
+	for ( const CloudLines::Seg& sg : m_clBatch )
+	{
+		ph = std::min( ph, sg.cls );
+	}
+	return ph;
+}
+
 QString DrawTool::batchPrompt() const
 {
 	static const char* names[] = { "jisté – uzavřené místnosti", "navazující čáry s volným koncem", "nejisté – zkontrolujte" };
