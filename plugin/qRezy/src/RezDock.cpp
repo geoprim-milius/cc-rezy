@@ -671,7 +671,9 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Select, "select", "Výběr", "Klik, Ctrl+klik, okno tažením (zleva = uvnitř, zprava = křížem); úchopy na koncích. S výběrem: F1–F5 / F6 změní hladinu / zakrytí, Del smaže, 3→1 / 3→2 kopie / přesun." },
 		{ DrawTool::Mode::Line, "line", "Čára", "Body levým tlačítkem, pravé ukončí. Délka: čísla + Enter. Enter bez čísla = další úsek kolmo na předchozí." },
 		{ DrawTool::Mode::Arc, "arc", "Oblouk", "Tři body podle metody vedle: začátek–střed oblouku–konec, začátek–konec–střed oblouku, nebo se středem kružnice. Do DGN jako skutečný oblouk." },
-		{ DrawTool::Mode::CloudLine, "cloudline", "Čára\nz mračna", "Klik k bodům řezu (na líc zdi) → čára proložená body; klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a další, pravé = zahodit. Navazující čára se napojí v rohu." },
+		{ DrawTool::Mode::CloudLine, "cloudline", "Čára\nz mračna", "Klik k bodům řezu (na líc zdi) → čára proložená body; klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a další, pravé = zahodit. Napojí se v rohu na okolní čáry (oba konce, v libovolném pořadí). Klávesa V." },
+		{ DrawTool::Mode::CloudRoom, "cloudline", "Místnost", "Čára z mračna – místnost: klik dovnitř místnosti → obrys z bodů plátku s rohy (přes okna a dveře rovnou čarou; plátek nejlépe u stropu). Enter nebo klik do místnosti = potvrdit, klik do jiné = potvrdit a další, pravé = zahodit." },
+		{ DrawTool::Mode::CloudBatch, "cloudline", "Hromadně", "Čára z mračna – hromadně: celý plátek → všechny přímé úseky delší než „min.“ s rohy (už nakreslené se vynechají). Enter nebo klik = potvrdit, pravé = zahodit." },
 		{ DrawTool::Mode::Move, "move", "Přesun", "Čára (nebo výběr), výchozí bod, cíl nebo vzdálenost." },
 		{ DrawTool::Mode::Rotate, "rotel", "Otočit", "Prvek (nebo výběr), pak 3 body: střed otáčení, výchozí směr, cílový směr. Otočí čáry, oblouky i texty (3·4)." },
 		{ DrawTool::Mode::Copy, "copy", "Kopie", "Čára (nebo výběr), výchozí bod, cíle nebo vzdálenost." },
@@ -749,6 +751,15 @@ void RezDock::buildToolbar()
 	auto* clTol = makeSpin( 0.005, 0.2, clSt.value( QStringLiteral( "qRezy/clTol" ), 0.02 ).toDouble(), 0.005, 3, QStringLiteral( " m" ) );
 	clTol->setToolTip( QStringLiteral( "Čára z mračna: tolerance – jak daleko od čáry smí body ležet (rozptyl lící zdi)" ) );
 	clTol->setFixedWidth( 86 );
+	auto* clMin = makeSpin( 0.05, 5.0, clSt.value( QStringLiteral( "qRezy/clMinLen" ), 0.30 ).toDouble(), 0.05, 2, QStringLiteral( " m" ) );
+	clMin->setToolTip( QStringLiteral( "Hromadně / místnost: nejkratší čára, která se ještě nakreslí" ) );
+	clMin->setFixedWidth( 86 );
+	m_draw->setCloudMinLen( clMin->value() );
+	connect( clMin, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]( double v )
+	{
+		QSettings().setValue( QStringLiteral( "qRezy/clMinLen" ), v );
+		m_draw->setCloudMinLen( v );
+	} );
 	QAction* clSquare = mkAct( "corner", QStringLiteral( "Pravý úhel" ), QStringLiteral( "Čára z mračna: téměř kolmé napojení (do 3°) srovnat na přesně 90°" ), true );
 	clSquare->setChecked( clSt.value( QStringLiteral( "qRezy/clSquare" ), true ).toBool() );
 	auto applyCl = [this, clGap, clTol, clSquare]()
@@ -1029,11 +1040,15 @@ void RezDock::buildToolbar()
 		kc.widget( kotaFmt );
 		kc.widget( kotaScale, QStringLiteral( "1 :" ) );
 		RibbonGroup cg = r->addGroup( pDraw, QStringLiteral( "Z mračna" ) );
-		cg.addBig( T( DrawTool::Mode::CloudLine ) );
+		cg.addBig( T( DrawTool::Mode::CloudLine ), QStringLiteral( "V" ) );
 		RibbonColumn cc = cg.column();
 		cc.widget( clGap, QStringLiteral( "mezera" ) );
 		cc.widget( clTol, QStringLiteral( "tol." ) );
 		cc.addSmall( clSquare );
+		RibbonColumn cc2 = cg.column();
+		cc2.addSmall( T( DrawTool::Mode::CloudRoom ) );
+		cc2.addSmall( T( DrawTool::Mode::CloudBatch ) );
+		cc2.widget( clMin, QStringLiteral( "min." ) );
 		RibbonGroup m = r->addGroup( pDraw, QStringLiteral( "Manipulace · 3" ) );
 		RibbonColumn mc = m.column();
 		mc.addSmall( T( DrawTool::Mode::Copy ), QStringLiteral( "3·1" ) );

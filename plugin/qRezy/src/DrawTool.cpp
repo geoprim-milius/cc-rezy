@@ -11,6 +11,8 @@
 #include <ccPointCloud.h>
 #include <ccPolyline.h>
 
+#include <array>
+
 #include <QApplication>
 #include <QColor>
 #include <QCursor>
@@ -580,6 +582,19 @@ void DrawTool::setMode( Mode m )
 		updateStatus();
 	}
 	Q_EMIT modeChanged( m );
+	if ( m == Mode::CloudBatch )
+	{
+		QTimer::singleShot( 0, this, [this]()
+		{
+			if ( m_mode == Mode::CloudBatch )
+			{
+				detectBatch();
+				updateTip();
+				updateStatus();
+				redraw2D();
+			}
+		} );
+	}
 }
 
 void DrawTool::startSectionDef( int kind )
@@ -630,6 +645,8 @@ void DrawTool::resetTool()
 	m_arcSweep = 0.0;
 	m_perpLock = false;
 	m_clHas = false;
+	m_clJoins.clear();
+	m_clBatch.clear();
 	m_chain.clear();
 	m_typed.clear();
 	m_step = 0;
@@ -1991,56 +2008,152 @@ bool DrawTool::detectCloudLine( const CCVector2d& click )
 		return false;
 	}
 
-	// napojení na předchozí čáru v rohu (a srovnání do pravého úhlu)
-	CCVector2d pa;
-	CCVector2d pb;
-	if ( m_clPrev && lineExists( m_clPrev ) && m_clPrev->getMetaData( Drawing::MetaView ).toInt() == m_frame.viewId && lineEnds( m_clPrev, pa, pb ) )
+	// napojení v rohu na okolní čáry – na obou koncích, nejen na předchozí čáru (a srovnání do pravého úhlu)
+	m_clJoins.clear();
+	const double reachJ = 0.6 * sc;
+	std::vector<Segment> others;
+	for ( const Segment& sg : collectSegments() )
 	{
-		CCVector2d pd = pb - pa;
-		if ( pd.norm() > 1e-9 )
+		if ( !sg.ref && !sg.arc && sg.poly && !isText( sg.poly ) && sg.poly->size() == 2 && dist( sg.a, sg.b ) > 1e-9 )
 		{
+			others.push_back( sg );
+		}
+	}
+	if ( m_clSquare )
+	{
+		// téměř kolmá čára (do 3°), která se s novou potká u konce → přesně kolmo (přednost předchozí čáře)
+		const CCVector2d A = P0 + D * tMin;
+		const CCVector2d B = P0 + D * tMax;
+		const Segment* ref = nullptr;
+		double refScore = 1e300;
+		for ( const Segment& sg : others )
+		{
+			CCVector2d pd = sg.b - sg.a;
 			pd.normalize();
-			const double cosA = std::abs( pd.dot( D ) );
-			if ( cosA < std::cos( 20.0 / RadToDeg ) ) // jen různoběžné čáry
+			if ( std::abs( pd.dot( D ) ) >= std::sin( 3.0 / RadToDeg ) )
 			{
-				if ( m_clSquare && cosA < std::sin( 3.0 / RadToDeg ) )
-				{
-					// téměř kolmo → přesně kolmo, otočit kolem středu nové čáry
-					const CCVector2d mid = P0 + D * ( 0.5 * ( tMin + tMax ) );
-					const double half = 0.5 * ( tMax - tMin );
-					CCVector2d Dq( -pd.y, pd.x );
-					if ( Dq.dot( D ) < 0 )
-					{
-						Dq = Dq * -1.0;
-					}
-					D = Dq;
-					P0 = mid;
-					tMin = -half;
-					tMax = half;
-				}
-				CCVector2d I;
-				const CCVector2d A = P0 + D * tMin;
-				const CCVector2d B = P0 + D * tMax;
-				if ( lineIntersection( A, B, pa, pb, I ) )
-				{
-					const double reachJ = 0.6 * sc;
-					const double dNew = std::min( dist( I, A ), dist( I, B ) );
-					const double dOld = std::min( dist( I, pa ), dist( I, pb ) );
-					if ( dNew < reachJ && dOld < reachJ )
-					{
-						const double ti = ( I - P0 ).dot( D );
-						if ( dist( I, A ) < dist( I, B ) )
-							tMin = ti;
-						else
-							tMax = ti;
-						m_clJoin = true;
-						m_clPrevEnd = dist( I, pa ) < dist( I, pb ) ? 0 : 1;
-						m_clPrevA = m_clPrevEnd == 0 ? I : pa;
-						m_clPrevB = m_clPrevEnd == 0 ? pb : I;
-					}
-				}
+				continue;
+			}
+			CCVector2d I;
+			if ( !lineIntersection( A, B, sg.a, sg.b, I ) )
+			{
+				continue;
+			}
+			const double dNew = std::min( dist( I, A ), dist( I, B ) );
+			const double dOld = std::min( dist( I, sg.a ), dist( I, sg.b ) );
+			const double t = paramOn( sg.a, sg.b, I );
+			if ( dNew > reachJ || ( dOld > reachJ && ( t < 0.0 || t > 1.0 ) ) )
+			{
+				continue;
+			}
+			const double score = dNew + ( sg.poly == m_clPrev ? -1e6 : 0.0 );
+			if ( score < refScore )
+			{
+				refScore = score;
+				ref = &sg;
 			}
 		}
+		if ( ref )
+		{
+			CCVector2d pd = ref->b - ref->a;
+			pd.normalize();
+			const CCVector2d mid = P0 + D * ( 0.5 * ( tMin + tMax ) );
+			const double half = 0.5 * ( tMax - tMin );
+			CCVector2d Dq( -pd.y, pd.x );
+			if ( Dq.dot( D ) < 0 )
+			{
+				Dq = Dq * -1.0;
+			}
+			D = Dq;
+			P0 = mid;
+			tMin = -half;
+			tMax = half;
+		}
+	}
+	const double tMid = 0.5 * ( tMin + tMax );
+	for ( int e = 0; e < 2; ++e )
+	{
+		const CCVector2d A = P0 + D * tMin;
+		const CCVector2d B = P0 + D * tMax;
+		const CCVector2d E = e == 0 ? A : B;
+		const Segment* best = nullptr;
+		double bestScore = 1e300;
+		CCVector2d bestI;
+		int bestEnd = -1; // -1 = T (stará čára se nemění)
+		for ( const Segment& sg : others )
+		{
+			CCVector2d pd = sg.b - sg.a;
+			const double Lo = pd.norm();
+			pd = pd / Lo;
+			if ( std::abs( pd.dot( D ) ) > std::cos( 20.0 / RadToDeg ) )
+			{
+				continue; // jen různoběžné čáry
+			}
+			CCVector2d I;
+			if ( !lineIntersection( A, B, sg.a, sg.b, I ) )
+			{
+				continue;
+			}
+			const double ti = ( I - P0 ).dot( D );
+			const double dE = dist( I, E );
+			if ( dE > reachJ || ( e == 0 ? ti > tMid : ti < tMid ) )
+			{
+				continue;
+			}
+			const double dA = dist( I, sg.a );
+			const double dB = dist( I, sg.b );
+			const double t = paramOn( sg.a, sg.b, I );
+			double score;
+			int end;
+			if ( std::min( dA, dB ) <= reachJ )
+			{
+				score = dE + std::min( dA, dB );
+				end = dA <= dB ? 0 : 1;
+			}
+			else if ( t > 0.0 && t < 1.0 )
+			{
+				score = dE + reachJ; // T – konec nové čáry k čáře
+				end = -1;
+			}
+			else
+			{
+				continue;
+			}
+			if ( score < bestScore )
+			{
+				bestScore = score;
+				best = &sg;
+				bestI = I;
+				bestEnd = end;
+			}
+		}
+		if ( !best )
+		{
+			continue;
+		}
+		const double ti = ( bestI - P0 ).dot( D );
+		if ( e == 0 )
+			tMin = ti;
+		else
+			tMax = ti;
+		if ( bestEnd >= 0 )
+		{
+			auto it = std::find_if( m_clJoins.begin(), m_clJoins.end(), [best]( const ClJoin& j ) { return j.poly == best->poly; } );
+			if ( it == m_clJoins.end() )
+			{
+				m_clJoins.push_back( { best->poly, best->a, best->b } );
+				it = m_clJoins.end() - 1;
+			}
+			( bestEnd == 0 ? it->a : it->b ) = bestI;
+		}
+		m_clJoin = true;
+	}
+	if ( tMax - tMin < 0.05 * sc )
+	{
+		m_flash = QStringLiteral( "Čára z mračna: příliš krátký úsek" );
+		m_clJoins.clear();
+		m_clJoin = false;
+		return false;
 	}
 	m_clA = P0 + D * tMin;
 	m_clB = P0 + D * tMax;
@@ -2055,15 +2168,157 @@ void DrawTool::acceptCloudLine()
 		return;
 	}
 	UndoItem u;
-	if ( m_clJoin && lineExists( m_clPrev ) )
+	for ( const ClJoin& j : m_clJoins )
 	{
-		setLine( m_clPrev, m_clPrevA, m_clPrevB, &u );
+		if ( lineExists( j.poly ) )
+		{
+			setLine( j.poly, j.a, j.b, &u );
+		}
 	}
+	m_clJoins.clear();
 	ccPolyline* p = addLine( m_clA, m_clB, m_category, m_hidden, &u );
 	pushUndo( std::move( u ) );
 	m_clPrev = p;
 	m_clHas = false;
 	m_clJoin = false;
+}
+
+void DrawTool::slicePoints2D( std::vector<CCVector2d>& out, const CCVector2d* center, double reach ) const
+{
+	out.clear();
+	ccGenericPointCloud* cloud = nullptr;
+	if ( m_app && m_app->dbRootObject() && m_cloudID )
+	{
+		cloud = ccHObjectCaster::ToGenericPointCloud( m_app->dbRootObject()->find( m_cloudID ) );
+	}
+	if ( !cloud )
+	{
+		return;
+	}
+	const std::vector<std::array<double, 4>> planes = m_sliceProvider ? m_sliceProvider() : std::vector<std::array<double, 4>>();
+	const unsigned n = cloud->size();
+	for ( unsigned i = 0; i < n; ++i )
+	{
+		const CCVector3* P = cloud->getPoint( i );
+		bool in = true;
+		for ( const auto& e : planes )
+		{
+			if ( e[0] * P->x + e[1] * P->y + e[2] * P->z + e[3] < 0.0 )
+			{
+				in = false;
+				break;
+			}
+		}
+		if ( !in )
+		{
+			continue;
+		}
+		const CCVector2d uv = m_frame.toUV( CCVector3d( P->x, P->y, P->z ) );
+		if ( center && dist( uv, *center ) > reach )
+		{
+			continue;
+		}
+		out.push_back( uv );
+	}
+}
+
+CloudLines::Params DrawTool::cloudParams() const
+{
+	CloudLines::Params p;
+	p.scale = m_scale;
+	p.tol = std::max( 0.003, m_clTol ) * m_scale;
+	p.gap = std::max( 0.01, m_clGap ) * m_scale;
+	p.minLen = std::max( 0.05, m_clMinLen ) * m_scale;
+	p.square = m_clSquare;
+	return p;
+}
+
+void DrawTool::detectRoom( const CCVector2d& click )
+{
+	m_clBatch.clear();
+	m_clRoomClick = click;
+	QApplication::setOverrideCursor( Qt::WaitCursor );
+	std::vector<CCVector2d> pts;
+	slicePoints2D( pts, &click, 25.0 * m_scale );
+	double open = 1.0;
+	if ( pts.size() >= 20 )
+	{
+		m_clBatch = CloudLines::room( pts, click, cloudParams(), open );
+	}
+	QApplication::restoreOverrideCursor();
+	if ( m_clBatch.empty() )
+	{
+		m_flash = QStringLiteral( "Místnost: v plátku kolem kliknutí nejsou zdi" );
+	}
+	else if ( open > 0.25 )
+	{
+		m_flash = QStringLiteral( "Místnost: %1 čar – pozor, místnost není uzavřená (%2 % směrů bez zdi), zkontrolujte náhled" )
+		              .arg( m_clBatch.size() )
+		              .arg( static_cast<int>( open * 100.0 + 0.5 ) );
+	}
+}
+
+void DrawTool::detectBatch()
+{
+	m_clBatch.clear();
+	QApplication::setOverrideCursor( Qt::WaitCursor );
+	std::vector<CCVector2d> pts;
+	slicePoints2D( pts, nullptr, 0.0 );
+	const CloudLines::Params p = cloudParams();
+	std::vector<CloudLines::Seg> segs = CloudLines::extract( pts, p );
+	if ( p.square )
+	{
+		CloudLines::squareUp( segs );
+	}
+	CloudLines::joinCorners( segs, 0.6 * m_scale );
+	// vynechat úseky, které už jsou nakreslené (oba konce u rovnoběžné čáry)
+	std::vector<Segment> drawn;
+	for ( const Segment& sg : collectSegments() )
+	{
+		if ( !sg.ref && !sg.arc && sg.poly && !isText( sg.poly ) )
+		{
+			drawn.push_back( sg );
+		}
+	}
+	const double nearTol = 2.0 * p.tol + 0.01 * m_scale;
+	for ( const CloudLines::Seg& sg : segs )
+	{
+		bool dup = false;
+		for ( const Segment& d : drawn )
+		{
+			if ( dist( closestOnSegment( d.a, d.b, sg.a ), sg.a ) < nearTol && dist( closestOnSegment( d.a, d.b, sg.b ), sg.b ) < nearTol )
+			{
+				dup = true;
+				break;
+			}
+		}
+		if ( !dup )
+		{
+			m_clBatch.push_back( sg );
+		}
+	}
+	QApplication::restoreOverrideCursor();
+	m_flash = m_clBatch.empty() ? QStringLiteral( "Hromadně: v plátku nejsou žádné nové přímé úseky" )
+	                            : QStringLiteral( "Hromadně: %1 čar – Enter nebo klik = potvrdit, pravé = zahodit" ).arg( m_clBatch.size() );
+}
+
+void DrawTool::acceptBatch()
+{
+	if ( m_clBatch.empty() )
+	{
+		return;
+	}
+	UndoItem u;
+	for ( const CloudLines::Seg& sg : m_clBatch )
+	{
+		if ( dist( sg.a, sg.b ) > 1e-9 )
+		{
+			addLine( sg.a, sg.b, m_category, m_hidden, &u );
+		}
+	}
+	pushUndo( std::move( u ) );
+	m_flash = QStringLiteral( "Přidáno čar: %1" ).arg( m_clBatch.size() );
+	m_clBatch.clear();
 }
 
 // ---------------------------------------------------------------- režimy
@@ -2219,6 +2474,38 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			}
 		}
 		detectCloudLine( click );
+		break;
+	}
+	case Mode::CloudRoom:
+	{
+		CCVector2d click;
+		if ( !screenToLocal( pos, click ) )
+		{
+			break;
+		}
+		if ( !m_clBatch.empty() )
+		{
+			// klik ve stejné místnosti = jen potvrdit; jinde = potvrdit a další místnost
+			const bool same = dist( click, m_clRoomClick ) < 0.5 * m_scale;
+			acceptBatch();
+			if ( same )
+			{
+				break;
+			}
+		}
+		detectRoom( click );
+		break;
+	}
+	case Mode::CloudBatch:
+	{
+		if ( !m_clBatch.empty() )
+		{
+			acceptBatch();
+		}
+		else
+		{
+			detectBatch();
+		}
 		break;
 	}
 	case Mode::Delete:
@@ -3493,9 +3780,18 @@ void DrawTool::updateTip()
 		segment( m_clA, m_clB, cl, 3.0f );
 		addMarker( ovs, m_clA, SnapType::End, cl );
 		addMarker( ovs, m_clB, SnapType::End, cl );
-		if ( m_clJoin )
+		for ( const ClJoin& j : m_clJoins )
 		{
-			segment( m_clPrevA, m_clPrevB, cl, 1.0f );
+			segment( j.a, j.b, cl, 1.0f );
+		}
+	}
+	// místnost / hromadně: náhled všech nalezených čar
+	if ( ( m_mode == Mode::CloudRoom || m_mode == Mode::CloudBatch ) && !m_clBatch.empty() )
+	{
+		const ccColor::Rgb cl( 0, 230, 255 );
+		for ( const CloudLines::Seg& sg : m_clBatch )
+		{
+			segment( sg.a, sg.b, cl, 2.0f );
 		}
 	}
 
@@ -4074,6 +4370,14 @@ void DrawTool::updateStatus()
 		                       .arg( num( dist( m_clA, m_clB ) / m_scale ), m_clJoin ? QStringLiteral( " (napojí se v rohu)" ) : QString() )
 		                 : QStringLiteral( "Čára z mračna: klikněte k bodům řezu (na líc zdi)" );
 		break;
+	case Mode::CloudRoom:
+		prompt = !m_clBatch.empty() ? QStringLiteral( "Místnost: %1 čar – Enter nebo klik do místnosti = potvrdit, klik do jiné = potvrdit a další, pravé = zahodit" ).arg( m_clBatch.size() )
+		                            : QStringLiteral( "Místnost: klikněte dovnitř místnosti (plátek nejlépe u stropu – bez oken a dveří)" );
+		break;
+	case Mode::CloudBatch:
+		prompt = !m_clBatch.empty() ? QStringLiteral( "Hromadně: %1 čar – Enter nebo klik = potvrdit, pravé = zahodit" ).arg( m_clBatch.size() )
+		                            : QStringLiteral( "Hromadně: klik = hledat čáry v celém plátku" );
+		break;
 	}
 
 	if ( !m_flash.isEmpty() )
@@ -4270,6 +4574,8 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			m_arcSweep = 0.0;
 			m_perpLock = false;
 			m_clHas = false; // čára z mračna: reset = zahodit náhled
+			m_clJoins.clear();
+			m_clBatch.clear();
 			m_step = 0;
 			select( nullptr );
 			m_typed.clear();
@@ -4465,6 +4771,16 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 				redraw2D();
 			}
 		}
+		else if ( ( k == Qt::Key_Return || k == Qt::Key_Enter ) && m_typed.isEmpty() && ( m_mode == Mode::CloudRoom || m_mode == Mode::CloudBatch ) )
+		{
+			if ( event->type() == QEvent::KeyPress )
+			{
+				acceptBatch(); // Enter = potvrdit místnost / hromadné čáry
+				updateTip();
+				updateStatus();
+				redraw2D();
+			}
+		}
 		else if ( ( k == Qt::Key_Return || k == Qt::Key_Enter ) && m_typed.isEmpty() && ( m_mode == Mode::Line || m_mode == Mode::CloudLine ) )
 		{
 			if ( event->type() == QEvent::KeyPress )
@@ -4578,6 +4894,11 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		{
 			if ( event->type() == QEvent::KeyPress )
 				setMode( Mode::Line );
+		}
+		else if ( plain && k == Qt::Key_V )
+		{
+			if ( event->type() == QEvent::KeyPress )
+				setMode( Mode::CloudLine );
 		}
 		else if ( plain && k == Qt::Key_C )
 		{

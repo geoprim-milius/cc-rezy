@@ -13,4 +13,5 @@ target_sources( ${PROJECT_NAME}
 		${CMAKE_CURRENT_LIST_DIR}/Theme.cpp
 		${CMAKE_CURRENT_LIST_DIR}/Tiff.cpp
 		${CMAKE_CURRENT_LIST_DIR}/Extract.cpp
+		${CMAKE_CURRENT_LIST_DIR}/CloudLines.cpp
 )

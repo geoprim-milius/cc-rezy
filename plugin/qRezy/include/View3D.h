@@ -188,6 +188,7 @@ private:
 	std::vector<CCVector3d> measPts( const std::vector<CCVector3d>& clicks ) const; //!< kliky + podlaha
 	void updateFloor();
 	class QToolButton* m_floorBtn = nullptr;
+	QWidget* m_modeCol = nullptr; //!< sloupec režimů zápisu (pomocný řez)
 	bool m_floorPick = false;
 	bool m_hasFloor = false;
 	double m_floorZ = 0.0;

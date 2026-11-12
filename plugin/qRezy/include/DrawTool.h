@@ -1,5 +1,7 @@
 #pragma once
 
+#include "CloudLines.h"
+
 // Kreslení a úpravy 2D čar nad řezem s ovládáním jako v MicroStationu:
 // levé tlačítko = datový bod, pravé = reset, Shift + levé tažení nebo tažení kolečkem = posun,
 // kolečko = zoom, prostřední kliknutí = ukázat místo ve 3D.
@@ -87,7 +89,9 @@ public:
 		Pin,          //!< špendlík: klik → ukázat místo ve 3D náhledu
 		EditText,     //!< upravit text: klik na text → nový obsah
 		PlaceText,    //!< umístit připravený text (z pomocného řezu) ručně – text visí na kurzoru
-		Rotate        //!< otočit prvek / výběr třemi body: střed, výchozí směr, cílový směr
+		Rotate,       //!< otočit prvek / výběr třemi body: střed, výchozí směr, cílový směr
+		CloudRoom,    //!< čára z mračna – místnost: klik dovnitř → obrys místnosti s rohy, Enter potvrdit
+		CloudBatch    //!< čára z mračna – hromadně: celý plátek → všechny přímé úseky s rohy, Enter potvrdit
 	};
 
 	enum class SnapType
@@ -129,6 +133,7 @@ public:
 	using SliceProvider = std::function<std::vector<std::array<double, 4>>()>;
 	void setSliceProvider( SliceProvider p ) { m_sliceProvider = std::move( p ); }
 	void setCloudLineParams( double gap, double tol, bool square );
+	void setCloudMinLen( double m ) { m_clMinLen = m; }
 	//! výšková kóta: ±0,000 v Bpv (z panelu), zápis 0 = Bpv, 1 = místní, 2 = oboje; měřítko výkresu 1:N
 	void setZeroProvider( std::function<double()> p ) { m_zeroProvider = std::move( p ); }
 	void setKotaFormat( int f );
@@ -299,6 +304,12 @@ private:
 	// čára z mračna
 	bool detectCloudLine( const CCVector2d& click );
 	void acceptCloudLine();
+	//! body plátku v rovině kreslení (center = jen v dosahu reach)
+	void slicePoints2D( std::vector<CCVector2d>& out, const CCVector2d* center, double reach ) const;
+	CloudLines::Params cloudParams() const;
+	void detectRoom( const CCVector2d& click );
+	void detectBatch();
+	void acceptBatch();
 	void setLine( ccPolyline* poly, const CCVector2d& a, const CCVector2d& b, UndoItem* undo );
 	void removeLine( ccPolyline* poly, UndoItem* undo );
 	void pushUndo( UndoItem&& u );
@@ -498,4 +509,14 @@ private:
 	int m_clPrevEnd = 0;            //!< který konec předchozí čáry se posune
 	CCVector2d m_clPrevA;           //!< předchozí čára po napojení
 	CCVector2d m_clPrevB;
+	struct ClJoin
+	{
+		ccPolyline* poly;
+		CCVector2d a;
+		CCVector2d b;
+	};
+	std::vector<ClJoin> m_clJoins;          //!< okolní čáry upravené do rohu s novou čárou z mračna
+	std::vector<CloudLines::Seg> m_clBatch; //!< náhled místnosti / hromadného hledání
+	CCVector2d m_clRoomClick;
+	double m_clMinLen = 0.30;
 };

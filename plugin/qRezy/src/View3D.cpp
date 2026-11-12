@@ -289,6 +289,14 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 	m_alpha->setMaximumWidth( 90 );
 	side->addWidget( new QLabel( QStringLiteral( "průhlednost" ) ) );
 	side->addWidget( m_alpha );
+	// pomocný řez: druh zápisu do půdorysu – sloupec vpravo (okno je pak užší)
+	m_modeCol = new QWidget;
+	auto* modeLay = new QVBoxLayout( m_modeCol );
+	modeLay->setContentsMargins( 0, 0, 0, 0 );
+	m_modeCol->setFixedWidth( 96 );
+	modeLay->setSpacing( 2 );
+	modeLay->addWidget( new QLabel( QStringLiteral( "Do půdorysu:" ) ) );
+	m_modeCol->setVisible( false );
 	m_backBtn = new QPushButton( QStringLiteral( "3D" ) );
 	m_backBtn->setToolTip( QStringLiteral( "Zpět z pomocného řezu do 3D náhledu" ) );
 	m_backBtn->setVisible( false );
@@ -374,7 +382,6 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 			}
 		} );
 		wl->addSpacing( 10 );
-		wl->addWidget( new QLabel( QStringLiteral( "Do půdorysu:" ) ) );
 		// režimy jako přepínací tlačítka (rychlejší než seznam); id = qRezy/auxWriteMode
 		m_writeMode = new QButtonGroup( this );
 		m_writeMode->setExclusive( true );
@@ -406,8 +413,10 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 			b->setMinimumWidth( 64 );
 			b->setFocusPolicy( Qt::NoFocus );
 			m_writeMode->addButton( b, m.id );
-			wl->addWidget( b );
+			b->setSizePolicy( QSizePolicy::Expanding, QSizePolicy::Fixed );
+			modeLay->addWidget( b );
 		}
+		modeLay->addStretch( 1 );
 		wl->addStretch( 1 );
 		auto* manual = new QCheckBox( QStringLiteral( "ručně" ) );
 		manual->setToolTip( QStringLiteral( "Text do půdorysu neumístit automaticky doprostřed čáry řezu, ale nechat ho na kurzoru a položit klikem (např. když je víc údajů přes sebe)" ) );
@@ -458,7 +467,11 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 	{
 		m_widget->setMinimumSize( 300, 250 );
 		m_widget->setFocusPolicy( Qt::StrongFocus );
-		lay->addWidget( m_widget, 1 );
+		auto* viewRow = new QHBoxLayout;
+		viewRow->setSpacing( 4 );
+		viewRow->addWidget( m_widget, 1 );
+		viewRow->addWidget( m_modeCol ); // sloupec režimů zápisu vpravo od pohledu (jen pomocný řez)
+		lay->addLayout( viewRow, 1 );
 		m_win->setPerspectiveState( true, true );
 		m_win->setPivotVisibility( ccGLWindowInterface::PIVOT_SHOW_ON_MOVE );
 	}
@@ -1200,6 +1213,7 @@ void View3D::auxSection( const CCVector3d& A, const CCVector3d& B, const CCVecto
 	if ( m_writeRow )
 	{
 		m_writeRow->setVisible( true );
+		m_modeCol->setVisible( true );
 	}
 	m_parapetMM = -1;
 	clearMeasure();
@@ -1231,6 +1245,7 @@ void View3D::leaveAux( bool refocus )
 	if ( m_writeRow )
 	{
 		m_writeRow->setVisible( false );
+		m_modeCol->setVisible( false );
 	}
 	if ( m_win )
 	{

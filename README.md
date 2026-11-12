@@ -42,7 +42,9 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | šipka | Výběr | 1 | klik = vybrat, Ctrl+klik = přidat/ubrat, okno tažením (zleva = jen uvnitř, zprava = i křížem), Ctrl+A = vše; modré úchopy na koncích = přesun konce; s výběrem Del/8 smaže, 3→1/3→2 kopie/přesun celého výběru, F1–F5 / hladina a F6 změní hladinu / zakrytí |
 | čára | Čára | Q | body, pravé kliknutí ukončí; **Enter bez čísla = další úsek kolmo na předchozí** (jen ten jeden úsek, pro další kolmici zase Enter) |
 | oblouk | Oblouk | E | tři body podle metody v pásu: *začátek–střed–konec* (střed = bod uprostřed oblouku, oblouk jde přes všechny tři body), *začátek–konec–střed* (třetí bod uprostřed oblouku), *střed kružnice* (začátek–střed kružnice–konec, směr podle pohybu myši); do DGN jako skutečný oblouk; lze vybrat, přesunout, kopírovat, smazat, změnit hladinu |
-| čára s body | Čára z mračna | | klik k bodům řezu (na líc zdi) → čára proložená body (náhled modře); klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a hned další, pravé = zahodit. Navazující čára se napojí v rohu, téměř kolmá se srovná na 90°. *Mezera* = kolik bodů smí chybět (dveře/okna = konec čáry), *tol.* = rozptyl líce |
+| čára s body | Čára z mračna | V | klik k bodům řezu (na líc zdi) → čára proložená body (náhled modře); klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a hned další, pravé = zahodit. Oba konce se napojí v rohu na okolní nakreslené čáry v libovolném pořadí (L roh = obě čáry do průsečíku, T = nová čára k čáře), téměř kolmá se srovná na 90°. *Mezera* = kolik bodů smí chybět (dveře/okna = konec čáry), *tol.* = rozptyl líce |
+| čára s body | Místnost | | klik dovnitř místnosti → obrys z bodů plátku s rohy, přes okna a dveře rovnou čarou (plátek nejlépe u stropu). Enter nebo klik do místnosti = potvrdit, klik do jiné = potvrdit a další, pravé = zahodit. Nejlépe na jednoduché místnosti, na zašuměné půdě s trámy a nábytkem dělá zuby |
+| čára s body | Hromadně | | celý plátek → všechny přímé úseky delší než *min.* s rohy; už nakreslené čáry se vynechají. Enter nebo klik = potvrdit, pravé = zahodit |
 | kříž šipek | Přesun | 3 → 2 | čára → výchozí bod → cíl (nebo vzdálenost) |
 | dva obdélníky | Otočit | 3 → 4 | prvek (nebo výběr) → střed otáčení → výchozí směr → cílový směr; náhled během otáčení; čáry, oblouky i texty (text se natočí, u výškové kóty se jen posune hrot) |
 | dvě čáry | Kopie | 3 → 1 | čára → výchozí bod → cíle |
@@ -126,7 +128,7 @@ s pravoúhlým řezem (tloušťka = posuvník Hloubka). Levé kliknutí 2 body =
 u kurzoru výška nad ±0,000 a v Bpv. Pravé tažení = posun, kolečko = zoom.
 Okno se otevře přiblížené od podlahy ke stropu (odhad z bodů v řezu). Měření se kreslí jako výšková kóta (svislá kótovací čára s patkami a hodnotou, šikmo kliknuté body nevadí) – v pomocném řezu i v 3D náhledu.
 
-**Zápis výšky do půdorysu**: v řádku *Do půdorysu* vyberte tlačítkem druh (Překlad / Strop / Výška / Okno), změřte a dejte **Enter** (nebo Zapsat).
+**Zápis výšky do půdorysu**: ve sloupci *Do půdorysu* vpravo od pohledu vyberte tlačítkem druh (Překlad / Strop / Výška / Okno / Podlaha), změřte a dejte **Enter** (nebo Zapsat).
 Bere se svislý rozdíl, zaokrouhlený na cm, zapsaný v mm, jako text podél čáry pomocného řezu **na místo, kde jste klikli odečtení výšky** (poslední klik):
 - *Okno*: 3 kliky – podlaha, parapet, horní hrana okna (zobrazí se obě kóty) → `2300(850)` = výška okna nad parapetem (parapet nad podlahou);
 - *Překlad* (2 kliky): `Vp=2060`;
