@@ -1,4 +1,5 @@
 #include "DrawTool.h"
+#include "CloudLinesV15.h"
 #include "RezLine.h"
 #include "RezLayer.h"
 
@@ -2300,9 +2301,29 @@ void DrawTool::detectRoom( const CCVector2d& click )
 	std::vector<CCVector2d> pts;
 	slicePoints2D( pts, &click, 25.0 * m_scale );
 	double open = 1.0;
+	bool flood = false;
 	if ( pts.size() >= 20 )
 	{
-		m_clBatch = CloudLines::room( pts, click, cloudParams(), open );
+		// algoritmus z v1.15 (paprsky z kliknutí) – uživateli funguje lépe; rozlití volné plochy jen když nic nenajde
+		const CloudLines::Params p = cloudParams();
+		CloudLinesV15::Params p15;
+		p15.tol = p.tol;
+		p15.gap = p.gap;
+		p15.minLen = p.minLen;
+		p15.scale = p.scale;
+		p15.square = p.square;
+		for ( const CloudLinesV15::Seg& sg : CloudLinesV15::room( pts, click, p15, open ) )
+		{
+			CloudLines::Seg s;
+			s.a = sg.a;
+			s.b = sg.b;
+			m_clBatch.push_back( s );
+		}
+		if ( m_clBatch.empty() )
+		{
+			m_clBatch = CloudLines::room( pts, click, p, open );
+			flood = true;
+		}
 		for ( CloudLines::Seg& sg : m_clBatch )
 		{
 			sg.cls = 0;
@@ -2313,9 +2334,15 @@ void DrawTool::detectRoom( const CCVector2d& click )
 	{
 		m_flash = QStringLiteral( "Místnost: nenašel jsem obrys – klikněte dál od zdi, doprostřed místnosti" );
 	}
-	else if ( open > 0.99 )
+	else if ( flood && open > 0.99 )
 	{
 		m_flash = QStringLiteral( "Místnost: %1 čar – pozor, plocha utekla otvorem ven (místnost není uzavřená), zkontrolujte náhled" ).arg( m_clBatch.size() );
+	}
+	else if ( !flood && open > 0.25 )
+	{
+		m_flash = QStringLiteral( "Místnost: %1 čar – pozor, místnost není uzavřená (%2 % směrů bez zdi), zkontrolujte náhled" )
+		              .arg( m_clBatch.size() )
+		              .arg( static_cast<int>( open * 100.0 + 0.5 ) );
 	}
 }
 

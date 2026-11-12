@@ -14,6 +14,7 @@ target_sources( ${PROJECT_NAME}
 		${CMAKE_CURRENT_LIST_DIR}/Tiff.h
 		${CMAKE_CURRENT_LIST_DIR}/Extract.h
 		${CMAKE_CURRENT_LIST_DIR}/CloudLines.h
+		${CMAKE_CURRENT_LIST_DIR}/CloudLinesV15.h
 )
 
 target_include_directories( ${PROJECT_NAME}
