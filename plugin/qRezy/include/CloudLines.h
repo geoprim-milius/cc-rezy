@@ -13,6 +13,8 @@ namespace CloudLines
 	{
 		CCVector2d a;
 		CCVector2d b;
+		bool clean = true; //!< čistý líc (kolem čáry skoro žádné jiné body) – vyplní extract při Params::strict
+		int cls = 0;       //!< jistota z batch(): 0 jisté (uzavřené obrysy), 1 navazující s volným koncem, 2 nejisté
 	};
 
 	struct Params
@@ -22,6 +24,7 @@ namespace CloudLines
 		double minLen = 0.30; //!< nejkratší úsek
 		double scale = 1.0;   //!< místní jednotky na metr
 		bool square = true;   //!< téměř kolmé / rovnoběžné srovnat k převládajícímu směru
+		bool strict = false;  //!< vyhodnotit Seg::clean (kolem čáry do 6 cm skoro žádné jiné body) – pro Hromadně
 	};
 
 	//! všechny přímé úseky v bodech (body se nejdřív zředí na mřížku ~tol/2)
@@ -34,7 +37,8 @@ namespace CloudLines
 	//! Vrací pro každý konec (2 na úsek), jestli je napojený.
 	std::vector<char> joinCorners( std::vector<Seg>& segs, double reach, double scale );
 
-	//! hromadně: všechny úseky ≥ minLen s rohy + krátké hrany ústupků, které spojují dvě čáry
+	//! hromadně: úseky ≥ minLen s rohy + krátké hrany ústupků; Seg::cls = jistota (0 uzavřené obrysy z čistých líců,
+	//! 1 navazující čáry s volným koncem, 2 nejisté: osamělé, svazky, zašuměné) – potvrzuje se po fázích
 	std::vector<Seg> batch( const std::vector<CCVector2d>& pts, const Params& p );
 
 	//! obrys místnosti kolem bodu „inside“: volná plocha „rozlitá“ od kliknutí (otvory se zavřou), body u jejího

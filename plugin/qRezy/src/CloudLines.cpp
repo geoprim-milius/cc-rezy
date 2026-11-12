@@ -331,7 +331,14 @@ namespace CloudLines
 				{
 					continue;
 				}
-				out.push_back( { P0 + D * tMin, P0 + D * tMax } );
+				bool clean = true;
+				if ( p.strict )
+				{
+					// čistý líc: v pásu ±6 cm smí být mimo čáru nejvýš ~40 % bodů (jinak fasáda se šumem, rámy oken, nábytek)
+					band( P0, D, tMin, tMax, std::max( 3.0 * tol, 0.06 * sc ), win, true );
+					clean = static_cast<double>( nIn ) >= 0.62 * static_cast<double>( win.size() );
+				}
+				out.push_back( { P0 + D * tMin, P0 + D * tMax, clean, 0 } );
 				// spotřebovat body líce (i trochu širší pás – ať nevznikne zdvojená čára)
 				band( P0, D, tMin - tol, tMax + tol, 2.0 * tol, mem, false );
 				for ( int i : mem )
@@ -516,100 +523,259 @@ namespace CloudLines
 
 	std::vector<Seg> batch( const std::vector<CCVector2d>& pts, const Params& p )
 	{
+		// Výsledek má tři stupně jistoty (Seg::cls) a potvrzuje se po fázích:
+		//  0 = čisté líce, které tvoří uzavřené obrysy (místnosti) – jisté
+		//  1 = čisté líce navazující na ostatní, ale s volným koncem
+		//  2 = nejisté: osamělé čáry, svazky čar těsně u sebe, zašuměné líce, pahýly
 		const double sc = p.scale;
 		Params pe = p;
+		pe.strict = true;
 		pe.minLen = std::min( p.minLen, 0.06 * sc ); // i krátké hrany ústupků – zůstanou jen ty, které spojují dvě zdi
-		std::vector<Seg> segs = extract( pts, pe );
+		std::vector<Seg> all = extract( pts, pe );
 		if ( p.square )
 		{
-			squareUp( segs, std::max( p.tol, 0.015 * sc ) );
+			squareUp( all, std::max( p.tol, 0.015 * sc ) );
 		}
-		// rohy nejdřív jen mezi dlouhými čarami, pak s krátkými
-		std::vector<char> isLong( segs.size() );
-		for ( size_t i = 0; i < segs.size(); ++i )
+		auto len = []( const Seg& g ) { return dist( g.a, g.b ); };
+		const int nAll = static_cast<int>( all.size() );
+		// svazky: dvě skoro rovnoběžné čáry těsně vedle sebe (do 9 cm), které se podélně překrývají → nejisté obě
+		std::vector<char> good( nAll, 1 );
+		for ( int i = 0; i < nAll; ++i )
 		{
-			isLong[i] = dist( segs[i].a, segs[i].b ) >= p.minLen;
-		}
-		std::vector<char> joined = joinCorners( segs, 0.6 * sc, sc );
-		std::vector<Seg> out;
-		for ( size_t i = 0; i < segs.size(); ++i )
-		{
-			if ( isLong[i] || ( joined[2 * i] && joined[2 * i + 1] ) )
+			const double Li = len( all[i] );
+			if ( Li < 1e-9 || !all[i].clean )
 			{
-				out.push_back( segs[i] );
+				good[i] = 0;
 			}
-		}
-		// odskok bez nalezené hrany: dva volné konce rovnoběžných čar blízko sebe → kolmá spojka uprostřed
-		const size_t n = segs.size();
-		for ( size_t i = 0; i < n; ++i )
-		{
-			if ( !isLong[i] )
+			if ( Li < 1e-9 )
 			{
 				continue;
 			}
-			for ( int e = 0; e < 2; ++e )
+			const CCVector2d Di = ( all[i].b - all[i].a ) / Li;
+			const CCVector2d Ni( -Di.y, Di.x );
+			for ( int j = i + 1; j < nAll; ++j )
 			{
-				if ( joined[2 * i + e] )
+				const double Lj = len( all[j] );
+				if ( Lj < 1e-9 || std::abs( Di.dot( all[j].b - all[j].a ) ) / Lj < std::cos( 6.0 * Deg ) )
 				{
 					continue;
 				}
-				const CCVector2d E = e == 0 ? segs[i].a : segs[i].b;
-				const CCVector2d Di = ( segs[i].b - segs[i].a ) / dist( segs[i].a, segs[i].b );
-				const CCVector2d Ni( -Di.y, Di.x );
-				int bj = -1;
-				int bf = 0;
-				double bd = 0.35 * sc;
-				for ( size_t j = i + 1; j < n; ++j )
+				const double ta = ( all[j].a - all[i].a ).dot( Di );
+				const double tb = ( all[j].b - all[i].a ).dot( Di );
+				const double ov = std::min( Li, std::max( ta, tb ) ) - std::max( 0.0, std::min( ta, tb ) );
+				if ( ov < 0.3 * std::min( Li, Lj ) || ov < 0.05 * sc )
 				{
-					if ( !isLong[j] )
+					continue;
+				}
+				if ( std::abs( ( ( all[j].a + all[j].b ) * 0.5 - all[i].a ).dot( Ni ) ) < 0.09 * sc )
+				{
+					// kratší z dvojice je vždy nejistá; delší jen když jsou srovnatelné (překryv přes půlku delší)
+					( Li < Lj ? good[i] : good[j] ) = 0;
+					if ( ov > 0.5 * std::max( Li, Lj ) )
+					{
+						good[i] = 0;
+						good[j] = 0;
+					}
+				}
+			}
+		}
+		auto onSeg = [&]( const CCVector2d& P, const Seg& g )
+		{
+			const CCVector2d d = g.b - g.a;
+			const double L2 = d.dot( d );
+			if ( L2 < 1e-18 )
+			{
+				return false;
+			}
+			const double t = std::max( 0.0, std::min( 1.0, ( P - g.a ).dot( d ) / L2 ) );
+			return dist( g.a + d * t, P ) < 1e-6 * sc + 1e-9;
+		};
+		// konec čáry i navazuje na jinou čáru z množiny (roh nebo T)
+		auto touches = [&]( const std::vector<Seg>& v, const std::vector<char>& in, int i, int e )
+		{
+			const CCVector2d E = e == 0 ? v[i].a : v[i].b;
+			for ( int k = 0; k < static_cast<int>( v.size() ); ++k )
+			{
+				if ( k != i && in[k] && onSeg( E, v[k] ) )
+				{
+					return true;
+				}
+			}
+			return false;
+		};
+		// rohy + kolmé spojky odskoků na dané množině čar; vrací geometrii (původní čáry na stejných indexech,
+		// spojky za nimi)
+		auto build = [&]( const std::vector<Seg>& src )
+		{
+			std::vector<Seg> g = src;
+			const size_t n = g.size();
+			std::vector<char> joined = joinCorners( g, 0.6 * sc, sc );
+			for ( size_t i = 0; i < n; ++i )
+			{
+				if ( len( src[i] ) < p.minLen )
+				{
+					continue;
+				}
+				for ( int e = 0; e < 2; ++e )
+				{
+					if ( joined[2 * i + e] )
 					{
 						continue;
 					}
-					const CCVector2d Dj = ( segs[j].b - segs[j].a ) / dist( segs[j].a, segs[j].b );
-					if ( std::abs( Di.dot( Dj ) ) < std::cos( 3.0 * Deg ) )
+					const CCVector2d E = e == 0 ? g[i].a : g[i].b;
+					const CCVector2d Di = ( g[i].b - g[i].a ) / len( g[i] );
+					const CCVector2d Ni( -Di.y, Di.x );
+					int bj = -1;
+					int bf = 0;
+					double bd = 0.35 * sc;
+					for ( size_t j = i + 1; j < n; ++j )
 					{
-						continue;
-					}
-					for ( int f = 0; f < 2; ++f )
-					{
-						if ( joined[2 * j + f] )
+						if ( len( src[j] ) < p.minLen )
 						{
 							continue;
 						}
-						const CCVector2d F = f == 0 ? segs[j].a : segs[j].b;
-						const double off = std::abs( ( F - E ).dot( Ni ) );
-						const double along = ( F - E ).dot( Di ) * ( e == 0 ? -1.0 : 1.0 ); // kladné = za koncem
-						if ( off > 2.0 * p.tol && off < 0.3 * sc && along > -0.05 * sc && dist( E, F ) < bd )
+						const CCVector2d Dj = ( g[j].b - g[j].a ) / len( g[j] );
+						if ( std::abs( Di.dot( Dj ) ) < std::cos( 3.0 * Deg ) )
 						{
-							bd = dist( E, F );
-							bj = static_cast<int>( j );
-							bf = f;
+							continue;
+						}
+						for ( int f = 0; f < 2; ++f )
+						{
+							if ( joined[2 * j + f] )
+							{
+								continue;
+							}
+							const CCVector2d F = f == 0 ? g[j].a : g[j].b;
+							const double off = std::abs( ( F - E ).dot( Ni ) );
+							const double along = ( F - E ).dot( Di ) * ( e == 0 ? -1.0 : 1.0 ); // kladné = za koncem
+							if ( off > 2.0 * p.tol && off < 0.3 * sc && along > -0.05 * sc && dist( E, F ) < bd )
+							{
+								bd = dist( E, F );
+								bj = static_cast<int>( j );
+								bf = f;
+							}
+						}
+					}
+					if ( bj < 0 )
+					{
+						continue;
+					}
+					CCVector2d& F = bf == 0 ? g[bj].a : g[bj].b;
+					CCVector2d& E2 = e == 0 ? g[i].a : g[i].b;
+					const double tm = 0.5 * ( F - E2 ).dot( Di );
+					const CCVector2d P = E2 + Di * tm;                      // nový konec čáry i
+					const CCVector2d Q = P + Ni * ( ( F - E2 ).dot( Ni ) ); // nový konec čáry j
+					E2 = P;
+					F = Q;
+					joined[2 * i + e] = 1;
+					joined[2 * bj + bf] = 1;
+					g.push_back( { P, Q, true, 0 } ); // kolmá spojka odskoku
+				}
+			}
+			return g;
+		};
+		// navazující skupiny: nechat jen čáry ve skupině (aspoň 2 čáry a 2,5 m), ne osamělé a ne pahýly;
+		// krátké hrany jen když spojují dvě čáry. Opakovat, dokud se něco vyhazuje.
+		std::vector<Seg> segs;
+		std::vector<Seg> rest;
+		for ( int i = 0; i < nAll; ++i )
+		{
+			( good[i] ? segs : rest ).push_back( all[i] );
+		}
+		std::vector<Seg> geo;
+		for ( int round = 0; round < 8; ++round )
+		{
+			geo = build( segs );
+			const int n0 = static_cast<int>( segs.size() );
+			const int ng = static_cast<int>( geo.size() );
+			std::vector<int> comp( ng );
+			for ( int i = 0; i < ng; ++i )
+			{
+				comp[i] = i;
+			}
+			auto find = [&]( int x )
+			{
+				while ( comp[x] != x )
+				{
+					x = comp[x] = comp[comp[x]];
+				}
+				return x;
+			};
+			std::vector<char> je( 2 * ng, 0 );
+			for ( int i = 0; i < ng; ++i )
+			{
+				for ( int e = 0; e < 2; ++e )
+				{
+					const CCVector2d E = e == 0 ? geo[i].a : geo[i].b;
+					for ( int k = 0; k < ng; ++k )
+					{
+						if ( k != i && onSeg( E, geo[k] ) )
+						{
+							je[2 * i + e] = 1;
+							comp[find( i )] = find( k );
 						}
 					}
 				}
-				if ( bj < 0 )
+			}
+			std::vector<double> total( ng, 0.0 );
+			std::vector<int> count( ng, 0 );
+			for ( int i = 0; i < ng; ++i )
+			{
+				total[find( i )] += len( geo[i] );
+				++count[find( i )];
+			}
+			std::vector<Seg> keep;
+			for ( int i = 0; i < n0; ++i )
+			{
+				const int c = find( i );
+				const double L = len( segs[i] );
+				const bool both = je[2 * i] && je[2 * i + 1];
+				const bool lonely = !je[2 * i] && !je[2 * i + 1];
+				const bool stub = !both && L < std::max( p.minLen, 0.6 * sc ); // výběžek, kousek shluku, volná krátká hrana
+				if ( count[c] >= 2 && total[c] >= 2.5 * sc && !lonely && !stub )
 				{
-					continue;
+					keep.push_back( segs[i] );
 				}
-				CCVector2d& F = bf == 0 ? segs[bj].a : segs[bj].b;
-				CCVector2d& E2 = e == 0 ? segs[i].a : segs[i].b;
-				const double tm = 0.5 * ( F - E2 ).dot( Di );
-				const CCVector2d P = E2 + Di * tm;                      // nový konec čáry i
-				const CCVector2d Q = P + Ni * ( ( F - E2 ).dot( Ni ) ); // nový konec čáry j
-				E2 = P;
-				F = Q;
-				joined[2 * i + e] = 1;
-				joined[2 * bj + bf] = 1;
-				segs.push_back( { P, Q } );
-				isLong.push_back( 2 );
+				else
+				{
+					rest.push_back( segs[i] );
+				}
+			}
+			const bool same = keep.size() == segs.size();
+			segs.swap( keep );
+			if ( same )
+			{
+				break;
 			}
 		}
-		out.clear();
-		for ( size_t i = 0; i < segs.size(); ++i )
+		segs = geo; // konečná geometrie (rohy, spojky)
+		// jisté = uzavřené obrysy: postupně odebírat čáry s volným koncem, co zbude, je uzavřené
+		const int nk = static_cast<int>( segs.size() );
+		std::vector<char> core( nk, 1 );
+		for ( bool changed = true; changed; )
 		{
-			if ( isLong[i] || ( joined[2 * i] && joined[2 * i + 1] ) )
+			changed = false;
+			for ( int i = 0; i < nk; ++i )
 			{
-				out.push_back( segs[i] );
+				if ( core[i] && ( !touches( segs, core, i, 0 ) || !touches( segs, core, i, 1 ) ) )
+				{
+					core[i] = 0;
+					changed = true;
+				}
+			}
+		}
+		std::vector<Seg> out;
+		for ( int i = 0; i < nk; ++i )
+		{
+			segs[i].cls = core[i] ? 0 : 1;
+			out.push_back( segs[i] );
+		}
+		for ( Seg& g : rest )
+		{
+			if ( len( g ) >= p.minLen )
+			{
+				g.cls = 2;
+				out.push_back( g );
 			}
 		}
 		return out;

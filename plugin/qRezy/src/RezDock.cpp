@@ -673,7 +673,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Arc, "arc", "Oblouk", "Tři body podle metody vedle: začátek–střed oblouku–konec, začátek–konec–střed oblouku, nebo se středem kružnice. Do DGN jako skutečný oblouk." },
 		{ DrawTool::Mode::CloudLine, "cloudline", "Čára\nz mračna", "Klik k bodům řezu (na líc zdi) → čára proložená body; klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a další, pravé = zahodit. Napojí se v rohu na okolní čáry (oba konce, v libovolném pořadí). Klávesa V." },
 		{ DrawTool::Mode::CloudRoom, "cloudline", "Místnost", "Čára z mračna – místnost: klik dovnitř místnosti → obrys z bodů plátku s rohy (přes okna a dveře rovnou čarou; plátek nejlépe u stropu). Enter nebo klik do místnosti = potvrdit, klik do jiné = potvrdit a další, pravé = zahodit." },
-		{ DrawTool::Mode::CloudBatch, "cloudline", "Hromadně", "Čára z mračna – hromadně: celý plátek → všechny přímé úseky delší než „min.“ s rohy (už nakreslené se vynechají). Enter nebo klik = potvrdit, pravé = zahodit." },
+		{ DrawTool::Mode::CloudBatch, "cloudline", "Hromadně", "Čára z mračna – hromadně: celý plátek → přímé úseky delší než „min.“ s rohy (už nakreslené se vynechají). Potvrzuje se ve 3 fázích: 1 jisté (uzavřené místnosti), 2 navazující čáry, 3 nejisté. Enter nebo klik = potvrdit fázi, pravé = přeskočit ji." },
 		{ DrawTool::Mode::Move, "move", "Přesun", "Čára (nebo výběr), výchozí bod, cíl nebo vzdálenost." },
 		{ DrawTool::Mode::Rotate, "rotel", "Otočit", "Prvek (nebo výběr), pak 3 body: střed otáčení, výchozí směr, cílový směr. Otočí čáry, oblouky i texty (3·4)." },
 		{ DrawTool::Mode::Copy, "copy", "Kopie", "Čára (nebo výběr), výchozí bod, cíle nebo vzdálenost." },

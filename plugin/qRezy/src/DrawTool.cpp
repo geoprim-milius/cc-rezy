@@ -2244,6 +2244,10 @@ void DrawTool::detectRoom( const CCVector2d& click )
 	if ( pts.size() >= 20 )
 	{
 		m_clBatch = CloudLines::room( pts, click, cloudParams(), open );
+		for ( CloudLines::Seg& sg : m_clBatch )
+		{
+			sg.cls = 0;
+		}
 	}
 	QApplication::restoreOverrideCursor();
 	if ( m_clBatch.empty() )
@@ -2291,8 +2295,39 @@ void DrawTool::detectBatch()
 		}
 	}
 	QApplication::restoreOverrideCursor();
-	m_flash = m_clBatch.empty() ? QStringLiteral( "Hromadně: v plátku nejsou žádné nové přímé úseky" )
-	                            : QStringLiteral( "Hromadně: %1 čar – Enter nebo klik = potvrdit, pravé = zahodit" ).arg( m_clBatch.size() );
+	m_flash = m_clBatch.empty() ? QStringLiteral( "Hromadně: v plátku nejsou žádné nové přímé úseky" ) : batchPrompt();
+}
+
+int DrawTool::batchPhase() const
+{
+	int ph = 3;
+	for ( const CloudLines::Seg& sg : m_clBatch )
+	{
+		ph = std::min( ph, sg.cls );
+	}
+	return ph;
+}
+
+QString DrawTool::batchPrompt() const
+{
+	static const char* names[] = { "jisté – uzavřené místnosti", "navazující čáry s volným koncem", "nejisté – zkontrolujte" };
+	const int ph = std::max( 0, std::min( 2, batchPhase() ) );
+	int n = 0;
+	for ( const CloudLines::Seg& sg : m_clBatch )
+	{
+		n += sg.cls == ph ? 1 : 0;
+	}
+	return QStringLiteral( "Hromadně %1/3 (%2): %3 čar – Enter nebo klik = potvrdit, pravé = přeskočit, Esc = konec" )
+	    .arg( ph + 1 )
+	    .arg( QString::fromUtf8( names[ph] ) )
+	    .arg( n );
+}
+
+void DrawTool::skipBatchPhase()
+{
+	const int ph = batchPhase();
+	m_clBatch.erase( std::remove_if( m_clBatch.begin(), m_clBatch.end(), [ph]( const CloudLines::Seg& sg ) { return sg.cls == ph; } ), m_clBatch.end() );
+	m_flash = m_clBatch.empty() ? QStringLiteral( "Hromadně: hotovo" ) : batchPrompt();
 }
 
 void DrawTool::acceptBatch()
@@ -2301,17 +2336,21 @@ void DrawTool::acceptBatch()
 	{
 		return;
 	}
+	// po fázích podle jistoty: přidat jen aktuální fázi (místnost má vše ve fázi 0), zbytek nechat k dalšímu potvrzení
+	const int ph = batchPhase();
 	UndoItem u;
+	int n = 0;
 	for ( const CloudLines::Seg& sg : m_clBatch )
 	{
-		if ( dist( sg.a, sg.b ) > 1e-9 )
+		if ( sg.cls == ph && dist( sg.a, sg.b ) > 1e-9 )
 		{
 			addLine( sg.a, sg.b, m_category, m_hidden, &u );
+			++n;
 		}
 	}
 	pushUndo( std::move( u ) );
-	m_flash = QStringLiteral( "Přidáno čar: %1" ).arg( m_clBatch.size() );
-	m_clBatch.clear();
+	m_clBatch.erase( std::remove_if( m_clBatch.begin(), m_clBatch.end(), [ph]( const CloudLines::Seg& sg ) { return sg.cls == ph; } ), m_clBatch.end() );
+	m_flash = m_clBatch.empty() ? QStringLiteral( "Přidáno čar: %1" ).arg( n ) : QStringLiteral( "Přidáno čar: %1. " ).arg( n ) + batchPrompt();
 }
 
 // ---------------------------------------------------------------- režimy
@@ -3781,10 +3820,23 @@ void DrawTool::updateTip()
 	// místnost / hromadně: náhled všech nalezených čar
 	if ( ( m_mode == Mode::CloudRoom || m_mode == Mode::CloudBatch ) && !m_clBatch.empty() )
 	{
+		// aktuální fáze výrazně, další (méně jisté) tlumeně
+		const int ph = batchPhase();
 		const ccColor::Rgb cl( 0, 230, 255 );
+		const ccColor::Rgb dim( 120, 120, 150 );
 		for ( const CloudLines::Seg& sg : m_clBatch )
 		{
-			segment( sg.a, sg.b, cl, 2.0f );
+			if ( sg.cls != ph )
+			{
+				segment( sg.a, sg.b, dim, 1.0f );
+			}
+		}
+		for ( const CloudLines::Seg& sg : m_clBatch )
+		{
+			if ( sg.cls == ph )
+			{
+				segment( sg.a, sg.b, cl, 2.0f );
+			}
 		}
 	}
 
@@ -4368,7 +4420,7 @@ void DrawTool::updateStatus()
 		                            : QStringLiteral( "Místnost: klikněte dovnitř místnosti (plátek nejlépe u stropu – bez oken a dveří)" );
 		break;
 	case Mode::CloudBatch:
-		prompt = !m_clBatch.empty() ? QStringLiteral( "Hromadně: %1 čar – Enter nebo klik = potvrdit, pravé = zahodit" ).arg( m_clBatch.size() )
+		prompt = !m_clBatch.empty() ? batchPrompt()
 		                            : QStringLiteral( "Hromadně: klik = hledat čáry v celém plátku" );
 		break;
 	}
@@ -4568,7 +4620,14 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			m_perpLock = false;
 			m_clHas = false; // čára z mračna: reset = zahodit náhled
 			m_clJoins.clear();
-			m_clBatch.clear();
+			if ( m_mode == Mode::CloudBatch && !m_clBatch.empty() )
+			{
+				skipBatchPhase(); // hromadně: pravé = přeskočit jen aktuální fázi
+			}
+			else
+			{
+				m_clBatch.clear();
+			}
 			m_step = 0;
 			select( nullptr );
 			m_typed.clear();
