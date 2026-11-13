@@ -140,7 +140,7 @@ Zaškrtnuté **ručně**: text se neumístí sám, ale visí na kurzoru (podél 
 
 **Pravý klik** (bez tažení) zruší rozpracované měření – jen když není definovaná podlaha; při výběru podlahy zruší výběr. Pravé tažení dál posouvá pohled.
 
-**Def. podlahy**: tlačítko *Def. podlahy* (nebo klávesa **V** v okně pomocného řezu – zapíná i vypíná) a klik na podlahu v řezu = podlaha se zapamatuje (zelená čára, na tlačítku její výška). Pak se podlaha už neklikne: Strop / Překlad / Výška = **1 klik**, Okno = 2 kliky (parapet, horní hrana). Platí i pro další pomocné řezy; znovu kliknout na tlačítko = zrušit.
+**Def. podlahy**: tlačítko *Def. podlahy* (nebo klávesa **V**, když je myš nad oknem pomocného řezu nebo je v něm fokus – zapíná i vypíná; i v zadokovaném okně) a klik na podlahu v řezu = podlaha se zapamatuje (zelená čára, na tlačítku její výška). Pak se podlaha už neklikne: Strop / Překlad / Výška = **1 klik**, Okno = 2 kliky (parapet, horní hrana). Platí i pro další pomocné řezy; znovu kliknout na tlačítko = zrušit.
 
 **Špendlík v pomocném řezu**: prostřední klik do mračna v pomocném řezu = špendlík v půdorysu i v 3D náhledu (pohled pomocného řezu se nehýbe). A naopak: špendlík z výkresu nebo z 3D náhledu se ukáže i v pomocném řezu, pokud místo leží v řezu (z půdorysu jako jehla od podlahy ke stropu).
 Každý druh má svou hladinu DGN (okno Uložit → Výšky z pomocného řezu; výchozí podle zakládacího seedu: okno a výška KOTY 16, překlad, strop a podlaha VYSKY 9; barva textu podle hladiny KOTY 135, VYSKY 162). Natočení textu se přenese i do DGN.

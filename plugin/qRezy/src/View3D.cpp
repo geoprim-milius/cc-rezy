@@ -17,6 +17,7 @@
 #include <ReferenceCloud.h>
 
 #include <QApplication>
+#include <QCursor>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QToolButton>
@@ -1495,12 +1496,12 @@ void View3D::updateMeasure( bool live )
 
 bool View3D::eventFilter( QObject* obj, QEvent* event )
 {
-	// pomocný řez: klávesa V (bez Ctrl/Alt/Shift), když je fokus v tomto okně → Def. podlahy
+	// pomocný řez: klávesa V (bez Ctrl/Alt/Shift), když je fokus v tomto okně nebo nad ním myš (i zadokované) → Def. podlahy
 	if ( m_aux && m_floorBtn && ( event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress ) )
 	{
 		auto* k = static_cast<QKeyEvent*>( event );
 		QWidget* fw = QApplication::focusWidget();
-		if ( k->key() == Qt::Key_V && !( k->modifiers() & ( Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier ) ) && isVisible() && ( ( fw && ( fw == this || isAncestorOf( fw ) ) ) || ( isFloating() && QApplication::activeWindow() == this ) ) )
+		if ( k->key() == Qt::Key_V && !( k->modifiers() & ( Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier ) ) && isVisible() && ( ( fw && ( fw == this || isAncestorOf( fw ) ) ) || ( isFloating() && QApplication::activeWindow() == this ) || rect().contains( mapFromGlobal( QCursor::pos() ) ) ) )
 		{
 			if ( event->type() == QEvent::ShortcutOverride )
 			{
