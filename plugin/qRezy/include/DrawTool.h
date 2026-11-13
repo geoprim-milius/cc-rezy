@@ -91,7 +91,8 @@ public:
 		PlaceText,    //!< umístit připravený text (z pomocného řezu) ručně – text visí na kurzoru
 		Rotate,       //!< otočit prvek / výběr třemi body: střed, výchozí směr, cílový směr
 		CloudRoom,    //!< čára z mračna – místnost: klik dovnitř → obrys místnosti s rohy, Enter potvrdit
-		CloudBatch    //!< čára z mračna – hromadně: celý plátek → všechny přímé úseky s rohy, Enter potvrdit
+		CloudBatch,   //!< čára z mračna – hromadně: celý plátek → všechny přímé úseky s rohy, Enter potvrdit
+		Door          //!< dveře v půdorysu: závěs, druhý konec otvoru, strana → křídlo + oblouk + kóta šířky (výška z pomocného řezu)
 	};
 
 	enum class SnapType
@@ -207,6 +208,10 @@ public:
 	void setPinVisible( bool on );
 	//! text natočený podél směru (úhel v rovině pohledu, rad) na zadané hladině DGN (0 = výchozí hladina textů)
 	ccPolyline* addTextAt( const CCVector2d& P, const QString& text, double angle, int level );
+	//! výška otvoru posledních nakreslených dveří (text v mm) pod kótu šířky; false = žádné dveře nečekají
+	bool writeDoorHeight( const QString& text );
+	bool doorPending() const { return m_doorPend; }
+	void clearDoorPending() { m_doorPend = false; }
 	//! připravený text k ručnímu umístění (text visí na kurzoru, střed dole; klik = vložit, Esc = zrušit)
 	void startPlaceText( const QString& text, double angle, int level );
 
@@ -241,6 +246,8 @@ Q_SIGNALS:
 	void drawingChanged();
 	//! klávesa C: pomocný řez
 	void auxSectionRequested();
+	//! dveře nakresleny – čeká se na výšku otvoru z pomocného řezu
+	void doorHeightWanted();
 
 protected:
 	bool eventFilter( QObject* obj, QEvent* event ) override;
@@ -282,6 +289,7 @@ private:
 	// geometrie výkresu
 	std::vector<Segment> collectSegments() const;
 	ccPolyline* pickLine( const QPoint& pos, CCVector2d* clicked = nullptr ) const;
+	std::array<CCVector2d, 4> textCorners( ccPolyline* poly, const CCVector2d& origin ) const; //!< obrys písmen textu
 	bool lineEnds( ccPolyline* poly, CCVector2d& a, CCVector2d& b ) const;
 	bool lineExists( ccPolyline* poly ) const;
 	CCVector2d snapPoint( const QPoint& pos, SnapType& type ) const;
@@ -504,6 +512,12 @@ private:
 	CCVector2d m_kotaTip;
 	double m_clGap = 0.10;
 	double m_clTol = 0.02;
+	// dveře: kóta čeká na výšku (3D lokálně: střed kóty, směr textu, „nahoru“ textu)
+	bool m_doorPend = false;
+	CCVector3d m_doorC;
+	CCVector3d m_doorT;
+	CCVector3d m_doorUp;
+	void buildDoor( const CCVector2d& A, const CCVector2d& B, const CCVector2d& side );
 	bool m_auxKeep = false; //!< stopa pomocného řezu v půdorysu (3D lokálně)
 	CCVector3d m_auxKA;
 	CCVector3d m_auxKB;

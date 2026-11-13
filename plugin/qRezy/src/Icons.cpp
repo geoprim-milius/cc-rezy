@@ -270,6 +270,17 @@ namespace Icons
 				}
 				p.setBrush( Qt::NoBrush );
 			}
+			else if ( n == "door" )
+			{
+				// dveře: zeď, křídlo a čtvrtkruh
+				p.setPen( QPen( Ink, 2.0 ) );
+				p.drawLine( QPointF( 2, 26 ), QPointF( 7, 26 ) );
+				p.drawLine( QPointF( 25, 26 ), QPointF( 30, 26 ) );
+				p.setPen( QPen( Accent, 2.4, Qt::SolidLine, Qt::RoundCap ) );
+				p.drawLine( QPointF( 7, 26 ), QPointF( 7, 8 ) );
+				p.setPen( QPen( Accent, 1.6 ) );
+				p.drawArc( QRectF( -11, 8, 36, 36 ), 0, 90 * 16 );
+			}
 			else if ( n == "cloudline" )
 			{
 				// body mračna podél zdi a proložená čára

@@ -74,6 +74,8 @@ public:
 	//! pomocný řez: pravoúhlý pohled na rovinu A–B (lokálně), N = k pozorovateli; jen pro měření
 	void auxSection( const CCVector3d& A, const CCVector3d& B, const CCVector3d& N, double planZ, double zeroGlobal, double thickness );
 	bool isAux() const { return m_aux; }
+	//! pomocný řez: přepnout režim zápisu (0 okno, 1 překlad, 2 výška, 3 strop, 4 podlaha) a ukázat nápovědu
+	void setWriteMode( int id, const QString& hint = QString() );
 	double auxFloor() const { return m_auxFloor; } //!< pomocný řez: odhad podlahy (místní z)
 	double auxCeil() const { return m_auxCeil; }   //!< pomocný řez: odhad stropu (místní z)
 
@@ -190,6 +192,7 @@ private:
 	std::vector<CCVector3d> measPts( const std::vector<CCVector3d>& clicks ) const; //!< kliky + podlaha
 	void updateFloor();
 	class QToolButton* m_floorBtn = nullptr;
+	class QToolButton* m_rotBtn = nullptr; //!< pomocný řez: Text 90° (klávesa B)
 	QWidget* m_modeCol = nullptr; //!< sloupec režimů zápisu (pomocný řez)
 	bool m_floorPick = false;
 	bool m_hasFloor = false;

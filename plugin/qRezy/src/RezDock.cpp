@@ -691,6 +691,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Measure, "measure", "Měřit", "Vzdálenost mezi dvěma body." },
 		{ DrawTool::Mode::Text, "text", "Text", "Klik a napsat (např. naměřenou výšku); přesun, kopie a mazání jako u čar." },
 		{ DrawTool::Mode::EditText, "text", "Upravit text", "Klik na text → změnit jeho obsah (A·B)." },
+		{ DrawTool::Mode::Door, "door", "Dveře", "Dveře v půdorysu: 1. klik = závěs (konec otvoru), 2. klik = druhý konec otvoru (kde dosedne oblouk), 3. klik = strana otevírání. Nakreslí křídlo a oblouk (DVERE) a kótu (POP_DVERE): čára středem otvoru, šířka otvoru v mm (na cm); pak vyskočí pomocný řez – změřte výšku otvoru a Enter, výška se zapíše pod šířku." },
 		{ DrawTool::Mode::Kota, "kota", "Kóta", "Výšková kóta (kačena) v řezu nebo pohledu: klik na bod = hrot šipky, druhý klik = strana poličky. Výška v Bpv, místní (k ±0,000) nebo obojí; velikost podle měřítka výkresu. Přesun, kopie (výška se přepočítá) a mazání jako u čar." },
 	};
 	for ( const ToolDef& t : tools )
@@ -819,6 +820,14 @@ void RezDock::buildToolbar()
 	QAction* aux = mkAct( "auxsec", QStringLiteral( "Pomocný řez" ), QStringLiteral( "2 body v půdorysu a strana; otevře okno pro měření výšek (nic se neukládá)" ) );
 	connect( aux, &QAction::triggered, this, [startDef]() { startDef( 2 ); } );
 	connect( m_draw, &DrawTool::auxSectionRequested, this, [startDef]() { startDef( 2 ); } );
+	// dveře: pomocný řez přes otvor už je otevřený → režim Výška a nápověda
+	connect( m_draw, &DrawTool::doorHeightWanted, this, [this]()
+	{
+		if ( m_viewAux && m_viewAux->isVisible() )
+		{
+			m_viewAux->setWriteMode( 2, QStringLiteral( "<b>Dveře</b> – změřte výšku otvoru (podlaha a nadpraží, s definovanou podlahou jen nadpraží), pak Enter → výška se zapíše pod šířku dveří." ) );
+		}
+	} );
 	QAction* rot = mkAct( "rotate", QStringLiteral( "Otočit pohled" ), QStringLiteral( "2 body – směr 1. → 2. bod bude vodorovně doprava" ) );
 	connect( rot, &QAction::triggered, this, [this]()
 	{
@@ -1039,6 +1048,7 @@ void RezDock::buildToolbar()
 		RibbonColumn c2 = g.column();
 		c2.addSmall( T( DrawTool::Mode::EditText ), QStringLiteral( "A·B" ) );
 		c2.addSmall( aux, QStringLiteral( "C" ) );
+		c2.addSmall( T( DrawTool::Mode::Door ) );
 		RibbonGroup kg = r->addGroup( pDraw, QStringLiteral( "Kóta" ) );
 		kg.addBig( T( DrawTool::Mode::Kota ) );
 		RibbonColumn kc = kg.column();
@@ -2466,9 +2476,28 @@ void RezDock::migrateSeedLayers()
 	}
 	if ( st.value( QStringLiteral( "qRezy/layersVer" ), 0 ).toInt() >= 2 )
 	{
+		// v1.20: hladina POP_DVERE (kóta dveří) – doplnit, když v seznamu chybí
+		if ( st.value( QStringLiteral( "qRezy/layersVer" ), 0 ).toInt() < 3 )
+		{
+			st.setValue( QStringLiteral( "qRezy/layersVer" ), 3 );
+			std::vector<Drawing::Layer> L = Drawing::layers();
+			const bool has = std::any_of( L.begin(), L.end(), []( const Drawing::Layer& x ) { return x.id == 8; } );
+			if ( !has )
+			{
+				for ( const Drawing::Layer& d : Drawing::defaultLayers() )
+				{
+					if ( d.id == 8 )
+					{
+						L.push_back( d );
+					}
+				}
+				Drawing::setLayers( L );
+				refreshCatCombo();
+			}
+		}
 		return;
 	}
-	st.setValue( QStringLiteral( "qRezy/layersVer" ), 2 );
+	st.setValue( QStringLiteral( "qRezy/layersVer" ), 3 );
 	const bool hadLayers = !st.value( QStringLiteral( "qRezy/layers" ) ).toStringList().isEmpty();
 	if ( hadLayers
 	     && QMessageBox::question( this, QStringLiteral( "Řezy – hladiny" ),
@@ -3352,6 +3381,19 @@ bool RezDock::writeCloudRaster( const QString& path, int viewId, double px, int 
 
 void RezDock::writeAuxHeight( const QString& text, int kind, double atX, double atY )
 {
+	// dveře čekají na výšku otvoru: měření Výška → text pod kótu šířky dveří
+	if ( kind == 2 && m_draw && m_draw->doorPending() )
+	{
+		if ( !isPlanView( m_activeView ) )
+		{
+			activateView( m_lastPlan );
+		}
+		if ( m_draw->writeDoorHeight( text ) )
+		{
+			m_app->dispToConsole( QStringLiteral( "[Řezy] Výška dveří %1 zapsána pod šířku." ).arg( text ) );
+			return;
+		}
+	}
 	ccGenericPointCloud* c = cloud();
 	if ( !c || !m_draw )
 	{

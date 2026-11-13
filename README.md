@@ -39,7 +39,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | Ikona | Nástroj | Klávesa | Postup |
 |---|---|---|---|
 | tužka | Kreslit (zap/vyp) | | |
-| šipka | Výběr | 1 | klik = vybrat, Ctrl+klik = přidat/ubrat, okno tažením (zleva = jen uvnitř, zprava = i křížem), Ctrl+A = vše; modré úchopy na koncích = přesun konce; s výběrem Del/8 smaže, 3→1/3→2 kopie/přesun celého výběru, F1–F5 / hladina a F6 změní hladinu / zakrytí |
+| šipka | Výběr | 1 | klik = vybrat, Ctrl+klik = přidat/ubrat, okno tažením (zleva = jen uvnitř, zprava = i křížem; texty a kóty podle celého obrysu písmen), Ctrl+A = vše; modré úchopy na koncích = přesun konce; s výběrem Del/8 smaže, 3→1/3→2 kopie/přesun celého výběru, F1–F5 / hladina a F6 změní hladinu / zakrytí |
 | čára | Čára | Q | body, pravé kliknutí ukončí; **Enter bez čísla = další úsek kolmo na předchozí** (jen ten jeden úsek, pro další kolmici zase Enter) |
 | oblouk | Oblouk | E | tři body podle metody v pásu: *začátek–střed–konec* (střed = bod uprostřed oblouku, oblouk jde přes všechny tři body), *začátek–konec–střed* (třetí bod uprostřed oblouku), *střed kružnice* (začátek–střed kružnice–konec, směr podle pohybu myši); do DGN jako skutečný oblouk; lze vybrat, přesunout, kopírovat, smazat, změnit hladinu |
 | čára s body | Čára z mračna | V | klik k bodům řezu (na líc zdi) → čára proložená body (náhled modře); klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a hned další, pravé = zahodit. Oba konce se napojí v rohu na okolní nakreslené čáry v libovolném pořadí (L roh = obě čáry do průsečíku, T = nová čára k čáře), téměř kolmá se srovná na 90°. *Mezera* = kolik bodů smí chybět (dveře/okna = konec čáry), *tol.* = rozptyl líce, *roh do* = jak daleko od konce čáry smí být průsečík, aby se konec napojil do rohu (výchozí 5 cm; dál čára končí, kde končí body) |
@@ -72,6 +72,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | dvě patra + | Nové patro | | samostatný půdorys; podlaha se odhadne z mračna, předchozí patro se zapne jako reference |
 | značka řezu | Nový svislý řez | | 2 body v půdorysu, pak klik na stranu, kam se díváte (šipky) |
 | pravítko | Pomocný řez | C | 2 body v půdorysu a strana → okno 3D náhledu se přepne do řezu jen pro měření (nic se neukládá); dokud je okno pomocného řezu otevřené, je jeho rovina v 3D náhledu vidět fialově (obdélník od podlahy ke stropu a stopa ve výšce řezu); čára a šipky pomocného řezu zůstanou fialově v půdorysu – zruší je pravé tlačítko, když nástroj zrovna nic nedělá |
+| dveře | Dveře | | v půdorysu: 1. klik = závěs (konec otvoru), 2. klik = druhý konec otvoru (kde dosedne oblouk), 3. klik = strana otevírání → křídlo kolmo na otvor a plný oblouk (hladina DVERE) a kóta (POP_DVERE): čára středem otvoru délky křídla, na druhou stranu čárka 10 cm, nahoře šířka otvoru v mm (zaokrouhleno na cm). Pak vyskočí pomocný řez kolmo přes otvor v režimu Výška – změřte výšku otvoru a Enter → výška (mm, na cm) se zapíše pod šířku |
 | křížky 1 2 | Změřené body | | načíst seznam (číslo Y X [Z] [kód], S-JTSK), zobrazit/skrýt body (i uchopování), kódy |
 | dům | Nový pohled (fasáda) | | rovina před objektem: 2 body, pak strana pohledu; vidět je vše za rovinou do *Hloubky* |
 | kostka | 3D náhled | | výchozí šikmý pohled kolem středu okna (zároveň „reset“ 3D náhledu) |
@@ -135,7 +136,7 @@ Bere se svislý rozdíl, zaokrouhlený na cm, zapsaný v mm, jako text podél č
 - *Strop* (2 kliky): `Vs=2650` (výška stropu);
 - *Podlaha* (1 klik): `+0,150 (245,320)` – výška podlahy relativně k ±0,000 a v Bpv;
 - *Výška* (2 kliky): `2060`.
-Tlačítko **Text 90°** zapnuté = text otočený o 90° (kolmo na čáru řezu, začíná u čáry a čte se zdola nahoru), vypnuté = text podél čáry.
+Tlačítko **Text 90°** (klávesa **B**, když je myš nad oknem pomocného řezu) zapnuté = text otočený o 90° (kolmo na čáru řezu, začíná u čáry a čte se zdola nahoru), vypnuté = text podél čáry.
 Zaškrtnuté **ručně**: text se neumístí sám, ale visí na kurzoru (podél čáry řezu) a položíte ho klikem do půdorysu (Esc = zrušit) – když je na jednom místě víc údajů.
 
 **Pravý klik** (bez tažení) zruší rozpracované měření – jen když není definovaná podlaha; při výběru podlahy zruší výběr. Pravé tažení dál posouvá pohled.

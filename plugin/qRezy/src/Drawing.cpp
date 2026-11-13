@@ -114,6 +114,7 @@ namespace Drawing
 		v.push_back( { 5, QStringLiteral( "HRANA_NAD_ŘEZEM" ), QColor( 220, 0, 220 ), { mk( 4, 0, 0, -2 ), mk( 4, 0, 0, -2 ) } } );
 		v.push_back( { 6, QStringLiteral( "DVERE" ), QColor( 220, 180, 0 ), { mk( 3, 83, 0, -1 ), mk( 3, 83, 0, -3 ) } } );
 		v.push_back( { 7, QStringLiteral( "KOMUNIKACE" ), QColor( 0, 170, 60 ), { mk( 10, 98, 0, -1 ), mk( 10, 98, 0, -3 ) } } );
+		v.push_back( { 8, QStringLiteral( "POP_DVERE" ), QColor( 160, 160, 160 ), { mk( 8, 135, 0, -1 ), mk( 8, 135, 0, -3 ) } } ); // kóta dveří
 		return v;
 	}
 

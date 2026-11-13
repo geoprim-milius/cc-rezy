@@ -16,6 +16,7 @@
 #include <CloudSamplingTools.h>
 #include <ReferenceCloud.h>
 
+#include <QAbstractButton>
 #include <QApplication>
 #include <QCursor>
 #include <QButtonGroup>
@@ -424,10 +425,11 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		manual->setChecked( QSettings().value( QStringLiteral( "qRezy/auxWriteManual" ), false ).toBool() );
 		connect( manual, &QCheckBox::toggled, this, []( bool on ) { QSettings().setValue( QStringLiteral( "qRezy/auxWriteManual" ), on ); } );
 		auto* rot = new QToolButton;
+		m_rotBtn = rot;
 		rot->setText( QStringLiteral( "Text 90°" ) );
 		rot->setCheckable( true );
 		rot->setFocusPolicy( Qt::NoFocus );
-		rot->setToolTip( QStringLiteral( "Zapnuto = text do půdorysu otočený o 90° (kolmo na čáru řezu), vypnuto = text podél čáry" ) );
+		rot->setToolTip( QStringLiteral( "Klávesa B. Zapnuto = text do půdorysu otočený o 90° (kolmo na čáru řezu), vypnuto = text podél čáry" ) );
 		rot->setChecked( QSettings().value( QStringLiteral( "qRezy/auxWriteRot90" ), false ).toBool() );
 		connect( rot, &QToolButton::toggled, this, []( bool on ) { QSettings().setValue( QStringLiteral( "qRezy/auxWriteRot90" ), on ); } );
 		wl->addWidget( rot );
@@ -1496,12 +1498,14 @@ void View3D::updateMeasure( bool live )
 
 bool View3D::eventFilter( QObject* obj, QEvent* event )
 {
-	// pomocný řez: klávesa V (bez Ctrl/Alt/Shift), když je fokus v tomto okně nebo nad ním myš (i zadokované) → Def. podlahy
+	// pomocný řez: klávesy V a B (bez Ctrl/Alt/Shift), když je fokus v tomto okně nebo nad ním myš (i zadokované) → Def. podlahy
 	if ( m_aux && m_floorBtn && ( event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress ) )
 	{
 		auto* k = static_cast<QKeyEvent*>( event );
 		QWidget* fw = QApplication::focusWidget();
-		if ( k->key() == Qt::Key_V && !( k->modifiers() & ( Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier ) ) && isVisible() && ( ( fw && ( fw == this || isAncestorOf( fw ) ) ) || ( isFloating() && QApplication::activeWindow() == this ) || rect().contains( mapFromGlobal( QCursor::pos() ) ) ) )
+		const bool keyV = k->key() == Qt::Key_V;
+		const bool keyB = k->key() == Qt::Key_B && m_rotBtn;
+		if ( ( keyV || keyB ) && !( k->modifiers() & ( Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier ) ) && isVisible() && ( ( fw && ( fw == this || isAncestorOf( fw ) ) ) || ( isFloating() && QApplication::activeWindow() == this ) || rect().contains( mapFromGlobal( QCursor::pos() ) ) ) )
 		{
 			if ( event->type() == QEvent::ShortcutOverride )
 			{
@@ -1510,7 +1514,8 @@ bool View3D::eventFilter( QObject* obj, QEvent* event )
 			}
 			if ( !k->isAutoRepeat() )
 			{
-				m_floorBtn->click(); // zapnout / vypnout Def. podlahy
+				// V = Def. podlahy, B = Text 90° (CloudCompare má na V i B vlastní zkratky – proto ShortcutOverride výše)
+				( keyV ? static_cast<QAbstractButton*>( m_floorBtn ) : m_rotBtn )->click();
 			}
 			return true;
 		}
@@ -1972,5 +1977,17 @@ void View3D::updateCross( const QPoint& pos, bool show )
 		*const_cast<CCVector3*>( verts->getPointPersistentPtr( 1 ) ) = ends[i][1];
 		m_cross[i]->setColor( col );
 		m_cross[i]->setEnabled( true );
+	}
+}
+
+void View3D::setWriteMode( int id, const QString& hint )
+{
+	if ( m_writeMode && m_writeMode->button( id ) )
+	{
+		m_writeMode->button( id )->setChecked( true );
+	}
+	if ( m_info && !hint.isEmpty() )
+	{
+		m_info->setText( hint );
 	}
 }

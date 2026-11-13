@@ -804,6 +804,27 @@ bool DrawTool::lineEnds( ccPolyline* poly, CCVector2d& a, CCVector2d& b ) const
 	return true;
 }
 
+std::array<CCVector2d, 4> DrawTool::textCorners( ccPolyline* poly, const CCVector2d& O ) const
+{
+	// obdélník písmen od počátku doprava a nahoru (výška aspoň 11 px jako RezLayer)
+	const double th = std::max( QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale, 11.0 / 1.35 * pixelSize() );
+	CCVector2d upv( 0.0, 1.0 );
+	if ( poly->hasMetaData( "qRezy.textAng" ) )
+	{
+		const double a = poly->getMetaData( "qRezy.textAng" ).toDouble();
+		upv = CCVector2d( -std::sin( a ), std::cos( a ) );
+	}
+	else if ( m_frame.plan )
+	{
+		const double a = viewAngle();
+		upv = CCVector2d( -std::sin( a ), std::cos( a ) );
+	}
+	const CCVector2d rightv( upv.y, -upv.x );
+	const double w = std::max( 1, poly->getMetaData( "qRezy.text" ).toString().size() ) * 0.75 * th;
+	const double h = th * 1.2;
+	return { O, O + rightv * w, O + rightv * w + upv * h, O + upv * h };
+}
+
 ccPolyline* DrawTool::pickLine( const QPoint& pos, CCVector2d* clicked ) const
 {
 	CCVector2d P;
@@ -2718,6 +2739,7 @@ void DrawTool::onDataPoint( const QPoint& pos )
 				const CCVector3d A3 = m_frame.to3D( m_base, false );
 				const CCVector3d B3 = m_frame.to3D( m_secB, false );
 				const CCVector3d C3 = m_frame.to3D( C, false );
+				m_doorPend = false; // nový pomocný řez od uživatele – dveře už výšku nečekají
 				if ( m_defKind == 2 && m_frame.plan )
 				{
 					// pomocný řez: čára a šipky zůstanou v půdorysu, dokud je nezruší pravé tlačítko (v klidu nástroje)
@@ -2739,6 +2761,33 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			Q_EMIT modeChanged( m_mode );
 			resetTool();
 			return;
+		}
+		break;
+	}
+	case Mode::Door:
+	{
+		// dveře: 1. klik závěs, 2. klik druhý konec otvoru, 3. klik strana otevírání
+		if ( m_step == 0 )
+		{
+			m_base = cursorPoint( pos, st, nullptr );
+			m_step = 1;
+		}
+		else if ( m_step == 1 )
+		{
+			m_secB = cursorPoint( pos, st, &m_base );
+			if ( dist( m_secB, m_base ) > 0.05 * m_scale )
+			{
+				m_step = 2;
+			}
+		}
+		else
+		{
+			CCVector2d C;
+			if ( screenToLocal( pos, C ) )
+			{
+				buildDoor( m_base, m_secB, C );
+			}
+			m_step = 0;
 		}
 		break;
 	}
@@ -3905,6 +3954,38 @@ void DrawTool::updateTip()
 		segment( a, b, yellow, 2.0f );
 	}
 
+	// dveře: otvor, pak křídlo + oblouk + kóta na stranu podle kurzoru
+	if ( m_mode == Mode::Door && m_step >= 1 && m_hasCursor )
+	{
+		const ccColor::Rgb red( 255, 70, 70 );
+		const ccColor::Rgb grey( 170, 170, 170 );
+		const CCVector2d B = m_step == 1 ? m_cursor : m_secB;
+		const double L = dist( m_base, B );
+		if ( L > 1e-9 )
+		{
+			segment( m_base, B, grey, 1.0f );
+			if ( m_step == 2 )
+			{
+				const CCVector2d u = ( B - m_base ) / L;
+				CCVector2d n( -u.y, u.x );
+				if ( ( m_cursor - m_base ).dot( n ) < 0 )
+				{
+					n = n * -1.0;
+				}
+				segment( m_base, m_base + n * L, red, 2.0f );
+				const double a0 = std::atan2( n.y, n.x );
+				const double sw = std::atan2( n.x * u.y - n.y * u.x, n.dot( u ) );
+				const std::vector<CCVector2d> ap = arcPoints( m_base, L, a0, sw );
+				for ( size_t k = 0; k + 1 < ap.size(); ++k )
+				{
+					segment( ap[k], ap[k + 1], red, 2.0f );
+				}
+				const CCVector2d M = ( m_base + B ) * 0.5;
+				segment( M - n * ( 0.10 * m_scale ), M + n * L, grey, 1.0f );
+			}
+		}
+	}
+
 	// definice řezu: čára řezu a šipky na stranu, kam se díváme
 	if ( m_mode == Mode::SectionDef && m_step == 2 )
 	{
@@ -4423,6 +4504,11 @@ void DrawTool::updateStatus()
 		}
 		break;
 	}
+	case Mode::Door:
+		prompt = m_step == 0 ? QStringLiteral( "Dveře: bod závěsu (konec otvoru, kde jsou dveře)" )
+		       : m_step == 1 ? QStringLiteral( "Dveře: druhý konec otvoru (kde dosedne oblouk)" )
+		                     : QStringLiteral( "Dveře: klikněte na stranu, kam se otevírají" );
+		break;
 	case Mode::SectionDef:
 	{
 		const QString n = m_defKind == 1 ? QStringLiteral( "Nový pohled" ) : m_defKind == 2 ? QStringLiteral( "Pomocný řez" ) : QStringLiteral( "Nový řez" );
@@ -5331,15 +5417,43 @@ void DrawTool::selectWindow( const QPoint& p0, const QPoint& p1, bool add )
 			order.push_back( s.poly );
 			state.push_back( { true, false } );
 		}
-		const bool ia = pointIn( s.a );
-		const bool ib = pointIn( s.b );
-		bool hit = ia || ib;
-		for ( int i = 0; i < 4 && !hit; ++i )
+		// text / kóta: celý obrys písmen / značky (ne jen počátek), aby šly vybrat oknem jako čáry
+		std::vector<std::pair<CCVector2d, CCVector2d>> parts;
+		if ( s.poly && isKota( s.poly ) )
 		{
-			CCVector2d I;
-			hit = segmentIntersection( s.a, s.b, poly[i], poly[( i + 1 ) % 4], I );
+			const KotaGeom g = kotaGeom( s.poly );
+			for ( size_t k = 0; k + 1 < g.segs.size(); k += 2 )
+			{
+				parts.emplace_back( m_frame.toUV( g.segs[k] ), m_frame.toUV( g.segs[k + 1] ) );
+			}
 		}
-		state[idx].first = state[idx].first && ia && ib;
+		else if ( s.poly && isText( s.poly ) )
+		{
+			const std::array<CCVector2d, 4> c = textCorners( s.poly, s.a );
+			for ( int i = 0; i < 4; ++i )
+			{
+				parts.emplace_back( c[i], c[( i + 1 ) % 4] );
+			}
+		}
+		if ( parts.empty() )
+		{
+			parts.emplace_back( s.a, s.b );
+		}
+		bool allIn = true;
+		bool hit = false;
+		for ( const auto& pr : parts )
+		{
+			const bool ia = pointIn( pr.first );
+			const bool ib = pointIn( pr.second );
+			allIn = allIn && ia && ib;
+			hit = hit || ia || ib;
+			for ( int i = 0; i < 4 && !hit; ++i )
+			{
+				CCVector2d I;
+				hit = segmentIntersection( pr.first, pr.second, poly[i], poly[( i + 1 ) % 4], I );
+			}
+		}
+		state[idx].first = state[idx].first && allIn;
 		state[idx].second = state[idx].second || hit;
 	}
 	for ( size_t i = 0; i < order.size(); ++i )
@@ -6405,4 +6519,93 @@ int DrawTool::countImported() const
 		}
 	}
 	return n;
+}
+
+void DrawTool::buildDoor( const CCVector2d& A, const CCVector2d& B, const CCVector2d& side )
+{
+	const double L = dist( A, B );
+	if ( L < 1e-9 )
+	{
+		return;
+	}
+	const CCVector2d u = ( B - A ) / L;
+	CCVector2d n( -u.y, u.x );
+	if ( ( side - A ).dot( n ) < 0 )
+	{
+		n = n * -1.0;
+	}
+	const int door = 6;   // hladina DVERE
+	const int popDoor = 8; // hladina POP_DVERE
+	UndoItem undo;
+	// křídlo kolmo na otvor z bodu závěsu, oblouk se středem v závěsu do druhého konce otvoru
+	addLine( A, A + n * L, door, false, &undo );
+	const double a0 = std::atan2( n.y, n.x );
+	const double sw = std::atan2( n.x * u.y - n.y * u.x, n.dot( u ) );
+	addPolyline( arcPoints( A, L, a0, sw ), door, false, true, &undo );
+	// kóta: středem otvoru kolmo na stranu křídla (délka křídla), na druhou stranu čárka 10 cm
+	const CCVector2d M = ( A + B ) * 0.5;
+	addLine( M, M + n * L, popDoor, false, &undo );
+	addLine( M, M - n * ( 0.10 * m_scale ), popDoor, false, &undo );
+	// texty podél kóty, čitelně (zleva doprava / zdola nahoru): nahoře šířka, pod tím výška
+	CCVector2d t = n;
+	if ( t.x < -1e-9 || ( std::abs( t.x ) <= 1e-9 && t.y < 0 ) )
+	{
+		t = t * -1.0;
+	}
+	const CCVector2d up( -t.y, t.x );
+	const CCVector2d C = M + n * ( L / 2.0 );
+	const double th = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+	const double gap = 0.05 * m_scale;
+	const QString wTxt = QString::number( static_cast<int>( std::lround( L / m_scale * 100.0 ) ) * 10 );
+	const double ang = std::atan2( t.y, t.x );
+	if ( ccPolyline* tx = addText( C - t * ( 0.75 * th * wTxt.size() / 2.0 ) + up * gap, wTxt, &undo ) )
+	{
+		tx->setMetaData( "qRezy.textAng", ang );
+		tx->setMetaData( "qRezy.textLevel", popDoor );
+	}
+	pushUndo( std::move( undo ) );
+	m_doorPend = true;
+	m_doorC = m_frame.to3D( C, false );
+	m_doorT = m_frame.to3D( C + t, false ) - m_doorC;
+	m_doorUp = m_frame.to3D( C + up, false ) - m_doorC;
+	redraw2D();
+	updateStatus();
+	// výška otvoru: pomocný řez kolmo přes střed otvoru (pohled podél zdi)
+	if ( m_frame.plan )
+	{
+		const CCVector3d P0 = m_frame.to3D( M - n * ( 1.0 * m_scale ), false );
+		const CCVector3d P1 = m_frame.to3D( M + n * ( 1.0 * m_scale ), false );
+		const CCVector3d S = m_frame.to3D( M + u * ( 1.0 * m_scale ), false );
+		Q_EMIT sectionDefined( 2, P0.x, P0.y, P1.x, P1.y, S.x, S.y );
+		Q_EMIT doorHeightWanted();
+	}
+}
+
+bool DrawTool::writeDoorHeight( const QString& text )
+{
+	if ( !m_doorPend )
+	{
+		return false;
+	}
+	m_doorPend = false;
+	const CCVector2d C = m_frame.toUV( m_doorC );
+	CCVector2d t = m_frame.toUV( m_doorC + m_doorT ) - C;
+	CCVector2d up = m_frame.toUV( m_doorC + m_doorUp ) - C;
+	if ( t.norm() < 1e-12 || up.norm() < 1e-12 )
+	{
+		return false;
+	}
+	t.normalize();
+	up.normalize();
+	const double th = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+	const double gap = 0.05 * m_scale;
+	UndoItem undo;
+	if ( ccPolyline* tx = addText( C - t * ( 0.75 * th * text.size() / 2.0 ) - up * ( gap + th ), text, &undo ) )
+	{
+		tx->setMetaData( "qRezy.textAng", std::atan2( t.y, t.x ) );
+		tx->setMetaData( "qRezy.textLevel", 8 );
+	}
+	pushUndo( std::move( undo ) );
+	redraw2D();
+	return true;
 }
