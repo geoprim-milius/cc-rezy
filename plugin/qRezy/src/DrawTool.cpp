@@ -6546,11 +6546,19 @@ void DrawTool::buildDoor( const CCVector2d& A, const CCVector2d& B, const CCVect
 	const CCVector2d M = ( A + B ) * 0.5;
 	addLine( M, M + n * L, popDoor, false, &undo );
 	addLine( M, M - n * ( 0.10 * m_scale ), popDoor, false, &undo );
-	// texty podél kóty, čitelně (zleva doprava / zdola nahoru): nahoře šířka, pod tím výška
+	// texty podél kóty, čitelně NA OBRAZOVCE (půdorys může být natočený): zleva doprava / zdola nahoru;
+	// „nad“ čarou šířka, pod ní výška
 	CCVector2d t = n;
-	if ( t.x < -1e-9 || ( std::abs( t.x ) <= 1e-9 && t.y < 0 ) )
 	{
-		t = t * -1.0;
+		const double va = m_frame.plan ? viewAngle() : 0.0;
+		const CCVector2d scrRight( std::cos( va ), std::sin( va ) );
+		const CCVector2d scrUp( -std::sin( va ), std::cos( va ) );
+		const double sx = t.dot( scrRight );
+		const double sy = t.dot( scrUp );
+		if ( std::abs( sx ) < 0.02 ? sy < 0.0 : sx < 0.0 ) // svislá kóta (do ~1°) se čte zdola nahoru
+		{
+			t = t * -1.0;
+		}
 	}
 	const CCVector2d up( -t.y, t.x );
 	const CCVector2d C = M + n * ( L / 2.0 );
