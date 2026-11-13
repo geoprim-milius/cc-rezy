@@ -310,6 +310,7 @@ DrawTool::DrawTool( ccMainAppInterface* app, QObject* parent )
 	m_arcMethod = std::max( 0, std::min( 2, st.value( QStringLiteral( "qRezy/arcMethod" ), 0 ).toInt() ) );
 	m_clGap = st.value( QStringLiteral( "qRezy/clGap" ), 0.10 ).toDouble();
 	m_clTol = st.value( QStringLiteral( "qRezy/clTol" ), 0.02 ).toDouble();
+	m_clReach = st.value( QStringLiteral( "qRezy/clReach" ), 0.05 ).toDouble();
 	m_clSquare = st.value( QStringLiteral( "qRezy/clSquare" ), true ).toBool();
 	m_kotaFmt = std::max( 0, std::min( 2, st.value( QStringLiteral( "qRezy/kotaFormat" ), 0 ).toInt() ) );
 	m_kotaScale = std::max( 1, st.value( QStringLiteral( "qRezy/kotaScale" ), 70 ).toInt() );
@@ -633,8 +634,9 @@ void DrawTool::setArcMethod( int m )
 	}
 }
 
-void DrawTool::setCloudLineParams( double gap, double tol, bool square )
+void DrawTool::setCloudLineParams( double gap, double tol, bool square, double reach )
 {
+	m_clReach = reach;
 	m_clGap = gap;
 	m_clTol = tol;
 	m_clSquare = square;
@@ -2011,7 +2013,8 @@ bool DrawTool::detectCloudLine( const CCVector2d& click )
 
 	// napojení v rohu na okolní čáry – na obou koncích, nejen na předchozí čáru (a srovnání do pravého úhlu)
 	m_clJoins.clear();
-	const double reachJ = 0.6 * sc;
+	const double reachJ = std::max( 0.005, m_clReach ) * sc; // napojení konce na průsečík (pole „roh do“)
+	const double reachSq = 0.6 * sc;                         // hledání kolmé čáry pro srovnání do 90°
 	std::vector<Segment> others;
 	for ( const Segment& sg : collectSegments() )
 	{
@@ -2043,7 +2046,7 @@ bool DrawTool::detectCloudLine( const CCVector2d& click )
 			const double dNew = std::min( dist( I, A ), dist( I, B ) );
 			const double dOld = std::min( dist( I, sg.a ), dist( I, sg.b ) );
 			const double t = paramOn( sg.a, sg.b, I );
-			if ( dNew > reachJ || ( dOld > reachJ && ( t < 0.0 || t > 1.0 ) ) )
+			if ( dNew > reachSq || ( dOld > reachSq && ( t < 0.0 || t > 1.0 ) ) )
 			{
 				continue;
 			}

@@ -132,7 +132,7 @@ public:
 	//! čára z mračna: roviny aktuálního řezu (a·x + b·y + c·z + d ≥ 0, lokálně)
 	using SliceProvider = std::function<std::vector<std::array<double, 4>>()>;
 	void setSliceProvider( SliceProvider p ) { m_sliceProvider = std::move( p ); }
-	void setCloudLineParams( double gap, double tol, bool square );
+	void setCloudLineParams( double gap, double tol, bool square, double reach );
 	void setCloudMinLen( double m ) { m_clMinLen = m; }
 	//! výšková kóta: ±0,000 v Bpv (z panelu), zápis 0 = Bpv, 1 = místní, 2 = oboje; měřítko výkresu 1:N
 	void setZeroProvider( std::function<double()> p ) { m_zeroProvider = std::move( p ); }
@@ -504,6 +504,7 @@ private:
 	CCVector2d m_kotaTip;
 	double m_clGap = 0.10;
 	double m_clTol = 0.02;
+	double m_clReach = 0.05; //!< čára z mračna: konec se napojí na průsečík jen do této vzdálenosti [m]
 	bool m_clSquare = true;
 	bool m_clHas = false;           //!< náhled k potvrzení
 	CCVector2d m_clA;

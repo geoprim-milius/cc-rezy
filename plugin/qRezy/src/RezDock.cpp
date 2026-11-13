@@ -760,18 +760,23 @@ void RezDock::buildToolbar()
 		QSettings().setValue( QStringLiteral( "qRezy/clMinLen" ), v );
 		m_draw->setCloudMinLen( v );
 	} );
+	auto* clReach = makeSpin( 0.005, 1.0, clSt.value( QStringLiteral( "qRezy/clReach" ), 0.05 ).toDouble(), 0.01, 3, QStringLiteral( " m" ) );
+	clReach->setToolTip( QStringLiteral( "Čára z mračna: konec čáry se napojí do rohu (průsečík s jinou čarou) jen když je průsečík nejvýš tak daleko od konce; jinak čára končí, kde končí body" ) );
+	clReach->setFixedWidth( 86 );
 	QAction* clSquare = mkAct( "corner", QStringLiteral( "Pravý úhel" ), QStringLiteral( "Čára z mračna: téměř kolmé napojení (do 3°) srovnat na přesně 90°" ), true );
 	clSquare->setChecked( clSt.value( QStringLiteral( "qRezy/clSquare" ), true ).toBool() );
-	auto applyCl = [this, clGap, clTol, clSquare]()
+	auto applyCl = [this, clGap, clTol, clSquare, clReach]()
 	{
 		QSettings st;
 		st.setValue( QStringLiteral( "qRezy/clGap" ), clGap->value() );
 		st.setValue( QStringLiteral( "qRezy/clTol" ), clTol->value() );
 		st.setValue( QStringLiteral( "qRezy/clSquare" ), clSquare->isChecked() );
-		m_draw->setCloudLineParams( clGap->value(), clTol->value(), clSquare->isChecked() );
+		st.setValue( QStringLiteral( "qRezy/clReach" ), clReach->value() );
+		m_draw->setCloudLineParams( clGap->value(), clTol->value(), clSquare->isChecked(), clReach->value() );
 	};
 	connect( clGap, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, applyCl );
 	connect( clTol, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, applyCl );
+	connect( clReach, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, applyCl );
 	connect( clSquare, &QAction::toggled, this, applyCl );
 
 	QAction* undo = mkAct( "undo", QStringLiteral( "Zpět" ), QStringLiteral( "Vrátit poslední krok (Ctrl+Z)" ) );
@@ -1045,6 +1050,8 @@ void RezDock::buildToolbar()
 		cc.widget( clGap, QStringLiteral( "mezera" ) );
 		cc.widget( clTol, QStringLiteral( "tol." ) );
 		cc.addSmall( clSquare );
+		RibbonColumn cc1 = cg.column();
+		cc1.widget( clReach, QStringLiteral( "roh do" ) );
 		RibbonColumn cc2 = cg.column();
 		cc2.addSmall( T( DrawTool::Mode::CloudRoom ) );
 		cc2.addSmall( T( DrawTool::Mode::CloudBatch ) );
