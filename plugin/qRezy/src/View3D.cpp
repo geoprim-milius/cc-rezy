@@ -354,7 +354,7 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		m_floorBtn->setCheckable( true );
 		m_floorBtn->setFocusPolicy( Qt::NoFocus );
 		m_floorBtn->setText( QStringLiteral( "Def. podlahy" ) );
-		m_floorBtn->setToolTip( QStringLiteral( "Definovat podlahu: klikněte na tlačítko a pak na podlahu v řezu. Potom se podlaha už neklikne – "
+		m_floorBtn->setToolTip( QStringLiteral( "Definovat podlahu (klávesa V): klikněte na tlačítko a pak na podlahu v řezu. Potom se podlaha už neklikne – "
 		                                        "Strop / Překlad / Výška = 1 klik, Okno = 2 kliky (parapet, horní hrana). Znovu kliknout na tlačítko = zrušit podlahu." ) );
 		wl->addWidget( m_floorBtn );
 		connect( m_floorBtn, &QToolButton::clicked, this, [this]()
@@ -441,6 +441,12 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 			auto* sc = new QShortcut( QKeySequence( key ), this );
 			sc->setContext( Qt::WidgetWithChildrenShortcut );
 			connect( sc, &QShortcut::activated, this, [this]() { writeMeasured(); } );
+		}
+		// V kdekoli v okně pomocného řezu = zapnout / vypnout Def. podlahy
+		{
+			auto* sc = new QShortcut( QKeySequence( Qt::Key_V ), this );
+			sc->setContext( Qt::WidgetWithChildrenShortcut );
+			connect( sc, &QShortcut::activated, this, [this]() { if ( m_floorBtn ) m_floorBtn->click(); } );
 		}
 		connect( m_writeMode, &QButtonGroup::idToggled, this, [this]( int i, bool on )
 		{
@@ -1590,6 +1596,11 @@ bool View3D::eventFilter( QObject* obj, QEvent* event )
 		if ( k->key() == Qt::Key_Return || k->key() == Qt::Key_Enter )
 		{
 			writeMeasured();
+			return true;
+		}
+		if ( k->key() == Qt::Key_V && !( k->modifiers() & ( Qt::ControlModifier | Qt::AltModifier ) ) && m_floorBtn )
+		{
+			m_floorBtn->click(); // zapnout / vypnout Def. podlahy
 			return true;
 		}
 		break;
