@@ -442,12 +442,10 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 			sc->setContext( Qt::WidgetWithChildrenShortcut );
 			connect( sc, &QShortcut::activated, this, [this]() { writeMeasured(); } );
 		}
-		// V kdekoli v okně pomocného řezu = zapnout / vypnout Def. podlahy
-		{
-			auto* sc = new QShortcut( QKeySequence( Qt::Key_V ), this );
-			sc->setContext( Qt::WidgetWithChildrenShortcut );
-			connect( sc, &QShortcut::activated, this, [this]() { if ( m_floorBtn ) m_floorBtn->click(); } );
-		}
+		// V kdekoli v okně pomocného řezu = zapnout / vypnout Def. podlahy. CloudCompare má na V vlastní zkratku
+		// (viditelnost vybraných entit v hlavním okně) – proto filtr na celou aplikaci: ShortcutOverride přijmout,
+		// aby zkratka CC nevyskočila, a KeyPress obsloužit tady
+		qApp->installEventFilter( this );
 		connect( m_writeMode, &QButtonGroup::idToggled, this, [this]( int i, bool on )
 		{
 			if ( !on )
@@ -1497,6 +1495,25 @@ void View3D::updateMeasure( bool live )
 
 bool View3D::eventFilter( QObject* obj, QEvent* event )
 {
+	// pomocný řez: klávesa V (bez Ctrl/Alt/Shift), když je fokus v tomto okně → Def. podlahy
+	if ( m_aux && m_floorBtn && ( event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress ) )
+	{
+		auto* k = static_cast<QKeyEvent*>( event );
+		QWidget* fw = QApplication::focusWidget();
+		if ( k->key() == Qt::Key_V && !( k->modifiers() & ( Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier ) ) && isVisible() && ( ( fw && ( fw == this || isAncestorOf( fw ) ) ) || ( isFloating() && QApplication::activeWindow() == this ) ) )
+		{
+			if ( event->type() == QEvent::ShortcutOverride )
+			{
+				event->accept(); // zkratka CloudCompare „V“ se nespustí, přijde KeyPress
+				return true;
+			}
+			if ( !k->isAutoRepeat() )
+			{
+				m_floorBtn->click(); // zapnout / vypnout Def. podlahy
+			}
+			return true;
+		}
+	}
 	if ( obj == m_widget && event->type() == QEvent::Wheel )
 	{
 		// zoom k místu pod kurzorem
@@ -1596,11 +1613,6 @@ bool View3D::eventFilter( QObject* obj, QEvent* event )
 		if ( k->key() == Qt::Key_Return || k->key() == Qt::Key_Enter )
 		{
 			writeMeasured();
-			return true;
-		}
-		if ( k->key() == Qt::Key_V && !( k->modifiers() & ( Qt::ControlModifier | Qt::AltModifier ) ) && m_floorBtn )
-		{
-			m_floorBtn->click(); // zapnout / vypnout Def. podlahy
 			return true;
 		}
 		break;
