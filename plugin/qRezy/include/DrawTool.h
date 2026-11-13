@@ -504,6 +504,10 @@ private:
 	CCVector2d m_kotaTip;
 	double m_clGap = 0.10;
 	double m_clTol = 0.02;
+	bool m_auxKeep = false; //!< stopa pomocného řezu v půdorysu (3D lokálně)
+	CCVector3d m_auxKA;
+	CCVector3d m_auxKB;
+	CCVector3d m_auxKN;
 	double m_clReach = 0.05; //!< čára z mračna: konec se napojí na průsečík jen do této vzdálenosti [m]
 	bool m_clSquare = true;
 	bool m_clHas = false;           //!< náhled k potvrzení

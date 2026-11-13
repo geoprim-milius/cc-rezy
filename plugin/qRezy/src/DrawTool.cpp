@@ -2718,6 +2718,21 @@ void DrawTool::onDataPoint( const QPoint& pos )
 				const CCVector3d A3 = m_frame.to3D( m_base, false );
 				const CCVector3d B3 = m_frame.to3D( m_secB, false );
 				const CCVector3d C3 = m_frame.to3D( C, false );
+				if ( m_defKind == 2 && m_frame.plan )
+				{
+					// pomocný řez: čára a šipky zůstanou v půdorysu, dokud je nezruší pravé tlačítko (v klidu nástroje)
+					CCVector2d d = m_secB - m_base;
+					d.normalize();
+					CCVector2d n( -d.y, d.x );
+					if ( ( C - m_base ).dot( n ) < 0 )
+					{
+						n = n * -1.0;
+					}
+					m_auxKeep = true;
+					m_auxKA = A3;
+					m_auxKB = B3;
+					m_auxKN = m_frame.to3D( m_base + n, false ) - A3;
+				}
 				Q_EMIT sectionDefined( m_defKind, A3.x, A3.y, B3.x, B3.y, C3.x, C3.y );
 			}
 			m_mode = m_prevMode;
@@ -3908,6 +3923,22 @@ void DrawTool::updateTip()
 		}
 	}
 
+	// stopa pomocného řezu (zůstává po založení, ruší pravé tlačítko)
+	if ( m_auxKeep && m_frame.plan && !( m_mode == Mode::SectionDef && m_step > 0 ) )
+	{
+		const ccColor::Rgb mg( 255, 0, 255 );
+		const CCVector2d A = m_frame.toUV( m_auxKA );
+		const CCVector2d B = m_frame.toUV( m_auxKB );
+		CCVector2d n = m_frame.toUV( m_auxKA + m_auxKN ) - A;
+		segment( A, B, mg, 2.0f );
+		if ( n.norm() > 1e-12 )
+		{
+			n.normalize();
+			addArrow( ovs, A, n, 40.0, mg );
+			addArrow( ovs, B, n, 40.0, mg );
+		}
+	}
+
 	// čára z mračna: náhled k potvrzení (a posunutý konec předchozí čáry)
 	if ( m_mode == Mode::CloudLine && m_clHas )
 	{
@@ -4709,6 +4740,12 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		{
 			// pravé tlačítko = vždy jen reset (konec čáry / zpět o krok nástroje)
 			m_rightPressed = false;
+			// nástroj nic nedělá → pravé zruší stopu pomocného řezu (čára + šipky)
+			const bool idle = m_step == 0 && m_chain.empty() && m_arcPts.empty() && !m_clHas && m_clBatch.empty() && m_selSet.empty() && !m_sel;
+			if ( idle && m_auxKeep )
+			{
+				m_auxKeep = false;
+			}
 			if ( m_mode == Mode::Select && m_step == 0 )
 			{
 				setSelection( {} );
