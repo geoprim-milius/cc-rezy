@@ -671,7 +671,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Select, "select", "Výběr", "Klik, Ctrl+klik, okno tažením (zleva = uvnitř, zprava = křížem); úchopy na koncích. S výběrem: F1–F5 / F6 změní hladinu / zakrytí, Del smaže, 3→1 / 3→2 kopie / přesun." },
 		{ DrawTool::Mode::Line, "line", "Čára", "Body levým tlačítkem, pravé ukončí. Délka: čísla + Enter. Enter bez čísla = další úsek kolmo na předchozí." },
 		{ DrawTool::Mode::Arc, "arc", "Oblouk", "Tři body podle metody vedle: začátek–střed oblouku–konec, začátek–konec–střed oblouku, nebo se středem kružnice. Do DGN jako skutečný oblouk." },
-		{ DrawTool::Mode::CloudLine, "cloudline", "Čára\nz mračna", "Klik k bodům řezu (na líc zdi) → čára proložená body; klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a další, pravé = zahodit. Napojí se v rohu na okolní čáry (oba konce, v libovolném pořadí). Klávesa V." },
+		{ DrawTool::Mode::CloudLine, "cloudline", "Čára z mračna", "Klik k bodům řezu (na líc zdi) → čára proložená body; klik na ni nebo Enter = potvrdit, klik jinam = potvrdit a další, pravé = zahodit. Napojí se v rohu na okolní čáry (oba konce, v libovolném pořadí). Klávesa V." },
 		{ DrawTool::Mode::CloudRoom, "cloudline", "Místnost", "Čára z mračna – místnost: klik dovnitř místnosti → obrys ze dvou metod, jen pravoúhlé hrany (do 5°), ústupky se kreslí. Fáze 1 = obě metody se shodují, fáze 2 = jen jedna metoda. Enter nebo klik do místnosti = potvrdit fázi, pravé = přeskočit, klik do jiné = další místnost." },
 		{ DrawTool::Mode::CloudBatch, "cloudline", "Hromadně", "Čára z mračna – hromadně: celý plátek → přímé úseky delší než „min.“ s rohy (už nakreslené se vynechají). Potvrzuje se ve 3 fázích: 1 jisté (uzavřené místnosti), 2 navazující čáry, 3 nejisté. Enter nebo klik = potvrdit fázi, pravé = přeskočit ji." },
 		{ DrawTool::Mode::Move, "move", "Přesun", "Čára (nebo výběr), výchozí bod, cíl nebo vzdálenost." },
@@ -1045,13 +1045,11 @@ void RezDock::buildToolbar()
 		kc.widget( kotaFmt );
 		kc.widget( kotaScale, QStringLiteral( "1 :" ) );
 		RibbonGroup cg = r->addGroup( pDraw, QStringLiteral( "Z mračna" ) );
-		cg.addBig( T( DrawTool::Mode::CloudLine ), QStringLiteral( "V" ) );
+		cg.addBigWith( T( DrawTool::Mode::CloudLine ), QStringLiteral( "V" ), clReach, QStringLiteral( "roh do" ) );
 		RibbonColumn cc = cg.column();
 		cc.widget( clGap, QStringLiteral( "mezera" ) );
 		cc.widget( clTol, QStringLiteral( "tol." ) );
 		cc.addSmall( clSquare );
-		RibbonColumn cc1 = cg.column();
-		cc1.widget( clReach, QStringLiteral( "roh do" ) );
 		RibbonColumn cc2 = cg.column();
 		cc2.addSmall( T( DrawTool::Mode::CloudRoom ) );
 		cc2.addSmall( T( DrawTool::Mode::CloudBatch ) );
@@ -2273,6 +2271,8 @@ bool RezDock::ensure3D( bool aux )
 		if ( aux )
 		{
 			v->move( v->pos() + QPoint( 60, 60 ) );
+			// zavření pomocného řezu → stopa z 3D náhledu pryč
+			connect( v, &QDockWidget::visibilityChanged, this, [this]( bool ) { QTimer::singleShot( 0, this, [this]() { refresh3DLines(); } ); } );
 		}
 	}
 	v->show();
@@ -2354,7 +2354,32 @@ void RezDock::refresh3DLines()
 	}
 	if ( v3 )
 	{
-		m_view3D->setLines( lines );
+		// pomocný řez otevřený → v 3D náhledu obdélník v jeho rovině (od podlahy ke stropu), kudy vede
+		std::vector<View3D::Line> lines3 = lines;
+		if ( va && m_viewAux->isAux() && ( m_auxPB - m_auxPA ).norm() > 1e-9 )
+		{
+			double z0 = m_viewAux->auxFloor();
+			double z1 = m_viewAux->auxCeil();
+			if ( !( z1 > z0 ) )
+			{
+				z0 = planZLocal() - 1.5 * sc;
+				z1 = planZLocal() + 1.5 * sc;
+			}
+			View3D::Line l;
+			l.color = ccColor::Rgb( 255, 0, 255 );
+			const CCVector3d A0( m_auxPA.x, m_auxPA.y, z0 );
+			const CCVector3d B0( m_auxPB.x, m_auxPB.y, z0 );
+			const CCVector3d A1( m_auxPA.x, m_auxPA.y, z1 );
+			const CCVector3d B1( m_auxPB.x, m_auxPB.y, z1 );
+			const double zp = planZLocal();
+			l.pts = { A0, B0, B1, A1, A0 };
+			lines3.push_back( l );
+			View3D::Line m; // stopa v rovině půdorysu (výška řezu)
+			m.color = l.color;
+			m.pts = { CCVector3d( m_auxPA.x, m_auxPA.y, zp ), CCVector3d( m_auxPB.x, m_auxPB.y, zp ) };
+			lines3.push_back( m );
+		}
+		m_view3D->setLines( lines3 );
 		// změřené body ze souboru (bez výšky na podlaze patra)
 		std::vector<View3D::SurveyPt> sps;
 		const double floorL = c ? c->toLocal3d( CCVector3d( 0, 0, m_floorLevel->value() ) ).z : m_floorLevel->value();
@@ -3909,6 +3934,7 @@ void RezDock::createSection( int kind, double ax, double ay, double bx, double b
 			m_auxPA = CCVector2d( ax, ay );
 			m_auxPB = CCVector2d( bx, by );
 			m_viewAux->auxSection( CCVector3d( ax, ay, 0 ), CCVector3d( bx, by, 0 ), CCVector3d( N.x, N.y, 0 ), planZLocal(), m_zero->value(), m_thickness->value() );
+			refresh3DLines(); // stopa pomocného řezu v 3D náhledu
 		}
 		return;
 	}

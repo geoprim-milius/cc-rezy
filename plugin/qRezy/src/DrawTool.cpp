@@ -3762,14 +3762,14 @@ void DrawTool::updateTip()
 		// rozdělit čarou: řezná čára + průsečíky
 		if ( m_mode == Mode::BreakLine && m_step == 1 )
 		{
-			const ccColor::Rgb red( 255, 60, 60 );
-			segment( m_base, m_cursor, red, 1.5f );
+			const ccColor::Rgb orange( 255, 160, 0 ); // ne červená – splývala s čarami výkresu
+			segment( m_base, m_cursor, orange, 1.5f );
 			const double r = 4.0 * pixelSize();
 			for ( const auto& h : breakLineHits( m_base, m_cursor ) )
 			{
 				const CCVector2d& I = h.second;
-				segment( I + CCVector2d( -r, -r ), I + CCVector2d( r, r ), red, 2.0f );
-				segment( I + CCVector2d( -r, r ), I + CCVector2d( r, -r ), red, 2.0f );
+				segment( I + CCVector2d( -r, -r ), I + CCVector2d( r, r ), orange, 2.0f );
+				segment( I + CCVector2d( -r, r ), I + CCVector2d( r, -r ), orange, 2.0f );
 			}
 		}
 		// kóta: náhled značky (hrot na kurzoru, nebo pevný hrot a strana podle kurzoru)

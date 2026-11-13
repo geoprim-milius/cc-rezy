@@ -38,6 +38,8 @@ public:
 	{
 	}
 	QToolButton* addBig( QAction* a, const QString& key = QString() );
+	//! nižší velké tlačítko a pod ním pole s popiskem (zabere stejnou výšku jako addBig)
+	QToolButton* addBigWith( QAction* a, const QString& key, QWidget* below, const QString& label );
 	RibbonColumn column();
 
 private:

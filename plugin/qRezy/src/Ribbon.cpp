@@ -88,6 +88,46 @@ QToolButton* RibbonGroup::addBig( QAction* a, const QString& key )
 	return b;
 }
 
+QToolButton* RibbonGroup::addBigWith( QAction* a, const QString& key, QWidget* below, const QString& label )
+{
+	auto* w = new QWidget;
+	auto* v = new QVBoxLayout( w );
+	v->setContentsMargins( 0, 0, 0, 0 );
+	v->setSpacing( 1 );
+	v->setAlignment( Qt::AlignTop );
+	const int h = BigH - SmallH - 1;
+	auto* b = new QToolButton;
+	b->setObjectName( QStringLiteral( "rezyBig" ) );
+	b->setDefaultAction( a );
+	b->setToolButtonStyle( Qt::ToolButtonTextUnderIcon );
+	b->setIconSize( QSize( 22, 22 ) );
+	b->setFixedHeight( h );
+	b->setMinimumWidth( BigW );
+	b->setAutoRaise( true );
+	if ( !key.isEmpty() )
+	{
+		auto* k = new QLabel( key, b );
+		k->setObjectName( QStringLiteral( "rezyKey" ) );
+		k->setAttribute( Qt::WA_TransparentForMouseEvents );
+		k->adjustSize();
+		k->move( 4, 2 ); // vlevo nahoře – šířka tlačítka se řídí polem pod ním
+	}
+	v->addWidget( b, 0, Qt::AlignHCenter );
+	auto* row = new QWidget;
+	auto* hl = new QHBoxLayout( row );
+	hl->setContentsMargins( 2, 0, 0, 0 );
+	hl->setSpacing( 6 );
+	if ( !label.isEmpty() )
+	{
+		hl->addWidget( new QLabel( label ) );
+	}
+	hl->addWidget( below, 1 );
+	row->setFixedHeight( SmallH );
+	v->addWidget( row );
+	m_layout->addWidget( w, 0, Qt::AlignTop );
+	return b;
+}
+
 RibbonColumn RibbonGroup::column()
 {
 	auto* w = new QWidget;

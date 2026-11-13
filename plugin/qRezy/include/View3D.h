@@ -74,6 +74,8 @@ public:
 	//! pomocný řez: pravoúhlý pohled na rovinu A–B (lokálně), N = k pozorovateli; jen pro měření
 	void auxSection( const CCVector3d& A, const CCVector3d& B, const CCVector3d& N, double planZ, double zeroGlobal, double thickness );
 	bool isAux() const { return m_aux; }
+	double auxFloor() const { return m_auxFloor; } //!< pomocný řez: odhad podlahy (místní z)
+	double auxCeil() const { return m_auxCeil; }   //!< pomocný řez: odhad stropu (místní z)
 
 	unsigned sourceID() const { return m_sourceID; }
 

@@ -56,7 +56,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | hranice | Oříznout k prvku | 7 → 5 | hraniční čára, pak čáry k oříznutí / prodloužení (klik na část, která zůstane) |
 | vrchol + | Vložit vrchol | 7 → 7 | klik na čáru, pak umístit nový vrchol (čára se zlomí) |
 | vrchol × | Smazat vrchol | 7 → 8 | klik na spoj dvou čar → jedna rovná čára |
-| čáry s červenou | Rozdělit čarou | 7 → 6 | řezná čára 2 body → všechny čáry, které protne, se v průsečíku rozdělí (nic se nemaže); průsečíky se ukazují červeně, počet v nápovědě; jeden krok Zpět |
+| čáry s oranžovou | Rozdělit čarou | 7 → 6 | řezná čára 2 body → všechny čáry, které protne, se v průsečíku rozdělí (nic se nemaže); řezná čára a průsečíky se ukazují oranžově, počet v nápovědě; jeden krok Zpět |
 | křížek | Mazat | 8 / Del | klik na čáru (s výběrem smaže hned výběr) |
 | metr | Měřit | D | dva body → délka, vodorovně/výškově (ΔX/ΔY), úhel; ve výkresu kóta s patkami a délkou (i během měření) |
 | A | Vložit text | A → A | klik = levý dolní roh, napsat (např. naměřenou výšku); přesun (3·2) a kopie (3·1) – stačí kliknout na písmena, posouvaný text je vidět u kurzoru; mazání jako u čar; do DGN na hladinu z okna Uložit |
@@ -71,7 +71,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | S se šipkou | Sever nahoru | | |
 | dvě patra + | Nové patro | | samostatný půdorys; podlaha se odhadne z mračna, předchozí patro se zapne jako reference |
 | značka řezu | Nový svislý řez | | 2 body v půdorysu, pak klik na stranu, kam se díváte (šipky) |
-| pravítko | Pomocný řez | C | 2 body v půdorysu a strana → okno 3D náhledu se přepne do řezu jen pro měření (nic se neukládá) |
+| pravítko | Pomocný řez | C | 2 body v půdorysu a strana → okno 3D náhledu se přepne do řezu jen pro měření (nic se neukládá); dokud je okno pomocného řezu otevřené, je jeho rovina v 3D náhledu vidět fialově (obdélník od podlahy ke stropu a stopa ve výšce řezu) |
 | křížky 1 2 | Změřené body | | načíst seznam (číslo Y X [Z] [kód], S-JTSK), zobrazit/skrýt body (i uchopování), kódy |
 | dům | Nový pohled (fasáda) | | rovina před objektem: 2 body, pak strana pohledu; vidět je vše za rovinou do *Hloubky* |
 | kostka | 3D náhled | | výchozí šikmý pohled kolem středu okna (zároveň „reset“ 3D náhledu) |
