@@ -2765,8 +2765,9 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		break;
 	}
 	case Mode::Door:
+	case Mode::Opening:
 	{
-		// dveře: 1. klik závěs, 2. klik druhý konec otvoru, 3. klik strana otevírání
+		// dveře: 1. klik závěs, 2. klik druhý konec otvoru, 3. klik strana otevírání; okno: 2 body otvoru, 3. klik strana kóty
 		if ( m_step == 0 )
 		{
 			m_base = cursorPoint( pos, st, nullptr );
@@ -2785,7 +2786,7 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			CCVector2d C;
 			if ( screenToLocal( pos, C ) )
 			{
-				buildDoor( m_base, m_secB, C );
+				buildDoor( m_base, m_secB, C, m_mode == Mode::Opening );
 			}
 			m_step = 0;
 		}
@@ -3955,7 +3956,7 @@ void DrawTool::updateTip()
 	}
 
 	// dveře: otvor, pak křídlo + oblouk + kóta na stranu podle kurzoru
-	if ( m_mode == Mode::Door && m_step >= 1 && m_hasCursor )
+	if ( ( m_mode == Mode::Door || m_mode == Mode::Opening ) && m_step >= 1 && m_hasCursor )
 	{
 		const ccColor::Rgb red( 255, 70, 70 );
 		const ccColor::Rgb grey( 170, 170, 170 );
@@ -3972,13 +3973,16 @@ void DrawTool::updateTip()
 				{
 					n = n * -1.0;
 				}
-				segment( m_base, m_base + n * L, red, 2.0f );
-				const double a0 = std::atan2( n.y, n.x );
-				const double sw = std::atan2( n.x * u.y - n.y * u.x, n.dot( u ) );
-				const std::vector<CCVector2d> ap = arcPoints( m_base, L, a0, sw );
-				for ( size_t k = 0; k + 1 < ap.size(); ++k )
+				if ( m_mode == Mode::Door )
 				{
-					segment( ap[k], ap[k + 1], red, 2.0f );
+					segment( m_base, m_base + n * L, red, 2.0f );
+					const double a0 = std::atan2( n.y, n.x );
+					const double sw = std::atan2( n.x * u.y - n.y * u.x, n.dot( u ) );
+					const std::vector<CCVector2d> ap = arcPoints( m_base, L, a0, sw );
+					for ( size_t k = 0; k + 1 < ap.size(); ++k )
+					{
+						segment( ap[k], ap[k + 1], red, 2.0f );
+					}
 				}
 				const CCVector2d M = ( m_base + B ) * 0.5;
 				segment( M - n * ( 0.10 * m_scale ), M + n * L, grey, 1.0f );
@@ -4508,6 +4512,11 @@ void DrawTool::updateStatus()
 		prompt = m_step == 0 ? QStringLiteral( "Dveře: bod závěsu (konec otvoru, kde jsou dveře)" )
 		       : m_step == 1 ? QStringLiteral( "Dveře: druhý konec otvoru (kde dosedne oblouk)" )
 		                     : QStringLiteral( "Dveře: klikněte na stranu, kam se otevírají" );
+		break;
+	case Mode::Opening:
+		prompt = m_step == 0 ? QStringLiteral( "Okno: první konec otvoru" )
+		       : m_step == 1 ? QStringLiteral( "Okno: druhý konec otvoru" )
+		                     : QStringLiteral( "Okno: klikněte na stranu, kam půjde kóta (do místnosti)" );
 		break;
 	case Mode::SectionDef:
 	{
@@ -6521,7 +6530,7 @@ int DrawTool::countImported() const
 	return n;
 }
 
-void DrawTool::buildDoor( const CCVector2d& A, const CCVector2d& B, const CCVector2d& side )
+void DrawTool::buildDoor( const CCVector2d& A, const CCVector2d& B, const CCVector2d& side, bool window )
 {
 	const double L = dist( A, B );
 	if ( L < 1e-9 )
@@ -6537,11 +6546,14 @@ void DrawTool::buildDoor( const CCVector2d& A, const CCVector2d& B, const CCVect
 	const int door = 6;   // hladina DVERE
 	const int popDoor = 8; // hladina POP_DVERE
 	UndoItem undo;
-	// křídlo kolmo na otvor z bodu závěsu, oblouk se středem v závěsu do druhého konce otvoru
-	addLine( A, A + n * L, door, false, &undo );
-	const double a0 = std::atan2( n.y, n.x );
-	const double sw = std::atan2( n.x * u.y - n.y * u.x, n.dot( u ) );
-	addPolyline( arcPoints( A, L, a0, sw ), door, false, true, &undo );
+	// dveře: křídlo kolmo na otvor z bodu závěsu, oblouk se středem v závěsu do druhého konce otvoru (okno jen kóta)
+	if ( !window )
+	{
+		addLine( A, A + n * L, door, false, &undo );
+		const double a0 = std::atan2( n.y, n.x );
+		const double sw = std::atan2( n.x * u.y - n.y * u.x, n.dot( u ) );
+		addPolyline( arcPoints( A, L, a0, sw ), door, false, true, &undo );
+	}
 	// kóta: středem otvoru kolmo na stranu křídla (délka křídla), na druhou stranu čárka 10 cm
 	const CCVector2d M = ( A + B ) * 0.5;
 	addLine( M, M + n * L, popDoor, false, &undo );
@@ -6573,6 +6585,7 @@ void DrawTool::buildDoor( const CCVector2d& A, const CCVector2d& B, const CCVect
 	}
 	pushUndo( std::move( undo ) );
 	m_doorPend = true;
+	m_doorKind = window ? 1 : 0;
 	m_doorC = m_frame.to3D( C, false );
 	m_doorT = m_frame.to3D( C + t, false ) - m_doorC;
 	m_doorUp = m_frame.to3D( C + up, false ) - m_doorC;
@@ -6585,7 +6598,7 @@ void DrawTool::buildDoor( const CCVector2d& A, const CCVector2d& B, const CCVect
 		const CCVector3d P1 = m_frame.to3D( M + n * ( 1.0 * m_scale ), false );
 		const CCVector3d S = m_frame.to3D( M + u * ( 1.0 * m_scale ), false );
 		Q_EMIT sectionDefined( 2, P0.x, P0.y, P1.x, P1.y, S.x, S.y );
-		Q_EMIT doorHeightWanted();
+		Q_EMIT doorHeightWanted( m_doorKind );
 	}
 }
 

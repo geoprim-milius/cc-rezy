@@ -92,7 +92,8 @@ public:
 		Rotate,       //!< otočit prvek / výběr třemi body: střed, výchozí směr, cílový směr
 		CloudRoom,    //!< čára z mračna – místnost: klik dovnitř → obrys místnosti s rohy, Enter potvrdit
 		CloudBatch,   //!< čára z mračna – hromadně: celý plátek → všechny přímé úseky s rohy, Enter potvrdit
-		Door          //!< dveře v půdorysu: závěs, druhý konec otvoru, strana → křídlo + oblouk + kóta šířky (výška z pomocného řezu)
+		Door,         //!< dveře v půdorysu: závěs, druhý konec otvoru, strana → křídlo + oblouk + kóta šířky (výška z pomocného řezu)
+		Opening       //!< okno v půdorysu: 2 body otvoru, strana kóty → kóta délky (výška(parapet) z pomocného řezu, funkce Okno)
 	};
 
 	enum class SnapType
@@ -211,6 +212,7 @@ public:
 	//! výška otvoru posledních nakreslených dveří (text v mm) pod kótu šířky; false = žádné dveře nečekají
 	bool writeDoorHeight( const QString& text );
 	bool doorPending() const { return m_doorPend; }
+	int doorPendingKind() const { return m_doorKind; } //!< 0 dveře, 1 okno
 	void clearDoorPending() { m_doorPend = false; }
 	//! připravený text k ručnímu umístění (text visí na kurzoru, střed dole; klik = vložit, Esc = zrušit)
 	void startPlaceText( const QString& text, double angle, int level );
@@ -247,7 +249,7 @@ Q_SIGNALS:
 	//! klávesa C: pomocný řez
 	void auxSectionRequested();
 	//! dveře nakresleny – čeká se na výšku otvoru z pomocného řezu
-	void doorHeightWanted();
+	void doorHeightWanted( int kind ); //!< 0 dveře (Výška), 1 okno (Okno)
 
 protected:
 	bool eventFilter( QObject* obj, QEvent* event ) override;
@@ -514,10 +516,11 @@ private:
 	double m_clTol = 0.02;
 	// dveře: kóta čeká na výšku (3D lokálně: střed kóty, směr textu, „nahoru“ textu)
 	bool m_doorPend = false;
+	int m_doorKind = 0;
 	CCVector3d m_doorC;
 	CCVector3d m_doorT;
 	CCVector3d m_doorUp;
-	void buildDoor( const CCVector2d& A, const CCVector2d& B, const CCVector2d& side );
+	void buildDoor( const CCVector2d& A, const CCVector2d& B, const CCVector2d& side, bool window );
 	bool m_auxKeep = false; //!< stopa pomocného řezu v půdorysu (3D lokálně)
 	CCVector3d m_auxKA;
 	CCVector3d m_auxKB;

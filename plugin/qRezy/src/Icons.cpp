@@ -270,6 +270,19 @@ namespace Icons
 				}
 				p.setBrush( Qt::NoBrush );
 			}
+			else if ( n == "winopen" )
+			{
+				// okno: zeď s otvorem, dvě čáry rámu a kóta
+				p.setPen( QPen( Ink, 2.0 ) );
+				p.drawLine( QPointF( 2, 20 ), QPointF( 8, 20 ) );
+				p.drawLine( QPointF( 24, 20 ), QPointF( 30, 20 ) );
+				p.drawLine( QPointF( 8, 15 ), QPointF( 8, 25 ) );
+				p.drawLine( QPointF( 24, 15 ), QPointF( 24, 25 ) );
+				p.setPen( QPen( Accent, 1.6 ) );
+				p.drawLine( QPointF( 8, 18 ), QPointF( 24, 18 ) );
+				p.drawLine( QPointF( 8, 22 ), QPointF( 24, 22 ) );
+				p.drawLine( QPointF( 16, 4 ), QPointF( 16, 28 ) );
+			}
 			else if ( n == "door" )
 			{
 				// dveře: zeď, křídlo a čtvrtkruh

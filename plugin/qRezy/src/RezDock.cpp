@@ -692,6 +692,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Text, "text", "Text", "Klik a napsat (např. naměřenou výšku); přesun, kopie a mazání jako u čar." },
 		{ DrawTool::Mode::EditText, "text", "Upravit text", "Klik na text → změnit jeho obsah (A·B)." },
 		{ DrawTool::Mode::Door, "door", "Dveře", "Dveře v půdorysu: 1. klik = závěs (konec otvoru), 2. klik = druhý konec otvoru (kde dosedne oblouk), 3. klik = strana otevírání. Nakreslí křídlo a oblouk (DVERE) a kótu (POP_DVERE): čára středem otvoru, šířka otvoru v mm (na cm); pak vyskočí pomocný řez – změřte výšku otvoru a Enter, výška se zapíše pod šířku." },
+		{ DrawTool::Mode::Opening, "winopen", "Okno", "Okno v půdorysu: 1. a 2. klik = konce okenního otvoru, 3. klik = strana kóty (do místnosti). Nakreslí kótu (POP_DVERE): čára středem otvoru, délka otvoru v mm (na cm); pak vyskočí pomocný řez v režimu Okno – změřte okno a Enter, výška(parapet) se zapíše pod délku." },
 		{ DrawTool::Mode::Kota, "kota", "Kóta", "Výšková kóta (kačena) v řezu nebo pohledu: klik na bod = hrot šipky, druhý klik = strana poličky. Výška v Bpv, místní (k ±0,000) nebo obojí; velikost podle měřítka výkresu. Přesun, kopie (výška se přepočítá) a mazání jako u čar." },
 	};
 	for ( const ToolDef& t : tools )
@@ -821,11 +822,18 @@ void RezDock::buildToolbar()
 	connect( aux, &QAction::triggered, this, [startDef]() { startDef( 2 ); } );
 	connect( m_draw, &DrawTool::auxSectionRequested, this, [startDef]() { startDef( 2 ); } );
 	// dveře: pomocný řez přes otvor už je otevřený → režim Výška a nápověda
-	connect( m_draw, &DrawTool::doorHeightWanted, this, [this]()
+	connect( m_draw, &DrawTool::doorHeightWanted, this, [this]( int kind )
 	{
 		if ( m_viewAux && m_viewAux->isVisible() )
 		{
-			m_viewAux->setWriteMode( 2, QStringLiteral( "<b>Dveře</b> – změřte výšku otvoru (podlaha a nadpraží, s definovanou podlahou jen nadpraží), pak Enter → výška se zapíše pod šířku dveří." ) );
+			if ( kind == 1 )
+			{
+				m_viewAux->setWriteMode( 0, QStringLiteral( "<b>Okno</b> – změřte okno funkcí Okno (podlaha, parapet, nadpraží), pak Enter → výška(parapet) se zapíše pod délku." ) );
+			}
+			else
+			{
+				m_viewAux->setWriteMode( 2, QStringLiteral( "<b>Dveře</b> – změřte výšku otvoru (podlaha a nadpraží, s definovanou podlahou jen nadpraží), pak Enter → výška se zapíše pod šířku dveří." ) );
+			}
 		}
 	} );
 	QAction* rot = mkAct( "rotate", QStringLiteral( "Otočit pohled" ), QStringLiteral( "2 body – směr 1. → 2. bod bude vodorovně doprava" ) );
@@ -1049,6 +1057,8 @@ void RezDock::buildToolbar()
 		c2.addSmall( T( DrawTool::Mode::EditText ), QStringLiteral( "A·B" ) );
 		c2.addSmall( aux, QStringLiteral( "C" ) );
 		c2.addSmall( T( DrawTool::Mode::Door ) );
+		RibbonColumn c3 = g.column();
+		c3.addSmall( T( DrawTool::Mode::Opening ) );
 		RibbonGroup kg = r->addGroup( pDraw, QStringLiteral( "Kóta" ) );
 		kg.addBig( T( DrawTool::Mode::Kota ) );
 		RibbonColumn kc = kg.column();
@@ -3381,8 +3391,8 @@ bool RezDock::writeCloudRaster( const QString& path, int viewId, double px, int 
 
 void RezDock::writeAuxHeight( const QString& text, int kind, double atX, double atY )
 {
-	// dveře čekají na výšku otvoru: měření Výška → text pod kótu šířky dveří
-	if ( kind == 2 && m_draw && m_draw->doorPending() )
+	// dveře / okno čekají na výšku otvoru: měření Výška (dveře) / Okno (okno) → text pod kótu šířky
+	if ( m_draw && m_draw->doorPending() && kind == ( m_draw->doorPendingKind() == 1 ? 0 : 2 ) )
 	{
 		if ( !isPlanView( m_activeView ) )
 		{
@@ -3390,7 +3400,7 @@ void RezDock::writeAuxHeight( const QString& text, int kind, double atX, double 
 		}
 		if ( m_draw->writeDoorHeight( text ) )
 		{
-			m_app->dispToConsole( QStringLiteral( "[Řezy] Výška dveří %1 zapsána pod šířku." ).arg( text ) );
+			m_app->dispToConsole( QStringLiteral( "[Řezy] Výška %1 zapsána pod šířku otvoru." ).arg( text ) );
 			return;
 		}
 	}
