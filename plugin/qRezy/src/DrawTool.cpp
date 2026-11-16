@@ -13,6 +13,8 @@
 #include <ccPolyline.h>
 
 #include <array>
+#include <map>
+#include <set>
 
 #include <QApplication>
 #include <QColor>
@@ -807,7 +809,9 @@ bool DrawTool::lineEnds( ccPolyline* poly, CCVector2d& a, CCVector2d& b ) const
 std::array<CCVector2d, 4> DrawTool::textCorners( ccPolyline* poly, const CCVector2d& O ) const
 {
 	// obdélník písmen od počátku doprava a nahoru (výška aspoň 11 px jako RezLayer)
-	const double th = std::max( QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale, 11.0 / 1.35 * pixelSize() );
+	const double th = std::max( poly->hasMetaData( "qRezy.textHL" ) ? poly->getMetaData( "qRezy.textHL" ).toDouble()
+	                                                                  : QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale,
+	                            11.0 / 1.35 * pixelSize() );
 	CCVector2d upv( 0.0, 1.0 );
 	if ( poly->hasMetaData( "qRezy.textAng" ) )
 	{
@@ -895,6 +899,75 @@ ccPolyline* DrawTool::pickLine( const QPoint& pos, CCVector2d* clicked ) const
 		*clicked = P;
 	}
 	return best;
+}
+
+std::vector<ccPolyline*> DrawTool::pickAll( const QPoint& pos ) const
+{
+	std::vector<ccPolyline*> out;
+	CCVector2d P;
+	if ( !screenToLocal( pos, P ) )
+	{
+		return out;
+	}
+	const double tol = PickPixels * pixelSize();
+	std::map<ccPolyline*, double> best;
+	auto put = [&best]( ccPolyline* p, double d )
+	{
+		auto it = best.find( p );
+		if ( it == best.end() || d < it->second )
+		{
+			best[p] = d;
+		}
+	};
+	for ( const Segment& s : collectSegments() )
+	{
+		if ( s.ref || !s.poly )
+		{
+			continue;
+		}
+		if ( isKota( s.poly ) )
+		{
+			const KotaGeom g = kotaGeom( s.poly );
+			for ( size_t k = 0; k + 1 < g.segs.size(); k += 2 )
+			{
+				const double dk = dist( closestOnSegment( m_frame.toUV( g.segs[k] ), m_frame.toUV( g.segs[k + 1] ), P ), P );
+				if ( dk < tol )
+				{
+					put( s.poly, dk );
+				}
+			}
+			continue;
+		}
+		if ( isText( s.poly ) )
+		{
+			const std::array<CCVector2d, 4> c = textCorners( s.poly, s.a );
+			const CCVector2d r = c[1] - c[0];
+			const CCVector2d u = c[3] - c[0];
+			const double x = ( P - c[0] ).dot( r ) / std::max( 1e-12, r.norm2() );
+			const double y = ( P - c[0] ).dot( u ) / std::max( 1e-12, u.norm2() );
+			if ( x >= 0.0 && x <= 1.0 && y >= 0.0 && y <= 1.0 )
+			{
+				put( s.poly, 0.0 );
+			}
+			continue;
+		}
+		const double d = dist( closestOnSegment( s.a, s.b, P ), P );
+		if ( d < tol )
+		{
+			put( s.poly, d );
+		}
+	}
+	std::vector<std::pair<double, ccPolyline*>> v;
+	for ( const auto& kv : best )
+	{
+		v.emplace_back( kv.second, kv.first );
+	}
+	std::stable_sort( v.begin(), v.end(), []( const std::pair<double, ccPolyline*>& x, const std::pair<double, ccPolyline*>& y ) { return x.first < y.first; } );
+	for ( const auto& e : v )
+	{
+		out.push_back( e.second );
+	}
+	return out;
 }
 
 CCVector2d DrawTool::snapPoint( const QPoint& pos, SnapType& type ) const
@@ -1531,7 +1604,7 @@ void DrawTool::translateItem( ccPolyline* poly, const CCVector2d& d, bool copy, 
 	{
 		if ( ccPolyline* n = addText( pts.front(), poly->getMetaData( "qRezy.text" ).toString(), undo ) )
 		{
-			for ( const char* key : { "qRezy.textLevel", "qRezy.textH", "qRezy.textAng" } )
+			for ( const char* key : { "qRezy.textLevel", "qRezy.textH", "qRezy.textAng", "qRezy.textHL" } )
 			{
 				if ( poly->hasMetaData( key ) )
 				{
@@ -2764,6 +2837,53 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		}
 		break;
 	}
+	case Mode::RoomLabel:
+	{
+		const CCVector2d P = cursorPoint( pos, st, m_step > 0 ? &m_lead0 : nullptr );
+		if ( m_roomPlacing )
+		{
+			if ( !m_roomLab.leader )
+			{
+				buildRoomLabel( P );
+			}
+			else if ( m_step == 0 )
+			{
+				m_lead0 = P; // kroužek v místnosti
+				m_step = 1;
+			}
+			else if ( m_step == 1 )
+			{
+				m_lead1 = P; // lom odkazové čáry
+				m_step = 2;
+			}
+			else
+			{
+				buildRoomLabel( P );
+			}
+			break;
+		}
+		// klik do místnosti: výměra z nakreslených zdí, pomocný řez na podlahu a strop
+		CCVector2d C;
+		if ( !screenToLocal( pos, C ) || !m_frame.plan )
+		{
+			m_flash = QStringLiteral( "Popis místnosti jen v půdorysu" );
+			break;
+		}
+		m_roomArea = computeRoomArea( C );
+		m_doorPend = true;
+		m_doorKind = 2;
+		const double va = viewAngle();
+		const CCVector2d R( std::cos( va ), std::sin( va ) );
+		const CCVector2d U( -std::sin( va ), std::cos( va ) );
+		const CCVector3d P0 = m_frame.to3D( C - R * ( 1.0 * m_scale ), false );
+		const CCVector3d P1 = m_frame.to3D( C + R * ( 1.0 * m_scale ), false );
+		const CCVector3d S = m_frame.to3D( C + U * ( 1.0 * m_scale ), false );
+		Q_EMIT sectionDefined( 2, P0.x, P0.y, P1.x, P1.y, S.x, S.y );
+		Q_EMIT doorHeightWanted( 2 );
+		m_flash = m_roomArea > 0 ? QStringLiteral( "Popis místnosti: výměra %1 m² – v pomocném řezu klikněte podlahu a strop, Enter" ).arg( m_roomArea, 0, 'f', 2 )
+		                         : QStringLiteral( "Popis místnosti: obrys místnosti z čar se nenašel (výměru doplňte) – v pomocném řezu klikněte podlahu a strop, Enter" );
+		break;
+	}
 	case Mode::Door:
 	case Mode::Opening:
 	{
@@ -3137,7 +3257,7 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			ccPolyline* n = addText( P, txt, &u );
 			if ( n )
 			{
-				for ( const char* key : { "qRezy.textLevel", "qRezy.textH", "qRezy.imported", "qRezy.textAng" } )
+				for ( const char* key : { "qRezy.textLevel", "qRezy.textH", "qRezy.imported", "qRezy.textAng", "qRezy.textHL" } )
 				{
 					if ( p->hasMetaData( key ) )
 					{
@@ -3955,6 +4075,40 @@ void DrawTool::updateTip()
 		segment( a, b, yellow, 2.0f );
 	}
 
+	// popis místnosti: rámeček a texty za myší, odkazová čára
+	if ( m_mode == Mode::RoomLabel && m_roomPlacing && m_hasCursor )
+	{
+		const ccColor::Rgb cy( 0, 200, 210 );
+		const ccColor::Rgb mg( 220, 80, 220 );
+		const RoomGeom g = roomGeom( m_cursor );
+		const bool showLabel = !m_roomLab.leader || m_step == 2;
+		if ( m_roomLab.leader )
+		{
+			const CCVector2d c0 = m_step == 0 ? m_cursor : m_lead0;
+			const std::vector<CCVector2d> cp = circlePts( c0, 0.3 * g.h );
+			for ( size_t k = 0; k + 1 < cp.size(); ++k )
+			{
+				segment( cp[k], cp[k + 1], mg, 1.5f );
+			}
+			if ( m_step >= 1 )
+			{
+				const CCVector2d b = m_step == 1 ? m_cursor : m_lead1;
+				segment( m_lead0, b, cy, 1.0f );
+				if ( m_step == 2 )
+				{
+					segment( m_lead1, g.leftMid, cy, 1.0f );
+				}
+			}
+		}
+		if ( showLabel )
+		{
+			for ( const auto& l : g.lines )
+			{
+				segment( l.first, l.second, cy, 1.5f );
+			}
+		}
+	}
+
 	// dveře: otvor, pak křídlo + oblouk + kóta na stranu podle kurzoru
 	if ( ( m_mode == Mode::Door || m_mode == Mode::Opening ) && m_step >= 1 && m_hasCursor )
 	{
@@ -4162,6 +4316,25 @@ void DrawTool::updateTip()
 		temp.push_back( it );
 	}
 
+	// popis místnosti: texty za myší
+	if ( m_mode == Mode::RoomLabel && m_roomPlacing && m_hasCursor && ( !m_roomLab.leader || m_step == 2 ) )
+	{
+		const RoomGeom g = roomGeom( m_cursor );
+		const CCVector3d R3 = m_frame.to3D( g.R, false ) - m_frame.to3D( CCVector2d( 0, 0 ), false );
+		const CCVector3d U3 = m_frame.to3D( g.U, false ) - m_frame.to3D( CCVector2d( 0, 0 ), false );
+		for ( const RoomGeom::Txt& t : g.texts )
+		{
+			RezLayer::Item it;
+			it.P = m_frame.to3D( t.P );
+			it.up = U3;
+			it.dir = R3;
+			it.height = g.h * t.factor;
+			it.text = t.s;
+			it.color = t.level == 13 ? ccColor::Rgb( 220, 80, 220 ) : ccColor::Rgb( 0, 200, 210 );
+			temp.push_back( it );
+		}
+	}
+
 	// přesun / kopie: posouvané texty a kóty u kurzoru
 	if ( ( m_mode == Mode::Move || m_mode == Mode::Copy ) && m_step == 2 && m_hasCursor )
 	{
@@ -4203,7 +4376,7 @@ void DrawTool::updateTip()
 			RezLayer::Item it;
 			it.P = CCVector3d::fromArray( poly->getPoint( 0 )->u ) + shift;
 			it.up = upv;
-			it.height = th;
+			it.height = poly->hasMetaData( "qRezy.textHL" ) ? poly->getMetaData( "qRezy.textHL" ).toDouble() : th;
 			it.text = poly->getMetaData( "qRezy.text" ).toString();
 			it.color = yellow;
 			if ( poly->hasMetaData( "qRezy.textAng" ) )
@@ -4513,6 +4686,20 @@ void DrawTool::updateStatus()
 		       : m_step == 1 ? QStringLiteral( "Dveře: druhý konec otvoru (kde dosedne oblouk)" )
 		                     : QStringLiteral( "Dveře: klikněte na stranu, kam se otevírají" );
 		break;
+	case Mode::RoomLabel:
+		if ( m_roomPlacing )
+		{
+			prompt = !m_roomLab.leader ? QStringLiteral( "Popis místnosti %1: klikněte, kam popis umístit" ).arg( m_roomLab.number )
+			       : m_step == 0       ? QStringLiteral( "Popis místnosti %1: klikněte kroužek (v místnosti)" ).arg( m_roomLab.number )
+			       : m_step == 1       ? QStringLiteral( "Popis místnosti %1: klikněte lom odkazové čáry" ).arg( m_roomLab.number )
+			                           : QStringLiteral( "Popis místnosti %1: klikněte, kam popis umístit" ).arg( m_roomLab.number );
+		}
+		else
+		{
+			prompt = m_doorPend && m_doorKind == 2 ? QStringLiteral( "Popis místnosti: v pomocném řezu klikněte podlahu a strop, Enter (nebo klik do jiné místnosti)" )
+			                                       : QStringLiteral( "Popis místnosti: klikněte doprostřed místnosti" );
+		}
+		break;
 	case Mode::Opening:
 		prompt = m_step == 0 ? QStringLiteral( "Okno: první konec otvoru" )
 		       : m_step == 1 ? QStringLiteral( "Okno: druhý konec otvoru" )
@@ -4819,6 +5006,8 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			else
 			{
 				ccPolyline* p = pickLine( e->pos() );
+				m_cycle.clear();
+				m_cycleIdx = 0;
 				if ( ctrl )
 				{
 					if ( p )
@@ -4827,6 +5016,24 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 				else
 				{
 					setSelection( p ? std::vector<ccPolyline*>{ p } : std::vector<ccPolyline*>{} );
+					// prvky na sobě: pravé tlačítko pak přepíná mezi prvky v okolí kliku (jako MicroStation)
+					if ( p )
+					{
+						m_cycle = pickAll( e->pos() );
+						auto it = std::find( m_cycle.begin(), m_cycle.end(), p );
+						if ( it != m_cycle.end() )
+						{
+							std::rotate( m_cycle.begin(), it, it + 1 ); // vybraný první
+						}
+						if ( m_cycle.size() > 1 )
+						{
+							m_flash = QStringLiteral( "Prvek 1/%1 – pravé tlačítko = další prvek v místě kliku" ).arg( m_cycle.size() );
+						}
+						else
+						{
+							m_cycle.clear();
+						}
+					}
 				}
 			}
 			updateStatus();
@@ -4835,6 +5042,28 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		{
 			// pravé tlačítko = vždy jen reset (konec čáry / zpět o krok nástroje)
 			m_rightPressed = false;
+			// výběr: prvky na sobě – pravé přepne na další prvek v místě kliku, po posledním výběr zruší
+			if ( m_mode == Mode::Select && m_step == 0 && m_cycle.size() > 1 && m_selSet.size() == 1 && m_cycleIdx < m_cycle.size() && m_selSet.front() == m_cycle[m_cycleIdx] )
+			{
+				++m_cycleIdx;
+				if ( m_cycleIdx < m_cycle.size() && lineExists( m_cycle[m_cycleIdx] ) )
+				{
+					setSelection( { m_cycle[m_cycleIdx] } );
+					m_flash = QStringLiteral( "Prvek %1/%2 – pravé tlačítko = další prvek" ).arg( m_cycleIdx + 1 ).arg( m_cycle.size() );
+				}
+				else
+				{
+					setSelection( {} );
+					m_cycle.clear();
+					m_flash = QStringLiteral( "Výběr zrušen" );
+				}
+				updateStatus();
+				keepCrossCursor();
+				updateTip();
+				redraw2D();
+				return true;
+			}
+			m_cycle.clear();
 			// nástroj nic nedělá → pravé zruší stopu pomocného řezu (čára + šipky)
 			const bool idle = m_step == 0 && m_chain.empty() && m_arcPts.empty() && !m_clHas && m_clBatch.empty() && m_selSet.empty() && !m_sel;
 			if ( idle && m_auxKeep )
@@ -5206,6 +5435,21 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		{
 			if ( event->type() == QEvent::KeyPress )
 				setMode( Mode::Arc );
+		}
+		else if ( plain && k == Qt::Key_F )
+		{
+			if ( event->type() == QEvent::KeyPress )
+				setMode( Mode::Opening );
+		}
+		else if ( plain && k == Qt::Key_G )
+		{
+			if ( event->type() == QEvent::KeyPress )
+				setMode( Mode::Door );
+		}
+		else if ( plain && k == Qt::Key_H )
+		{
+			if ( event->type() == QEvent::KeyPress )
+				setMode( Mode::RoomLabel );
 		}
 		else
 		{
@@ -5619,7 +5863,7 @@ void DrawTool::rotateItem( ccPolyline* poly, const CCVector2d& C, double ang, Un
 		const double a0 = poly->hasMetaData( "qRezy.textAng" ) ? poly->getMetaData( "qRezy.textAng" ).toDouble() : 0.0;
 		if ( ccPolyline* n = addText( rot( P ), poly->getMetaData( "qRezy.text" ).toString(), undo ) )
 		{
-			for ( const char* key : { "qRezy.textLevel", "qRezy.textH", "qRezy.imported" } )
+			for ( const char* key : { "qRezy.textLevel", "qRezy.textH", "qRezy.imported", "qRezy.textHL" } )
 			{
 				if ( poly->hasMetaData( key ) )
 				{
@@ -6073,7 +6317,7 @@ void DrawTool::refreshLayer()
 				it.dir = m_frame.U * std::cos( a ) + m_frame.V * std::sin( a );
 			}
 			it.up = up;
-			it.height = h;
+			it.height = ch->hasMetaData( "qRezy.textHL" ) ? ch->getMetaData( "qRezy.textHL" ).toDouble() : h; // popis místnosti: skutečná výška
 			it.text = ch->getMetaData( "qRezy.text" ).toString();
 			it.color = ( ch == m_sel || isSelected( poly ) ) ? ccColor::Rgb( 255, 220, 0 ) : ccColor::Rgb( 255, 235, 140 );
 			m_layer->items.push_back( it );
@@ -6326,7 +6570,23 @@ std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTa
 			DgnV7::Element t;
 			t.isText = true;
 			t.sym.level = poly->hasMetaData( "qRezy.textLevel" ) ? poly->getMetaData( "qRezy.textLevel" ).toInt() : textLevel;
-			t.sym.color = textColors.value( t.sym.level, 0 );
+			if ( textColors.contains( t.sym.level ) )
+			{
+				t.sym.color = textColors.value( t.sym.level );
+			}
+			else
+			{
+				// barva hladiny podle seznamu hladin (např. POP_DVERE, POP_MISTN)
+				t.sym.color = 0;
+				for ( const Drawing::Layer& L : table.list )
+				{
+					if ( L.sym[0].level == t.sym.level )
+					{
+						t.sym.color = L.sym[0].color;
+						break;
+					}
+				}
+			}
 			t.textHeight = poly->hasMetaData( "qRezy.textH" ) ? poly->getMetaData( "qRezy.textH" ).toDouble() : textHeight;
 			DgnV7::Point2 P;
 			if ( map( view, CCVector3d::fromArray( poly->getPoint( 0 )->u ), P ) )
@@ -6629,4 +6889,338 @@ bool DrawTool::writeDoorHeight( const QString& text )
 	pushUndo( std::move( undo ) );
 	redraw2D();
 	return true;
+}
+
+// ---------------------------------------------------------------- popis místnosti
+
+DrawTool::RoomGeom DrawTool::roomGeom( const CCVector2d& cursor ) const
+{
+	RoomGeom g;
+	const double va = m_frame.plan ? viewAngle() : 0.0;
+	g.R = CCVector2d( std::cos( va ), std::sin( va ) );
+	g.U = CCVector2d( -std::sin( va ), std::cos( va ) );
+	// výška písma = výška textu pro výstup DGN (Uložit V7), aby texty seděly v rámečku i v MicroStationu
+	const double h = QSettings().value( QStringLiteral( "qRezy/textHeight" ), 0.25 ).toDouble() * m_scale;
+	g.h = h;
+	const double cw = 0.75 * h; // šířka znaku (odhad)
+	const int nField = std::max( m_roomLab.floor.size(), m_roomLab.height.size() );
+	const double W = std::max( 4, nField ) * cw + 0.8 * h;
+	const double cellH = 1.6 * h;
+	const CCVector2d& R = g.R;
+	const CCVector2d& U = g.U;
+	// kurzor: s odkazovou čárou = levá hrana u dělicí čáry, jinak střed rámečku
+	const CCVector2d O = m_roomLab.leader ? cursor + U * cellH : cursor - R * ( W / 2.0 ) + U * cellH; // levý horní roh rámečku
+	const CCVector2d A = O;
+	const CCVector2d B = O + R * W;
+	const CCVector2d Cc = O + R * W - U * ( 2.0 * cellH );
+	const CCVector2d D = O - U * ( 2.0 * cellH );
+	g.lines = { { A, B }, { B, Cc }, { Cc, D }, { D, A }, { O - U * cellH, O + R * W - U * cellH } };
+	g.leftMid = O - U * cellH;
+	auto centered = [&]( const QString& s, double factor, double baseY, int level )
+	{
+		const double w = s.size() * cw * factor;
+		g.texts.push_back( { O + R * ( W / 2.0 - w / 2.0 ) + U * baseY, s, factor, level } );
+	};
+	centered( m_roomLab.number, 2.0, 0.4 * h, 13 );                        // číslo nad rámečkem
+	centered( m_roomLab.floor, 1.0, -cellH + 0.3 * h, 12 );                // podlaha
+	centered( m_roomLab.height, 1.0, -2.0 * cellH + 0.3 * h, 12 );         // světlá výška
+	const double yArea = -2.0 * cellH - 0.5 * h - h;
+	const QString areaTxt = m_roomLab.area + QStringLiteral( " m" );
+	g.texts.push_back( { O + R * ( 0.2 * h ) + U * yArea, areaTxt, 1.0, 12 } );
+	g.texts.push_back( { O + R * ( 0.2 * h + areaTxt.size() * cw + 0.1 * h ) + U * ( yArea + 0.6 * h ), QStringLiteral( "2" ), 0.6, 12 } ); // m²
+	if ( !m_roomLab.name.isEmpty() )
+	{
+		g.texts.push_back( { O + R * ( 0.2 * h ) + U * ( yArea - 1.6 * h ), m_roomLab.name, 1.0, 12 } );
+	}
+	return g;
+}
+
+std::vector<CCVector2d> DrawTool::circlePts( const CCVector2d& c, double r ) const
+{
+	std::vector<CCVector2d> p;
+	for ( int k = 0; k <= 24; ++k )
+	{
+		const double a = 2.0 * 3.14159265358979323846 * k / 24.0;
+		p.push_back( c + CCVector2d( std::cos( a ), std::sin( a ) ) * r );
+	}
+	return p;
+}
+
+void DrawTool::startRoomPlace( const RoomLabelData& d )
+{
+	m_roomLab = d;
+	m_roomPlacing = true;
+	m_doorPend = false;
+	if ( m_mode != Mode::RoomLabel )
+	{
+		m_mode = Mode::RoomLabel;
+		Q_EMIT modeChanged( m_mode );
+	}
+	m_step = 0;
+	updateStatus();
+	updateTip();
+	redraw2D();
+}
+
+void DrawTool::buildRoomLabel( const CCVector2d& cursor )
+{
+	const RoomGeom g = roomGeom( cursor );
+	const int popRoom = 9;  // hladina POP_MISTN
+	const int popNum = 10;  // hladina POP_CISLA_MISTN
+	const double hM = QSettings().value( QStringLiteral( "qRezy/textHeight" ), 0.25 ).toDouble(); // výška písma v DGN [m]
+	const double ang = std::atan2( g.R.y, g.R.x );
+	UndoItem undo;
+	// rámeček: obvod jako uzavřená lomená čára, dělicí čára zvlášť
+	addPolyline( { g.lines[0].first, g.lines[0].second, g.lines[1].second, g.lines[2].second, g.lines[0].first }, popRoom, false, false, &undo );
+	addLine( g.lines[4].first, g.lines[4].second, popRoom, false, &undo );
+	for ( const RoomGeom::Txt& t : g.texts )
+	{
+		if ( t.s.isEmpty() )
+		{
+			continue;
+		}
+		if ( ccPolyline* tx = addText( t.P, t.s, &undo ) )
+		{
+			tx->setMetaData( "qRezy.textAng", ang );
+			tx->setMetaData( "qRezy.textLevel", t.level );
+			tx->setMetaData( "qRezy.textH", hM * t.factor );
+			tx->setMetaData( "qRezy.textHL", g.h * t.factor );
+		}
+	}
+	if ( m_roomLab.leader )
+	{
+		const double rc = 0.3 * g.h;
+		addPolyline( circlePts( m_lead0, rc ), popNum, false, false, &undo );
+		CCVector2d d = m_lead1 - m_lead0;
+		const CCVector2d s0 = d.norm() > rc ? m_lead0 + d * ( rc / d.norm() ) : m_lead0;
+		addPolyline( { s0, m_lead1, g.leftMid }, popRoom, false, false, &undo );
+	}
+	pushUndo( std::move( undo ) );
+	m_flash = QStringLiteral( "Popis místnosti %1 umístěn" ).arg( m_roomLab.number );
+	m_roomPlacing = false;
+	m_step = 0;
+	redraw2D();
+	updateStatus();
+	updateTip();
+}
+
+double DrawTool::computeRoomArea( const CCVector2d& P ) const
+{
+	// obrys místnosti z nakreslených čar (zdi, slabé zdi, okna, překlady, hrany nad řezem – ne dveře, kóty, popisy):
+	// čáry rozdělit v průsečících, graf, paprsek z kliku k nejbližší čáře a obejít stěnu grafu po levé ruce
+	const double range = 30.0 * m_scale;
+	const double eps = 0.002 * m_scale;
+	std::vector<std::pair<CCVector2d, CCVector2d>> segs;
+	for ( const Segment& s : collectSegments() )
+	{
+		if ( s.ref || !s.poly || isText( s.poly ) )
+		{
+			continue;
+		}
+		const int cat = s.poly->hasMetaData( Drawing::MetaCategory ) ? s.poly->getMetaData( Drawing::MetaCategory ).toInt() : 0;
+		if ( cat == 6 || cat == 7 || cat == 8 || cat == 9 || cat == 10 )
+		{
+			continue;
+		}
+		if ( dist( closestOnSegment( s.a, s.b, P ), P ) > range || dist( s.a, s.b ) < eps )
+		{
+			continue;
+		}
+		segs.emplace_back( s.a, s.b );
+	}
+	const size_t n = segs.size();
+	if ( n < 3 )
+	{
+		return -1.0;
+	}
+	// parametry dělení každé čáry
+	std::vector<std::vector<double>> cuts( n, std::vector<double>{ 0.0, 1.0 } );
+	for ( size_t i = 0; i < n; ++i )
+	{
+		const CCVector2d a = segs[i].first;
+		const CCVector2d r = segs[i].second - a;
+		const double li = r.norm();
+		for ( size_t j = i + 1; j < n; ++j )
+		{
+			const CCVector2d b = segs[j].first;
+			const CCVector2d s = segs[j].second - b;
+			const double lj = s.norm();
+			// rychlé vyloučení obálkou
+			if ( std::max( a.x, a.x + r.x ) + eps < std::min( b.x, b.x + s.x ) || std::max( b.x, b.x + s.x ) + eps < std::min( a.x, a.x + r.x )
+			     || std::max( a.y, a.y + r.y ) + eps < std::min( b.y, b.y + s.y ) || std::max( b.y, b.y + s.y ) + eps < std::min( a.y, a.y + r.y ) )
+			{
+				continue;
+			}
+			const double den = r.x * s.y - r.y * s.x;
+			if ( std::abs( den ) < 1e-12 * li * lj )
+			{
+				continue; // rovnoběžné (překryvy nevadí – konce se spojí přes toleranci)
+			}
+			const CCVector2d q = b - a;
+			const double t = ( q.x * s.y - q.y * s.x ) / den;
+			const double u = ( q.x * r.y - q.y * r.x ) / den;
+			const double et = eps / li;
+			const double eu = eps / lj;
+			if ( t >= -et && t <= 1.0 + et && u >= -eu && u <= 1.0 + eu )
+			{
+				cuts[i].push_back( std::min( 1.0, std::max( 0.0, t ) ) );
+				cuts[j].push_back( std::min( 1.0, std::max( 0.0, u ) ) );
+			}
+		}
+	}
+	// vrcholy (sloučené do eps) a hrany
+	std::vector<CCVector2d> V;
+	std::map<std::pair<long long, long long>, std::vector<int>> grid;
+	const double cell = 4.0 * eps;
+	auto vid = [&]( const CCVector2d& p )
+	{
+		const long long gx = static_cast<long long>( std::floor( p.x / cell ) );
+		const long long gy = static_cast<long long>( std::floor( p.y / cell ) );
+		for ( long long dx = -1; dx <= 1; ++dx )
+		{
+			for ( long long dy = -1; dy <= 1; ++dy )
+			{
+				auto it = grid.find( { gx + dx, gy + dy } );
+				if ( it == grid.end() )
+				{
+					continue;
+				}
+				for ( int k : it->second )
+				{
+					if ( dist( V[static_cast<size_t>( k )], p ) <= eps )
+					{
+						return k;
+					}
+				}
+			}
+		}
+		V.push_back( p );
+		const int k = static_cast<int>( V.size() ) - 1;
+		grid[{ gx, gy }].push_back( k );
+		return k;
+	};
+	std::set<std::pair<int, int>> E;
+	for ( size_t i = 0; i < n; ++i )
+	{
+		std::vector<double>& c = cuts[i];
+		std::sort( c.begin(), c.end() );
+		const CCVector2d a = segs[i].first;
+		const CCVector2d r = segs[i].second - a;
+		int prev = vid( a + r * c[0] );
+		for ( size_t k = 1; k < c.size(); ++k )
+		{
+			const int cur = vid( a + r * c[k] );
+			if ( cur != prev )
+			{
+				E.insert( { std::min( prev, cur ), std::max( prev, cur ) } );
+			}
+			prev = cur;
+		}
+	}
+	// sousedé seřazení podle úhlu
+	std::vector<std::vector<int>> adj( V.size() );
+	for ( const auto& e : E )
+	{
+		adj[static_cast<size_t>( e.first )].push_back( e.second );
+		adj[static_cast<size_t>( e.second )].push_back( e.first );
+	}
+	for ( size_t v = 0; v < V.size(); ++v )
+	{
+		const CCVector2d c = V[v];
+		std::sort( adj[v].begin(), adj[v].end(), [&]( int x, int y )
+		{
+			const CCVector2d dx = V[static_cast<size_t>( x )] - c;
+			const CCVector2d dy = V[static_cast<size_t>( y )] - c;
+			return std::atan2( dx.y, dx.x ) < std::atan2( dy.y, dy.x );
+		} );
+	}
+	// paprsek z kliku: zásahy hran seřazené podle vzdálenosti
+	const CCVector2d dir( 0.9999995, 0.001 );
+	std::vector<std::pair<double, std::pair<int, int>>> hits;
+	for ( const auto& e : E )
+	{
+		const CCVector2d a = V[static_cast<size_t>( e.first )];
+		const CCVector2d s = V[static_cast<size_t>( e.second )] - a;
+		const double den = dir.x * s.y - dir.y * s.x;
+		if ( std::abs( den ) < 1e-15 )
+		{
+			continue;
+		}
+		const CCVector2d q = a - P;
+		const double t = ( q.x * s.y - q.y * s.x ) / den; // vzdálenost po paprsku
+		const double u = ( q.x * dir.y - q.y * dir.x ) / den;
+		if ( t > 0.0 && u >= 0.0 && u <= 1.0 )
+		{
+			hits.push_back( { t, e } );
+		}
+	}
+	std::sort( hits.begin(), hits.end(), []( const std::pair<double, std::pair<int, int>>& x, const std::pair<double, std::pair<int, int>>& y ) { return x.first < y.first; } );
+	auto inside = []( const std::vector<CCVector2d>& poly, const CCVector2d& p )
+	{
+		bool in = false;
+		for ( size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++ )
+		{
+			if ( ( ( poly[i].y > p.y ) != ( poly[j].y > p.y ) ) && ( p.x < ( poly[j].x - poly[i].x ) * ( p.y - poly[i].y ) / ( poly[j].y - poly[i].y ) + poly[i].x ) )
+			{
+				in = !in;
+			}
+		}
+		return in;
+	};
+	double holes = 0.0;
+	for ( size_t hi = 0; hi < hits.size() && hi < 50; ++hi )
+	{
+		int a = hits[hi].second.first;
+		int b = hits[hi].second.second;
+		const CCVector2d da = V[static_cast<size_t>( b )] - V[static_cast<size_t>( a )];
+		const CCVector2d dp = P - V[static_cast<size_t>( a )];
+		if ( da.x * dp.y - da.y * dp.x < 0 )
+		{
+			std::swap( a, b ); // místnost (bod kliku) vlevo od hrany
+		}
+		const int a0 = a;
+		const int b0 = b;
+		std::vector<CCVector2d> poly;
+		bool closed = false;
+		for ( int step = 0; step < 200000; ++step )
+		{
+			poly.push_back( V[static_cast<size_t>( a )] );
+			// v b: další hrana po směru hodinových ručiček od hrany zpět do a (obcházení stěny po levé ruce)
+			const std::vector<int>& nb = adj[static_cast<size_t>( b )];
+			const auto it = std::find( nb.begin(), nb.end(), a );
+			if ( it == nb.end() )
+			{
+				break;
+			}
+			const size_t idx = static_cast<size_t>( it - nb.begin() );
+			const int c = nb[( idx + nb.size() - 1 ) % nb.size()];
+			a = b;
+			b = c;
+			if ( a == a0 && b == b0 )
+			{
+				closed = true;
+				break;
+			}
+		}
+		if ( !closed || poly.size() < 3 )
+		{
+			continue;
+		}
+		double area2 = 0.0;
+		for ( size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++ )
+		{
+			area2 += ( poly[j].x * poly[i].y - poly[i].x * poly[j].y );
+		}
+		const double area = area2 / 2.0;
+		if ( area > 0.0 && inside( poly, P ) )
+		{
+			const double m2 = ( area - holes ) / ( m_scale * m_scale );
+			return m2 > 2000.0 ? -1.0 : m2;
+		}
+		if ( area < 0.0 )
+		{
+			holes += -area; // ostrůvek uvnitř místnosti (sloup) – odečíst a hledat dál po paprsku
+		}
+	}
+	return -1.0;
 }

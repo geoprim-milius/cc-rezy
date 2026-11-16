@@ -693,6 +693,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::EditText, "text", "Upravit text", "Klik na text → změnit jeho obsah (A·B)." },
 		{ DrawTool::Mode::Door, "door", "Dveře", "Dveře v půdorysu: 1. klik = závěs (konec otvoru), 2. klik = druhý konec otvoru (kde dosedne oblouk), 3. klik = strana otevírání. Nakreslí křídlo a oblouk (DVERE) a kótu (POP_DVERE): čára středem otvoru, šířka otvoru v mm (na cm); pak vyskočí pomocný řez – změřte výšku otvoru a Enter, výška se zapíše pod šířku." },
 		{ DrawTool::Mode::Opening, "winopen", "Okno", "Okno v půdorysu: 1. a 2. klik = konce okenního otvoru, 3. klik = strana kóty (do místnosti). Nakreslí kótu (POP_DVERE): čára středem otvoru, délka otvoru v mm (na cm); pak vyskočí pomocný řez v režimu Okno – změřte okno a Enter, výška(parapet) se zapíše pod délku." },
+		{ DrawTool::Mode::RoomLabel, "roomlabel", "Popis místnosti", "Popis místnosti (klávesa H): klik doprostřed místnosti → výměra z nakreslených zdí; v pomocném řezu klikněte podlahu a strop, Enter → okno s číslem (další se počítá samo), podlahou Bpv, světlou výškou, výměrou a názvem → popis za myší, klik = umístit. Volba „mimo místnost“ v okně: kroužek, lom odkazové čáry, popis." },
 		{ DrawTool::Mode::Kota, "kota", "Kóta", "Výšková kóta (kačena) v řezu nebo pohledu: klik na bod = hrot šipky, druhý klik = strana poličky. Výška v Bpv, místní (k ±0,000) nebo obojí; velikost podle měřítka výkresu. Přesun, kopie (výška se přepočítá) a mazání jako u čar." },
 	};
 	for ( const ToolDef& t : tools )
@@ -826,7 +827,11 @@ void RezDock::buildToolbar()
 	{
 		if ( m_viewAux && m_viewAux->isVisible() )
 		{
-			if ( kind == 1 )
+			if ( kind == 2 )
+			{
+				m_viewAux->setWriteMode( 3, QStringLiteral( "<b>Popis místnosti</b> – klikněte podlahu a strop (s definovanou podlahou jen strop), pak Enter → okno s údaji místnosti." ) );
+			}
+			else if ( kind == 1 )
 			{
 				m_viewAux->setWriteMode( 0, QStringLiteral( "<b>Okno</b> – změřte okno funkcí Okno (podlaha, parapet, nadpraží), pak Enter → výška(parapet) se zapíše pod délku." ) );
 			}
@@ -1056,9 +1061,10 @@ void RezDock::buildToolbar()
 		RibbonColumn c2 = g.column();
 		c2.addSmall( T( DrawTool::Mode::EditText ), QStringLiteral( "A·B" ) );
 		c2.addSmall( aux, QStringLiteral( "C" ) );
-		c2.addSmall( T( DrawTool::Mode::Door ) );
+		c2.addSmall( T( DrawTool::Mode::Door ), QStringLiteral( "G" ) );
 		RibbonColumn c3 = g.column();
-		c3.addSmall( T( DrawTool::Mode::Opening ) );
+		c3.addSmall( T( DrawTool::Mode::Opening ), QStringLiteral( "F" ) );
+		c3.addSmall( T( DrawTool::Mode::RoomLabel ), QStringLiteral( "H" ) );
 		RibbonGroup kg = r->addGroup( pDraw, QStringLiteral( "Kóta" ) );
 		kg.addBig( T( DrawTool::Mode::Kota ) );
 		RibbonColumn kc = kg.column();
@@ -2287,6 +2293,7 @@ bool RezDock::ensure3D( bool aux )
 				}
 			} );
 			connect( v, &View3D::writeHeight, this, [this]( const QString& t, int kind, double x, double y ) { writeAuxHeight( t, kind, x, y ); } );
+			connect( v, &View3D::measuredLevels, this, [this]( int, double z0, double z1 ) { m_auxZ0 = z0; m_auxZ1 = z1; } );
 		}
 		if ( aux )
 		{
@@ -2486,28 +2493,37 @@ void RezDock::migrateSeedLayers()
 	}
 	if ( st.value( QStringLiteral( "qRezy/layersVer" ), 0 ).toInt() >= 2 )
 	{
-		// v1.20: hladina POP_DVERE (kóta dveří) – doplnit, když v seznamu chybí
-		if ( st.value( QStringLiteral( "qRezy/layersVer" ), 0 ).toInt() < 3 )
+		// v1.20: POP_DVERE (kóta dveří), v1.22: POP_MISTN a POP_CISLA_MISTN (popis místnosti) – doplnit chybějící
+		if ( st.value( QStringLiteral( "qRezy/layersVer" ), 0 ).toInt() < 4 )
 		{
-			st.setValue( QStringLiteral( "qRezy/layersVer" ), 3 );
+			st.setValue( QStringLiteral( "qRezy/layersVer" ), 4 );
 			std::vector<Drawing::Layer> L = Drawing::layers();
-			const bool has = std::any_of( L.begin(), L.end(), []( const Drawing::Layer& x ) { return x.id == 8; } );
-			if ( !has )
+			bool changed = false;
+			for ( int id : { 8, 9, 10 } )
 			{
+				const bool has = std::any_of( L.begin(), L.end(), [id]( const Drawing::Layer& x ) { return x.id == id; } );
+				if ( has )
+				{
+					continue;
+				}
 				for ( const Drawing::Layer& d : Drawing::defaultLayers() )
 				{
-					if ( d.id == 8 )
+					if ( d.id == id )
 					{
 						L.push_back( d );
+						changed = true;
 					}
 				}
+			}
+			if ( changed )
+			{
 				Drawing::setLayers( L );
 				refreshCatCombo();
 			}
 		}
 		return;
 	}
-	st.setValue( QStringLiteral( "qRezy/layersVer" ), 3 );
+	st.setValue( QStringLiteral( "qRezy/layersVer" ), 4 );
 	const bool hadLayers = !st.value( QStringLiteral( "qRezy/layers" ) ).toStringList().isEmpty();
 	if ( hadLayers
 	     && QMessageBox::question( this, QStringLiteral( "Řezy – hladiny" ),
@@ -3391,8 +3407,18 @@ bool RezDock::writeCloudRaster( const QString& path, int viewId, double px, int 
 
 void RezDock::writeAuxHeight( const QString& text, int kind, double atX, double atY )
 {
+	// popis místnosti čeká na podlahu a strop (režim Strop)
+	if ( m_draw && m_draw->doorPending() && m_draw->doorPendingKind() == 2 && kind == 3 )
+	{
+		if ( !isPlanView( m_activeView ) )
+		{
+			activateView( m_lastPlan );
+		}
+		roomLabelDialog();
+		return;
+	}
 	// dveře / okno čekají na výšku otvoru: měření Výška (dveře) / Okno (okno) → text pod kótu šířky
-	if ( m_draw && m_draw->doorPending() && kind == ( m_draw->doorPendingKind() == 1 ? 0 : 2 ) )
+	if ( m_draw && m_draw->doorPending() && m_draw->doorPendingKind() != 2 && kind == ( m_draw->doorPendingKind() == 1 ? 0 : 2 ) )
 	{
 		if ( !isPlanView( m_activeView ) )
 		{
@@ -4508,4 +4534,57 @@ void RezDock::editSymbology()
 	refreshCatCombo();
 	m_draw->refreshLooks();
 	refresh3DLines();
+}
+
+void RezDock::roomLabelDialog()
+{
+	QSettings st;
+	const double floorBpv = std::round( m_auxZ0 * 100.0 ) / 100.0;
+	const double clear = std::round( ( m_auxZ1 - m_auxZ0 ) * 100.0 ) / 100.0;
+	const double area = m_draw->roomArea();
+	QDialog dlg( this );
+	dlg.setWindowTitle( QStringLiteral( "Popis místnosti" ) );
+	auto* form = new QFormLayout( &dlg );
+	auto* num = new QLineEdit( st.value( QStringLiteral( "qRezy/roomNext" ), QStringLiteral( "101" ) ).toString() );
+	auto* flo = new QLineEdit( QString::number( floorBpv, 'f', 3 ) );
+	auto* hei = new QLineEdit( QString::number( std::abs( clear ), 'f', 3 ) );
+	auto* are = new QLineEdit( area > 0 ? QString::number( area, 'f', 2 ) : QStringLiteral( "X.XX" ) );
+	auto* nam = new QLineEdit;
+	auto* lead = new QCheckBox( QStringLiteral( "umístit mimo místnost (kroužek a odkazová čára)" ) );
+	lead->setChecked( st.value( QStringLiteral( "qRezy/roomLeader" ), false ).toBool() );
+	form->addRow( QStringLiteral( "Číslo místnosti" ), num );
+	form->addRow( QStringLiteral( "Podlaha (Bpv)" ), flo );
+	form->addRow( QStringLiteral( "Světlá výška [m]" ), hei );
+	form->addRow( QStringLiteral( "Výměra [m²]" ), are );
+	form->addRow( QStringLiteral( "Název" ), nam );
+	form->addRow( lead );
+	if ( area <= 0 )
+	{
+		form->addRow( new QLabel( QStringLiteral( "Obrys místnosti z nakreslených čar se nenašel (místnost není uzavřená) – výměru doplňte." ) ) );
+	}
+	auto* bb = new QDialogButtonBox( QDialogButtonBox::Ok | QDialogButtonBox::Cancel );
+	form->addRow( bb );
+	connect( bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept );
+	connect( bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject );
+	nam->setFocus();
+	if ( dlg.exec() != QDialog::Accepted )
+	{
+		m_draw->clearDoorPending();
+		return;
+	}
+	DrawTool::RoomLabelData d;
+	d.number = num->text().trimmed();
+	d.floor = flo->text().trimmed();
+	d.height = hei->text().trimmed();
+	d.area = are->text().trimmed();
+	d.name = nam->text().trimmed();
+	d.leader = lead->isChecked();
+	st.setValue( QStringLiteral( "qRezy/roomLeader" ), d.leader );
+	bool ok = false;
+	const int n = d.number.toInt( &ok );
+	if ( ok )
+	{
+		st.setValue( QStringLiteral( "qRezy/roomNext" ), QString::number( n + 1 ) );
+	}
+	m_draw->startRoomPlace( d );
 }

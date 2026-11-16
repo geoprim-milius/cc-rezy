@@ -115,6 +115,8 @@ namespace Drawing
 		v.push_back( { 6, QStringLiteral( "DVERE" ), QColor( 220, 180, 0 ), { mk( 3, 83, 0, -1 ), mk( 3, 83, 0, -3 ) } } );
 		v.push_back( { 7, QStringLiteral( "KOMUNIKACE" ), QColor( 0, 170, 60 ), { mk( 10, 98, 0, -1 ), mk( 10, 98, 0, -3 ) } } );
 		v.push_back( { 8, QStringLiteral( "POP_DVERE" ), QColor( 160, 160, 160 ), { mk( 8, 135, 0, -1 ), mk( 8, 135, 0, -3 ) } } ); // kóta dveří
+		v.push_back( { 9, QStringLiteral( "POP_MISTN" ), QColor( 0, 190, 200 ), { mk( 12, 135, 0, -1 ), mk( 12, 135, 0, -3 ) } } );        // popis místnosti
+		v.push_back( { 10, QStringLiteral( "POP_CISLA_MISTN" ), QColor( 210, 70, 210 ), { mk( 13, 133, 0, -1 ), mk( 13, 133, 0, -3 ) } } ); // číslo místnosti
 		return v;
 	}
 

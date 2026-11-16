@@ -270,6 +270,18 @@ namespace Icons
 				}
 				p.setBrush( Qt::NoBrush );
 			}
+			else if ( n == "roomlabel" )
+			{
+				// popis místnosti: číslo a rámeček se dvěma poli
+				p.setPen( QPen( Accent, 1.6 ) );
+				p.drawRect( QRectF( 6, 12, 20, 13 ) );
+				p.drawLine( QPointF( 6, 18.5 ), QPointF( 26, 18.5 ) );
+				p.setPen( QPen( Ink, 1.8 ) );
+				p.drawLine( QPointF( 12, 3 ), QPointF( 12, 9 ) );
+				p.drawLine( QPointF( 16, 3 ), QPointF( 16, 9 ) );
+				p.drawLine( QPointF( 20, 3 ), QPointF( 20, 9 ) );
+				p.drawLine( QPointF( 8, 29 ), QPointF( 22, 29 ) );
+			}
 			else if ( n == "winopen" )
 			{
 				// okno: zeď s otvorem, dvě čáry rámu a kóta

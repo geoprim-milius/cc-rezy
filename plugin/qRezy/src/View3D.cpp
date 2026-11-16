@@ -1755,6 +1755,11 @@ void View3D::writeMeasured()
 	{
 		txt = QString::number( mm( P[0], P[1] ) );
 	}
+	{
+		const double z0 = m_clone ? m_clone->toGlobal3d( P[0] ).z : P[0].z;
+		const double z1 = P.size() > 1 ? ( m_clone ? m_clone->toGlobal3d( P[1] ).z : P[1].z ) : z0;
+		Q_EMIT measuredLevels( mode, z0, z1 );
+	}
 	m_mp.clear();
 	m_measStep = 0;
 	clearMeasure();

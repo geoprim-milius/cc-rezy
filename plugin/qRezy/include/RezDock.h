@@ -208,6 +208,9 @@ private:
 	DrawTool* m_draw = nullptr;
 	View3D* m_view3D = nullptr;
 	View3D* m_viewAux = nullptr; //!< pomocný řez (vlastní okno, neruší 3D náhled)
+	double m_auxZ0 = 0.0; //!< pomocný řez: Bpv 1. měřeného bodu (podlaha)
+	double m_auxZ1 = 0.0; //!< pomocný řez: Bpv 2. měřeného bodu (strop)
+	void roomLabelDialog(); //!< popis místnosti: okno s údaji po změření podlahy a stropu
 	double m_viewAngle = 0.0; //!< natočení půdorysného pohledu (rad)
 	int m_activeView = 0;     //!< 0 = půdorys, jinak id řezu/pohledu
 	QString m_lastPrompt;

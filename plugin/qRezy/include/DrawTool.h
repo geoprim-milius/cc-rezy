@@ -93,7 +93,8 @@ public:
 		CloudRoom,    //!< čára z mračna – místnost: klik dovnitř → obrys místnosti s rohy, Enter potvrdit
 		CloudBatch,   //!< čára z mračna – hromadně: celý plátek → všechny přímé úseky s rohy, Enter potvrdit
 		Door,         //!< dveře v půdorysu: závěs, druhý konec otvoru, strana → křídlo + oblouk + kóta šířky (výška z pomocného řezu)
-		Opening       //!< okno v půdorysu: 2 body otvoru, strana kóty → kóta délky (výška(parapet) z pomocného řezu, funkce Okno)
+		Opening,      //!< okno v půdorysu: 2 body otvoru, strana kóty → kóta délky (výška(parapet) z pomocného řezu, funkce Okno)
+		RoomLabel     //!< popis místnosti: klik do místnosti → pomocný řez (podlaha, strop) → okno s údaji → umístění (případně s odkazovou čárou)
 	};
 
 	enum class SnapType
@@ -212,6 +213,20 @@ public:
 	//! výška otvoru posledních nakreslených dveří (text v mm) pod kótu šířky; false = žádné dveře nečekají
 	bool writeDoorHeight( const QString& text );
 	bool doorPending() const { return m_doorPend; }
+	//! údaje popisu místnosti (texty tak, jak se zapíšou)
+	struct RoomLabelData
+	{
+		QString number;
+		QString floor;  //!< podlaha Bpv, např. 386.330
+		QString height; //!< světlá výška, např. 3.320
+		QString area;   //!< výměra bez jednotky, např. 24.33
+		QString name;
+		bool leader = false; //!< umístit mimo místnost s odkazovou čárou (kroužek, lom, popis)
+	};
+	//! výměra místnosti kolem posledního kliku v Popisu místnosti [m²], < 0 = obrys se nenašel
+	double roomArea() const { return m_roomArea; }
+	//! začít umisťovat popis místnosti (za myší / s odkazovou čárou)
+	void startRoomPlace( const RoomLabelData& d );
 	int doorPendingKind() const { return m_doorKind; } //!< 0 dveře, 1 okno
 	void clearDoorPending() { m_doorPend = false; }
 	//! připravený text k ručnímu umístění (text visí na kurzoru, střed dole; klik = vložit, Esc = zrušit)
@@ -291,6 +306,9 @@ private:
 	// geometrie výkresu
 	std::vector<Segment> collectSegments() const;
 	ccPolyline* pickLine( const QPoint& pos, CCVector2d* clicked = nullptr ) const;
+	std::vector<ccPolyline*> pickAll( const QPoint& pos ) const; //!< všechny prvky v toleranci kliku, nejbližší první
+	std::vector<ccPolyline*> m_cycle; //!< výběr: prvky v místě posledního kliku (pravé = další)
+	size_t m_cycleIdx = 0;
 	std::array<CCVector2d, 4> textCorners( ccPolyline* poly, const CCVector2d& origin ) const; //!< obrys písmen textu
 	bool lineEnds( ccPolyline* poly, CCVector2d& a, CCVector2d& b ) const;
 	bool lineExists( ccPolyline* poly ) const;
@@ -516,6 +534,32 @@ private:
 	double m_clTol = 0.02;
 	// dveře: kóta čeká na výšku (3D lokálně: střed kóty, směr textu, „nahoru“ textu)
 	bool m_doorPend = false;
+	// popis místnosti
+	bool m_roomPlacing = false;
+	RoomLabelData m_roomLab;
+	double m_roomArea = -1.0;
+	CCVector2d m_lead0;
+	CCVector2d m_lead1;
+	struct RoomGeom
+	{
+		std::vector<std::pair<CCVector2d, CCVector2d>> lines; //!< rámeček (POP_MISTN)
+		struct Txt
+		{
+			CCVector2d P; //!< levý dolní roh
+			QString s;
+			double factor; //!< násobek výšky písma
+			int level;
+		};
+		std::vector<Txt> texts;
+		CCVector2d leftMid; //!< levá hrana rámečku u dělicí čáry (konec odkazové čáry)
+		double h = 0.0;     //!< výška písma polí (místní)
+		CCVector2d R;       //!< směr vpravo na obrazovce
+		CCVector2d U;       //!< směr nahoru na obrazovce
+	};
+	RoomGeom roomGeom( const CCVector2d& cursor ) const;
+	std::vector<CCVector2d> circlePts( const CCVector2d& c, double r ) const;
+	void buildRoomLabel( const CCVector2d& cursor );
+	double computeRoomArea( const CCVector2d& P ) const;
 	int m_doorKind = 0;
 	CCVector3d m_doorC;
 	CCVector3d m_doorT;

@@ -88,6 +88,8 @@ Q_SIGNALS:
 	void measureDone( const QVector<double>& xyz, double nx, double ny );
 	//! pomocný řez: zapsat výšku do půdorysu (kind 0 = okno, 1 = překlad, 2 = výška)
 	void writeHeight( const QString& text, int kind, double x, double y ); //!< x, y = místo odečtu (místní)
+	//! pomocný řez: absolutní výšky (Bpv) prvních dvou měřených bodů, vysláno těsně před writeHeight
+	void measuredLevels( int kind, double z0, double z1 );
 
 protected:
 	bool eventFilter( QObject* obj, QEvent* event ) override;
