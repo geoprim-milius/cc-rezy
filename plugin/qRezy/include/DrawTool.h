@@ -228,7 +228,7 @@ public:
 	//! začít umisťovat popis místnosti (za myší / s odkazovou čárou)
 	void startRoomPlace( const RoomLabelData& d );
 	int doorPendingKind() const { return m_doorKind; } //!< 0 dveře, 1 okno
-	void clearDoorPending() { m_doorPend = false; }
+	void clearDoorPending() { m_doorPend = false; m_roomPoly.clear(); m_roomPolyDone = false; }
 	//! připravený text k ručnímu umístění (text visí na kurzoru, střed dole; klik = vložit, Esc = zrušit)
 	void startPlaceText( const QString& text, double angle, int level );
 
@@ -538,6 +538,10 @@ private:
 	bool m_roomPlacing = false;
 	RoomLabelData m_roomLab;
 	double m_roomArea = -1.0;
+	std::vector<CCVector2d> m_roomPoly; //!< obrys místnosti klikaný po bodech (výměra)
+	bool m_roomPolyDone = false;        //!< obrys uzavřen, čeká se na pomocný řez
+	void finishRoomPoly();
+	double roomPolyArea( const std::vector<CCVector2d>& p ) const; //!< výměra v m²
 	CCVector2d m_lead0;
 	CCVector2d m_lead1;
 	struct RoomGeom

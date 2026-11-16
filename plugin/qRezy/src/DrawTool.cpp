@@ -806,11 +806,39 @@ bool DrawTool::lineEnds( ccPolyline* poly, CCVector2d& a, CCVector2d& b ) const
 	return true;
 }
 
+// odhad délky textu písmem romans se šířkou 0,5 × výška (jako výstup DGN), h = výška písma
+static double romansAdvance( const QString& s, double h )
+{
+	double w = 0.0;
+	for ( const QChar c : s )
+	{
+		double k = 0.45;
+		if ( c.isDigit() )
+			k = 0.476;
+		else if ( c == '.' || c == ',' || c == ':' || c == ';' || c == '\'' )
+			k = 0.24;
+		else if ( c == ' ' )
+			k = 0.38;
+		else if ( c == 'i' || c == 'l' || c == 'j' || c == 'I' || c == '!' || c == '|' )
+			k = 0.22;
+		else if ( c == 'm' || c == 'w' || c == 'M' || c == 'W' )
+			k = 0.62;
+		else if ( c == '+' || c == '-' || c == QChar( 0x00B1 ) || c == '=' )
+			k = 0.62;
+		else if ( c == '(' || c == ')' || c == '[' || c == ']' )
+			k = 0.33;
+		else if ( c.isUpper() )
+			k = 0.5;
+		w += k * h;
+	}
+	return w;
+}
+
 std::array<CCVector2d, 4> DrawTool::textCorners( ccPolyline* poly, const CCVector2d& O ) const
 {
 	// obdélník písmen od počátku doprava a nahoru (výška aspoň 11 px jako RezLayer)
 	const double th = std::max( poly->hasMetaData( "qRezy.textHL" ) ? poly->getMetaData( "qRezy.textHL" ).toDouble()
-	                                                                  : QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale,
+	                                                                  : QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble() * m_scale,
 	                            11.0 / 1.35 * pixelSize() );
 	CCVector2d upv( 0.0, 1.0 );
 	if ( poly->hasMetaData( "qRezy.textAng" ) )
@@ -824,7 +852,7 @@ std::array<CCVector2d, 4> DrawTool::textCorners( ccPolyline* poly, const CCVecto
 		upv = CCVector2d( -std::sin( a ), std::cos( a ) );
 	}
 	const CCVector2d rightv( upv.y, -upv.x );
-	const double w = std::max( 1, poly->getMetaData( "qRezy.text" ).toString().size() ) * 0.75 * th;
+	const double w = std::max( 0.4 * th, romansAdvance( poly->getMetaData( "qRezy.text" ).toString(), th ) );
 	const double h = th * 1.2;
 	return { O, O + rightv * w, O + rightv * w + upv * h, O + upv * h };
 }
@@ -855,7 +883,7 @@ ccPolyline* DrawTool::pickLine( const QPoint& pos, CCVector2d* clicked ) const
 		{
 			// text: klik kamkoli na písmena (obdélník od počátku doprava a nahoru)
 			// výška na obrazovce: skutečná, ale aspoň 11 px (jako RezLayer)
-			const double th = std::max( QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale, 11.0 / 1.35 * pixelSize() );
+			const double th = std::max( QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble() * m_scale, 11.0 / 1.35 * pixelSize() );
 			CCVector2d upv( 0.0, 1.0 );
 			if ( s.poly->hasMetaData( "qRezy.textAng" ) )
 			{
@@ -2862,26 +2890,35 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			}
 			break;
 		}
-		// klik do místnosti: výměra z nakreslených zdí, pomocný řez na podlahu a strop
-		CCVector2d C;
-		if ( !screenToLocal( pos, C ) || !m_frame.plan )
+		// obrys místnosti po bodech: klik = bod, klik na první bod nebo Enter = uzavřít → výměra, pomocný řez na podlahu a strop
+		if ( !m_frame.plan )
 		{
 			m_flash = QStringLiteral( "Popis místnosti jen v půdorysu" );
 			break;
 		}
-		m_roomArea = computeRoomArea( C );
-		m_doorPend = true;
-		m_doorKind = 2;
-		const double va = viewAngle();
-		const CCVector2d R( std::cos( va ), std::sin( va ) );
-		const CCVector2d U( -std::sin( va ), std::cos( va ) );
-		const CCVector3d P0 = m_frame.to3D( C - R * ( 1.0 * m_scale ), false );
-		const CCVector3d P1 = m_frame.to3D( C + R * ( 1.0 * m_scale ), false );
-		const CCVector3d S = m_frame.to3D( C + U * ( 1.0 * m_scale ), false );
-		Q_EMIT sectionDefined( 2, P0.x, P0.y, P1.x, P1.y, S.x, S.y );
-		Q_EMIT doorHeightWanted( 2 );
-		m_flash = m_roomArea > 0 ? QStringLiteral( "Popis místnosti: výměra %1 m² – v pomocném řezu klikněte podlahu a strop, Enter" ).arg( m_roomArea, 0, 'f', 2 )
-		                         : QStringLiteral( "Popis místnosti: obrys místnosti z čar se nenašel (výměru doplňte) – v pomocném řezu klikněte podlahu a strop, Enter" );
+		if ( m_roomPolyDone )
+		{
+			// nový obrys (předchozí místnost bez popisu)
+			m_roomPoly.clear();
+			m_roomPolyDone = false;
+			m_doorPend = false;
+		}
+		const CCVector2d Q = cursorPoint( pos, st, m_roomPoly.empty() ? nullptr : &m_roomPoly.back() );
+		if ( m_roomPoly.size() >= 3 )
+		{
+			CCVector2d raw;
+			const bool rawOk = screenToLocal( pos, raw );
+			if ( dist( Q, m_roomPoly.front() ) <= 1e-6 * m_scale || ( rawOk && dist( raw, m_roomPoly.front() ) <= PickPixels * pixelSize() ) )
+			{
+				finishRoomPoly();
+				break;
+			}
+		}
+		if ( m_roomPoly.empty() || dist( m_roomPoly.back(), Q ) > 1e-6 * m_scale )
+		{
+			m_roomPoly.push_back( Q );
+		}
+		m_step = static_cast<int>( m_roomPoly.size() );
 		break;
 	}
 	case Mode::Door:
@@ -4075,6 +4112,28 @@ void DrawTool::updateTip()
 		segment( a, b, yellow, 2.0f );
 	}
 
+	// popis místnosti: obrys klikaný po bodech (fialově), náhled úseku ke kurzoru a uzavření
+	if ( m_mode == Mode::RoomLabel && !m_roomPlacing && !m_roomPoly.empty() )
+	{
+		const ccColor::Rgb mg( 220, 80, 220 );
+		for ( size_t k = 0; k + 1 < m_roomPoly.size(); ++k )
+		{
+			segment( m_roomPoly[k], m_roomPoly[k + 1], mg, 2.0f );
+		}
+		if ( m_roomPolyDone )
+		{
+			segment( m_roomPoly.back(), m_roomPoly.front(), mg, 2.0f );
+		}
+		else if ( m_hasCursor )
+		{
+			segment( m_roomPoly.back(), m_cursor, mg, 1.0f );
+			if ( m_roomPoly.size() >= 2 )
+			{
+				segment( m_cursor, m_roomPoly.front(), ccColor::Rgb( 230, 160, 230 ), 1.0f );
+			}
+		}
+	}
+
 	// popis místnosti: rámeček a texty za myší, odkazová čára
 	if ( m_mode == Mode::RoomLabel && m_roomPlacing && m_hasCursor )
 	{
@@ -4085,7 +4144,7 @@ void DrawTool::updateTip()
 		if ( m_roomLab.leader )
 		{
 			const CCVector2d c0 = m_step == 0 ? m_cursor : m_lead0;
-			const std::vector<CCVector2d> cp = circlePts( c0, 0.3 * g.h );
+			const std::vector<CCVector2d> cp = circlePts( c0, 0.2 * g.h );
 			for ( size_t k = 0; k + 1 < cp.size(); ++k )
 			{
 				segment( cp[k], cp[k + 1], mg, 1.5f );
@@ -4269,7 +4328,7 @@ void DrawTool::updateTip()
 			const double ca = std::cos( ang );
 			const double sa = std::sin( ang );
 			auto rot = [&]( const CCVector2d& P ) { const CCVector2d d = P - m_base; return m_base + CCVector2d( d.x * ca - d.y * sa, d.x * sa + d.y * ca ); };
-			const double th = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+			const double th = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble() * m_scale;
 			for ( ccPolyline* poly : rotTargets() )
 			{
 				if ( !poly || !lineExists( poly ) )
@@ -4309,7 +4368,7 @@ void DrawTool::updateTip()
 		RezLayer::Item it;
 		it.P = m_frame.to3D( placeOrigin( m_cursor ) );
 		it.up = upv;
-		it.height = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+		it.height = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble() * m_scale;
 		it.text = m_placeText;
 		it.color = yellow;
 		it.dir = m_frame.U * std::cos( m_placeAng ) + m_frame.V * std::sin( m_placeAng );
@@ -4344,7 +4403,7 @@ void DrawTool::updateTip()
 		{
 			moving.push_back( m_sel );
 		}
-		const double th = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+		const double th = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble() * m_scale;
 		for ( ccPolyline* poly : moving )
 		{
 			if ( !poly || !isText( poly ) || poly->size() == 0 )
@@ -4696,8 +4755,10 @@ void DrawTool::updateStatus()
 		}
 		else
 		{
-			prompt = m_doorPend && m_doorKind == 2 ? QStringLiteral( "Popis místnosti: v pomocném řezu klikněte podlahu a strop, Enter (nebo klik do jiné místnosti)" )
-			                                       : QStringLiteral( "Popis místnosti: klikněte doprostřed místnosti" );
+			prompt = m_roomPolyDone && m_doorPend && m_doorKind == 2
+			           ? QStringLiteral( "Popis místnosti: výměra %1 m² – v pomocném řezu klikněte podlahu a strop, Enter (klik do půdorysu = nový obrys)" ).arg( m_roomArea, 0, 'f', 2 )
+			       : m_roomPoly.empty() ? QStringLiteral( "Popis místnosti: klikejte body obrysu místnosti (pravé = zpět o bod)" )
+			                            : QStringLiteral( "Popis místnosti: další bod obrysu, klik na první bod nebo Enter = uzavřít (%1 bodů, pravé = zpět o bod)" ).arg( m_roomPoly.size() );
 		}
 		break;
 	case Mode::Opening:
@@ -5064,6 +5125,18 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 				return true;
 			}
 			m_cycle.clear();
+			// popis místnosti: pravé = zpět o poslední bod obrysu
+			if ( m_mode == Mode::RoomLabel && !m_roomPlacing && !m_roomPolyDone && !m_roomPoly.empty() )
+			{
+				m_roomPoly.pop_back();
+				m_step = static_cast<int>( m_roomPoly.size() );
+				m_flash = m_roomPoly.empty() ? QStringLiteral( "Obrys místnosti zrušen" ) : QStringLiteral( "Poslední bod obrysu zrušen" );
+				updateStatus();
+				keepCrossCursor();
+				updateTip();
+				redraw2D();
+				return true;
+			}
 			// nástroj nic nedělá → pravé zruší stopu pomocného řezu (čára + šipky)
 			const bool idle = m_step == 0 && m_chain.empty() && m_arcPts.empty() && !m_clHas && m_clBatch.empty() && m_selSet.empty() && !m_sel;
 			if ( idle && m_auxKeep )
@@ -5282,6 +5355,16 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 				{
 					onTypedValue( v );
 				}
+				updateTip();
+				updateStatus();
+				redraw2D();
+			}
+		}
+		else if ( ( k == Qt::Key_Return || k == Qt::Key_Enter ) && m_typed.isEmpty() && m_mode == Mode::RoomLabel && !m_roomPlacing && !m_roomPolyDone && m_roomPoly.size() >= 3 )
+		{
+			if ( event->type() == QEvent::KeyPress )
+			{
+				finishRoomPoly(); // Enter = uzavřít obrys místnosti
 				updateTip();
 				updateStatus();
 				redraw2D();
@@ -5894,7 +5977,7 @@ void DrawTool::startPlaceText( const QString& text, double angle, int level )
 CCVector2d DrawTool::placeOrigin( const CCVector2d& c ) const
 {
 	// kurzor = střed spodní hrany textu
-	const double h = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+	const double h = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble() * m_scale;
 	const double w = 0.8 * h * m_placeText.size();
 	return c - CCVector2d( std::cos( m_placeAng ), std::sin( m_placeAng ) ) * ( w / 2.0 );
 }
@@ -6275,7 +6358,7 @@ void DrawTool::refreshLayer()
 	ccHObject* group = drawingGroup( false );
 	if ( group )
 	{
-		const double h = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+		const double h = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble() * m_scale;
 		for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
 		{
 			ccHObject* ch = group->getChild( i );
@@ -6834,7 +6917,7 @@ void DrawTool::buildDoor( const CCVector2d& A, const CCVector2d& B, const CCVect
 	}
 	const CCVector2d up( -t.y, t.x );
 	const CCVector2d C = M + n * ( L / 2.0 );
-	const double th = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+	const double th = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble() * m_scale;
 	const double gap = 0.05 * m_scale;
 	const QString wTxt = QString::number( static_cast<int>( std::lround( L / m_scale * 100.0 ) ) * 10 );
 	const double ang = std::atan2( t.y, t.x );
@@ -6878,7 +6961,7 @@ bool DrawTool::writeDoorHeight( const QString& text )
 	}
 	t.normalize();
 	up.normalize();
-	const double th = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble() * m_scale;
+	const double th = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble() * m_scale;
 	const double gap = 0.05 * m_scale;
 	UndoItem undo;
 	if ( ccPolyline* tx = addText( C - t * ( 0.75 * th * text.size() / 2.0 ) - up * ( gap + th ), text, &undo ) )
@@ -6895,17 +6978,18 @@ bool DrawTool::writeDoorHeight( const QString& text )
 
 DrawTool::RoomGeom DrawTool::roomGeom( const CCVector2d& cursor ) const
 {
+	// rozměry podle vzoru uživatele (pudorys_v7, 16. 11.), h = výška vložených textů (0,125 m):
+	// rámeček ≈ 3,5h × 3,56h ze dvou buněk nad sebou (podlaha / světlá výška), číslo 2h nad rámečkem,
+	// výměra s m² pod rámečkem, název vystředěný pod ní
 	RoomGeom g;
 	const double va = m_frame.plan ? viewAngle() : 0.0;
 	g.R = CCVector2d( std::cos( va ), std::sin( va ) );
 	g.U = CCVector2d( -std::sin( va ), std::cos( va ) );
-	// výška písma = výška textu pro výstup DGN (Uložit V7), aby texty seděly v rámečku i v MicroStationu
-	const double h = QSettings().value( QStringLiteral( "qRezy/textHeight" ), 0.25 ).toDouble() * m_scale;
+	const double h = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble() * m_scale;
 	g.h = h;
-	const double cw = 0.75 * h; // šířka znaku (odhad)
-	const int nField = std::max( m_roomLab.floor.size(), m_roomLab.height.size() );
-	const double W = std::max( 4, nField ) * cw + 0.8 * h;
-	const double cellH = 1.6 * h;
+	const double cellH = 1.78 * h;
+	const double wText = std::max( romansAdvance( m_roomLab.floor, h ), romansAdvance( m_roomLab.height, h ) );
+	const double W = std::max( 3.0 * h, wText + 0.4 * h );
 	const CCVector2d& R = g.R;
 	const CCVector2d& U = g.U;
 	// kurzor: s odkazovou čárou = levá hrana u dělicí čáry, jinak střed rámečku
@@ -6918,21 +7002,78 @@ DrawTool::RoomGeom DrawTool::roomGeom( const CCVector2d& cursor ) const
 	g.leftMid = O - U * cellH;
 	auto centered = [&]( const QString& s, double factor, double baseY, int level )
 	{
-		const double w = s.size() * cw * factor;
+		const double w = romansAdvance( s, h * factor );
 		g.texts.push_back( { O + R * ( W / 2.0 - w / 2.0 ) + U * baseY, s, factor, level } );
 	};
-	centered( m_roomLab.number, 2.0, 0.4 * h, 13 );                        // číslo nad rámečkem
-	centered( m_roomLab.floor, 1.0, -cellH + 0.3 * h, 12 );                // podlaha
-	centered( m_roomLab.height, 1.0, -2.0 * cellH + 0.3 * h, 12 );         // světlá výška
-	const double yArea = -2.0 * cellH - 0.5 * h - h;
+	centered( m_roomLab.number, 2.0, 0.37 * h, 13 );                    // číslo nad rámečkem
+	centered( m_roomLab.floor, 1.0, -0.5 * cellH - 0.5 * h, 12 );       // podlaha (horní buňka)
+	centered( m_roomLab.height, 1.0, -1.5 * cellH - 0.5 * h, 12 );      // světlá výška (dolní buňka)
+	// výměra „xx.xx m²“ vystředěná pod rámečkem
+	const double yArea = -2.0 * cellH - 1.74 * h;
 	const QString areaTxt = m_roomLab.area + QStringLiteral( " m" );
-	g.texts.push_back( { O + R * ( 0.2 * h ) + U * yArea, areaTxt, 1.0, 12 } );
-	g.texts.push_back( { O + R * ( 0.2 * h + areaTxt.size() * cw + 0.1 * h ) + U * ( yArea + 0.6 * h ), QStringLiteral( "2" ), 0.6, 12 } ); // m²
+	const double supF = 0.56;
+	const double wArea = romansAdvance( areaTxt, h ) + 0.05 * h + romansAdvance( QStringLiteral( "2" ), h * supF );
+	const double xArea = W / 2.0 - wArea / 2.0;
+	g.texts.push_back( { O + R * xArea + U * yArea, areaTxt, 1.0, 12 } );
+	g.texts.push_back( { O + R * ( xArea + romansAdvance( areaTxt, h ) + 0.05 * h ) + U * ( yArea + 0.82 * h ), QStringLiteral( "2" ), supF, 12 } ); // m²
 	if ( !m_roomLab.name.isEmpty() )
 	{
-		g.texts.push_back( { O + R * ( 0.2 * h ) + U * ( yArea - 1.6 * h ), m_roomLab.name, 1.0, 12 } );
+		centered( m_roomLab.name, 1.0, yArea - 1.49 * h, 12 );
 	}
 	return g;
+}
+
+double DrawTool::roomPolyArea( const std::vector<CCVector2d>& p ) const
+{
+	double a = 0.0;
+	for ( size_t i = 0; i < p.size(); ++i )
+	{
+		const CCVector2d& u = p[i];
+		const CCVector2d& v = p[( i + 1 ) % p.size()];
+		a += u.x * v.y - v.x * u.y;
+	}
+	return std::abs( a ) / 2.0 / ( m_scale * m_scale );
+}
+
+void DrawTool::finishRoomPoly()
+{
+	if ( m_roomPoly.size() < 3 )
+	{
+		return;
+	}
+	m_roomArea = roomPolyArea( m_roomPoly );
+	m_roomPolyDone = true;
+	m_step = 0;
+	// pomocný řez vodorovně na obrazovce přes těžiště obrysu
+	CCVector2d C( 0, 0 );
+	double A = 0.0;
+	for ( size_t i = 0; i < m_roomPoly.size(); ++i )
+	{
+		const CCVector2d& u = m_roomPoly[i];
+		const CCVector2d& v = m_roomPoly[( i + 1 ) % m_roomPoly.size()];
+		const double c = u.x * v.y - v.x * u.y;
+		A += c;
+		C += ( u + v ) * c;
+	}
+	if ( std::abs( A ) > 1e-12 )
+	{
+		C = C / ( 3.0 * A );
+	}
+	else
+	{
+		C = m_roomPoly.front();
+	}
+	m_doorPend = true;
+	m_doorKind = 2;
+	const double va = viewAngle();
+	const CCVector2d R( std::cos( va ), std::sin( va ) );
+	const CCVector2d U( -std::sin( va ), std::cos( va ) );
+	const CCVector3d P0 = m_frame.to3D( C - R * ( 1.0 * m_scale ), false );
+	const CCVector3d P1 = m_frame.to3D( C + R * ( 1.0 * m_scale ), false );
+	const CCVector3d S = m_frame.to3D( C + U * ( 1.0 * m_scale ), false );
+	Q_EMIT sectionDefined( 2, P0.x, P0.y, P1.x, P1.y, S.x, S.y );
+	Q_EMIT doorHeightWanted( 2 );
+	m_flash = QStringLiteral( "Popis místnosti: výměra %1 m² – v pomocném řezu klikněte podlahu a strop, Enter" ).arg( m_roomArea, 0, 'f', 2 );
 }
 
 std::vector<CCVector2d> DrawTool::circlePts( const CCVector2d& c, double r ) const
@@ -6951,6 +7092,8 @@ void DrawTool::startRoomPlace( const RoomLabelData& d )
 	m_roomLab = d;
 	m_roomPlacing = true;
 	m_doorPend = false;
+	m_roomPoly.clear();
+	m_roomPolyDone = false;
 	if ( m_mode != Mode::RoomLabel )
 	{
 		m_mode = Mode::RoomLabel;
@@ -6967,7 +7110,7 @@ void DrawTool::buildRoomLabel( const CCVector2d& cursor )
 	const RoomGeom g = roomGeom( cursor );
 	const int popRoom = 9;  // hladina POP_MISTN
 	const int popNum = 10;  // hladina POP_CISLA_MISTN
-	const double hM = QSettings().value( QStringLiteral( "qRezy/textHeight" ), 0.25 ).toDouble(); // výška písma v DGN [m]
+	const double hM = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble(); // výška písma v DGN [m]
 	const double ang = std::atan2( g.R.y, g.R.x );
 	UndoItem undo;
 	// rámeček: obvod jako uzavřená lomená čára, dělicí čára zvlášť
@@ -6989,7 +7132,7 @@ void DrawTool::buildRoomLabel( const CCVector2d& cursor )
 	}
 	if ( m_roomLab.leader )
 	{
-		const double rc = 0.3 * g.h;
+		const double rc = 0.2 * g.h; // kroužek Ø 5 cm při písmu 0,125 m
 		addPolyline( circlePts( m_lead0, rc ), popNum, false, false, &undo );
 		CCVector2d d = m_lead1 - m_lead0;
 		const CCVector2d s0 = d.norm() > rc ? m_lead0 + d * ( rc / d.norm() ) : m_lead0;

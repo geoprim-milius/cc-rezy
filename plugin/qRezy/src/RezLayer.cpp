@@ -141,8 +141,27 @@ void RezLayer::drawMeOnly( CC_DRAW_CONTEXT& context )
 			}
 			// skutečná velikost, ale aspoň čitelná
 			const double px = std::sqrt( ( S2.x - S.x ) * ( S2.x - S.x ) + ( S2.y - S.y ) * ( S2.y - S.y ) );
-			const int fpx = static_cast<int>( std::max( 11.0, std::min( 300.0, px * 1.35 ) ) );
+			int fpx = static_cast<int>( std::max( 11.0, std::min( 300.0, px * 1.35 ) ) );
 			f.setPixelSize( fpx );
+			{
+				// výška velkých písmen a číslic = výška textu (jako v MicroStationu), aspoň čitelná
+				const double cap = QFontMetricsF( f ).capHeight();
+				if ( cap > 0.0 )
+				{
+					fpx = static_cast<int>( std::lround( std::max( 11.0, std::min( 300.0, fpx * px / cap ) ) ) );
+					f.setPixelSize( fpx );
+				}
+			}
+			{
+				// šířka písma jako v DGN (romans, šířka = 0,5 × výška → číslice ≈ 0,476 × výška)
+				const QFontMetricsF fm0( f );
+				const double adv = fm0.horizontalAdvance( QLatin1Char( '0' ) );
+				if ( adv > 0.0 )
+				{
+					const int stretch = static_cast<int>( std::lround( 100.0 * 0.476 * ( fpx / 1.35 ) / adv ) );
+					f.setStretch( std::max( 25, std::min( 400, stretch ) ) );
+				}
+			}
 			CCVector3d S3;
 			if ( it.dir.norm2() > 1e-12 && cam.project( it.P + it.dir * it.height, S3 ) && ( std::abs( S3.x - S.x ) + std::abs( S3.y - S.y ) ) > 1e-6 )
 			{
@@ -190,7 +209,7 @@ void RezLayer::drawMeOnly( CC_DRAW_CONTEXT& context )
 				continue;
 			}
 			// displayText kreslí písmo pod zadaný bod → posun nahoru, aby P byl levý dolní roh textu (jako v DGN)
-			context.display->displayText( it.text, static_cast<int>( S.x ), static_cast<int>( S.y + 0.8 * fpx ), ccGenericGLDisplay::ALIGN_HLEFT | ccGenericGLDisplay::ALIGN_VBOTTOM, 0.0f, &col, &f );
+			context.display->displayText( it.text, static_cast<int>( S.x ), static_cast<int>( S.y + QFontMetrics( f ).ascent() ), ccGenericGLDisplay::ALIGN_HLEFT | ccGenericGLDisplay::ALIGN_VBOTTOM, 0.0f, &col, &f );
 		}
 		else
 		{

@@ -265,7 +265,7 @@ namespace DgnV7
 			return false;
 		}
 		const double h = e.textHeight * m_uorPerMaster;
-		const double wd = h * 0.8 * txt.size();
+		const double wd = h * std::max( 0.1, e.textWidthRatio ) * txt.size();
 		// rozsah natočeného obdélníku textu
 		const double ra = e.textAngleDeg * 3.14159265358979323846 / 180.0;
 		const double ca = std::cos( ra );
@@ -306,9 +306,10 @@ namespace DgnV7
 		out.push_back( static_cast<uint8_t>( clampi( e.font, 0, 255 ) ) );
 		out.push_back( static_cast<uint8_t>( clampi( e.justification, 0, 255 ) ) );
 		// násobky délky a výšky písma (jednotky UOR * 1000 / 6)
-		const int32_t mult = static_cast<int32_t>( h * 1000.0 / 6.0 + 0.5 );
-		putI32( out, mult );
-		putI32( out, mult );
+		const int32_t multH = static_cast<int32_t>( h * 1000.0 / 6.0 + 0.5 );
+		const int32_t multL = static_cast<int32_t>( h * std::max( 0.01, e.textWidthRatio ) * 1000.0 / 6.0 + 0.5 );
+		putI32( out, multL ); // šířka
+		putI32( out, multH ); // výška
 		putI32( out, static_cast<int32_t>( std::lround( e.textAngleDeg * 360000.0 ) ) ); // natočení v 1/360000 °
 		putI32( out, x );
 		putI32( out, y );

@@ -2757,7 +2757,7 @@ void RezDock::openSaveDialog()
 	auto* tf = new QFormLayout;
 	auto* textH = makeSpin( 0.01, 10.0, st.value( QStringLiteral( "qRezy/textHeight" ), 0.25 ).toDouble(), 0.05, 2, QStringLiteral( " m" ) );
 	tf->addRow( QStringLiteral( "Výška popisů (název, ±0,000):" ), textH );
-	auto* uTextH = makeSpin( 0.01, 10.0, st.value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble(), 0.05, 2, QStringLiteral( " m" ) );
+	auto* uTextH = makeSpin( 0.01, 10.0, st.value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble(), 0.05, 2, QStringLiteral( " m" ) );
 	tf->addRow( QStringLiteral( "Vložené texty – výška:" ), uTextH );
 	auto* uTextL = new QSpinBox;
 	uTextL->setRange( 1, 63 );
@@ -2920,7 +2920,7 @@ void RezDock::exportV7( const std::vector<int>& floorIds, bool withSections )
 	const bool absH = st.value( QStringLiteral( "qRezy/absHeights" ), false ).toBool();
 	const double textH = st.value( QStringLiteral( "qRezy/textHeight" ), 0.25 ).toDouble();
 	const int userTextLevel = st.value( QStringLiteral( "qRezy/userTextLevel" ), 16 ).toInt();
-	const double userTextH = st.value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble();
+	const double userTextH = st.value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble();
 	const double zeroG = m_zero->value();
 	const std::vector<SectionInfo> sections = loadSections();
 	const std::vector<FloorInfo> floors = loadFloors();
@@ -3456,7 +3456,7 @@ void RezDock::writeAuxHeight( const QString& text, int kind, double atX, double 
 	}
 	QSettings st;
 	const double sc = c->getGlobalScale();
-	const double h = st.value( QStringLiteral( "qRezy/userTextHeight" ), 0.15 ).toDouble();
+	const double h = st.value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble();
 	const double w = 0.8 * h * text.size();
 	const CCVector2d perp( -d.y, d.x );
 	// text nad místem, kde se odečítala výška (bod na čáře řezu); jinak uprostřed čáry
@@ -4546,14 +4546,35 @@ void RezDock::roomLabelDialog()
 	dlg.setWindowTitle( QStringLiteral( "Popis místnosti" ) );
 	auto* form = new QFormLayout( &dlg );
 	auto* num = new QLineEdit( st.value( QStringLiteral( "qRezy/roomNext" ), QStringLiteral( "101" ) ).toString() );
-	auto* flo = new QLineEdit( QString::number( floorBpv, 'f', 3 ) );
+	// podlaha: Bpv, nebo místní výška vůči ±0,000 (obojí v m na cm, 3 desetinná místa)
+	const double zero = m_zero ? m_zero->value() : 0.0;
+	auto floorText = [floorBpv, zero]( bool local ) -> QString
+	{
+		if ( !local )
+		{
+			return QString::number( floorBpv, 'f', 3 );
+		}
+		const double v = std::round( ( floorBpv - zero ) * 100.0 ) / 100.0;
+		if ( std::abs( v ) < 0.0005 )
+		{
+			return QString( QChar( 0x00B1 ) ) + QStringLiteral( "0.000" );
+		}
+		return ( v > 0 ? QStringLiteral( "+" ) : QStringLiteral( "-" ) ) + QString::number( std::abs( v ), 'f', 3 );
+	};
+	auto* floMode = new QComboBox;
+	floMode->addItem( QStringLiteral( "Bpv" ) );
+	floMode->addItem( QStringLiteral( "místní (±0,000 = %1)" ).arg( QString::number( zero, 'f', 3 ) ) );
+	floMode->setCurrentIndex( st.value( QStringLiteral( "qRezy/roomFloorLocal" ), false ).toBool() ? 1 : 0 );
+	auto* flo = new QLineEdit( floorText( floMode->currentIndex() == 1 ) );
+	connect( floMode, qOverload<int>( &QComboBox::currentIndexChanged ), flo, [flo, floorText]( int i ) { flo->setText( floorText( i == 1 ) ); } );
 	auto* hei = new QLineEdit( QString::number( std::abs( clear ), 'f', 3 ) );
 	auto* are = new QLineEdit( area > 0 ? QString::number( area, 'f', 2 ) : QStringLiteral( "X.XX" ) );
 	auto* nam = new QLineEdit;
 	auto* lead = new QCheckBox( QStringLiteral( "umístit mimo místnost (kroužek a odkazová čára)" ) );
 	lead->setChecked( st.value( QStringLiteral( "qRezy/roomLeader" ), false ).toBool() );
 	form->addRow( QStringLiteral( "Číslo místnosti" ), num );
-	form->addRow( QStringLiteral( "Podlaha (Bpv)" ), flo );
+	form->addRow( QStringLiteral( "Výška podlahy" ), floMode );
+	form->addRow( QStringLiteral( "Podlaha [m]" ), flo );
 	form->addRow( QStringLiteral( "Světlá výška [m]" ), hei );
 	form->addRow( QStringLiteral( "Výměra [m²]" ), are );
 	form->addRow( QStringLiteral( "Název" ), nam );
@@ -4580,6 +4601,7 @@ void RezDock::roomLabelDialog()
 	d.name = nam->text().trimmed();
 	d.leader = lead->isChecked();
 	st.setValue( QStringLiteral( "qRezy/roomLeader" ), d.leader );
+	st.setValue( QStringLiteral( "qRezy/roomFloorLocal" ), floMode->currentIndex() == 1 );
 	bool ok = false;
 	const int n = d.number.toInt( &ok );
 	if ( ok )

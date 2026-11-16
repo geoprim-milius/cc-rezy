@@ -36,6 +36,7 @@ namespace DgnV7
 		bool isText = false;
 		std::string text;        //!< jednobajtové kódování (cp1250)
 		double textHeight = 0.2; //!< výška písma v hlavních jednotkách
+		double textWidthRatio = 0.5; //!< šířka písma = poměr × výška (romans 0,125 / 0,0625)
 		int font = 0;
 		int justification = 0;   //!< 0 = vlevo dole
 		double textAngleDeg = 0.0; //!< natočení textu (° proti směru hodinových ručiček)
