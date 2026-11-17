@@ -3264,6 +3264,22 @@ void DrawTool::onDataPoint( const QPoint& pos )
 	case Mode::PlaceText:
 	{
 		const CCVector2d P = cursorPoint( pos, st, nullptr );
+		if ( m_placeBeam && !m_placeText.isEmpty() )
+		{
+			if ( m_step == 0 )
+			{
+				m_beamA = P; // začátek odkazové čáry
+				m_step = 1;
+				break;
+			}
+			buildBeam( P );
+			m_placeText.clear();
+			m_placeBeam = false;
+			m_step = 0;
+			const Mode back = ( m_prevMode == Mode::PlaceText ) ? Mode::Select : m_prevMode;
+			QTimer::singleShot( 0, this, [this, back]() { setMode( back ); } );
+			break;
+		}
 		if ( !m_placeText.isEmpty() )
 		{
 			addTextAt( placeOrigin( P ), m_placeText, m_placeAng, m_placeLevel );
@@ -4362,8 +4378,25 @@ void DrawTool::updateTip()
 		}
 	}
 
+	// trám: odkazová čára, podtržení a text za myší
+	if ( m_mode == Mode::PlaceText && m_placeBeam && m_hasCursor && !m_placeText.isEmpty() )
+	{
+		const BeamGeom g = beamGeom( m_step == 1 ? &m_beamA : nullptr, m_cursor );
+		for ( size_t k = 0; k + 1 < g.line.size(); ++k )
+		{
+			segment( g.line[k], g.line[k + 1], yellow, 1.0f );
+		}
+		RezLayer::Item it;
+		it.P = m_frame.to3D( g.textP );
+		it.up = upv;
+		it.height = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble() * m_scale;
+		it.text = m_placeText;
+		it.color = yellow;
+		it.dir = m_frame.U * std::cos( g.ang ) + m_frame.V * std::sin( g.ang );
+		temp.push_back( it );
+	}
 	// ruční umístění textu z pomocného řezu: text na kurzoru
-	if ( m_mode == Mode::PlaceText && m_hasCursor && !m_placeText.isEmpty() )
+	else if ( m_mode == Mode::PlaceText && m_hasCursor && !m_placeText.isEmpty() )
 	{
 		RezLayer::Item it;
 		it.P = m_frame.to3D( placeOrigin( m_cursor ) );
@@ -4820,7 +4853,9 @@ void DrawTool::updateStatus()
 			prompt = QStringLiteral( "Otočit: cílový směr (bod) – úhel %1°" ).arg( QString::number( rotAngle() * 57.29577951308232, 'f', 2 ).replace( '.', ',' ) );
 		break;
 	case Mode::PlaceText:
-		prompt = QStringLiteral( "Umístit text „%1“: klikněte do půdorysu (Esc = zrušit)" ).arg( m_placeText );
+		prompt = !m_placeBeam ? QStringLiteral( "Umístit text „%1“: klikněte do půdorysu (Esc = zrušit)" ).arg( m_placeText )
+		       : m_step == 0  ? QStringLiteral( "Trám „%1“: klikněte začátek odkazové čáry (u trámu), Esc = zrušit" ).arg( m_placeText )
+		                      : QStringLiteral( "Trám „%1“: klikněte lom – text nad vodorovnou čarou (pravé = zpět)" ).arg( m_placeText );
 		break;
 	case Mode::BreakLine:
 		prompt = m_step == 0 ? QStringLiteral( "Rozdělit čarou: první bod řezné čáry" )
@@ -5966,8 +6001,60 @@ void DrawTool::rotateItem( ccPolyline* poly, const CCVector2d& C, double ang, Un
 	setPolyPoints( poly, pts, undo );
 }
 
+void DrawTool::startPlaceBeam( const QString& text, int level )
+{
+	startPlaceText( text, 0.0, level );
+	m_placeBeam = true;
+	m_step = 0;
+	updateTip();
+}
+
+DrawTool::BeamGeom DrawTool::beamGeom( const CCVector2d* A, const CCVector2d& bend ) const
+{
+	// text vodorovně s obrazovkou nad podtržením, podtržení od lomu směrem od odkazové čáry
+	BeamGeom g;
+	const double va = m_frame.plan ? viewAngle() : 0.0;
+	const CCVector2d R( std::cos( va ), std::sin( va ) );
+	const CCVector2d U( -std::sin( va ), std::cos( va ) );
+	g.ang = va;
+	const double h = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble() * m_scale;
+	const double tw = romansAdvance( m_placeText, h );
+	const double s = ( A && ( bend - *A ).dot( R ) < 0.0 ) ? -1.0 : 1.0;
+	const CCVector2d E = bend + R * ( s * ( tw + 0.3 * h ) );
+	if ( A )
+	{
+		g.line.push_back( *A );
+	}
+	g.line.push_back( bend );
+	g.line.push_back( E );
+	g.textP = ( s > 0 ? bend + R * ( 0.1 * h ) : E + R * ( 0.2 * h ) ) + U * ( 0.3 * h );
+	return g;
+}
+
+void DrawTool::buildBeam( const CCVector2d& bend )
+{
+	const BeamGeom g = beamGeom( &m_beamA, bend );
+	UndoItem undo;
+	if ( ccPolyline* ln = addPolyline( g.line, 1, false, false, &undo ) ) // hladina PREKLADY
+	{
+		ln->setMetaData( "qRezy.solid", true ); // odkazová čára plnou čarou (ne styl hladiny)
+	}
+	if ( ccPolyline* tx = addText( g.textP, m_placeText, &undo ) )
+	{
+		tx->setMetaData( "qRezy.textAng", g.ang );
+		if ( m_placeLevel > 0 )
+		{
+			tx->setMetaData( "qRezy.textLevel", m_placeLevel );
+		}
+	}
+	pushUndo( std::move( undo ) );
+	m_flash = QStringLiteral( "Trám %1 umístěn" ).arg( m_placeText );
+	redraw2D();
+}
+
 void DrawTool::startPlaceText( const QString& text, double angle, int level )
 {
+	m_placeBeam = false;
 	m_placeText = text;
 	m_placeAng = angle;
 	m_placeLevel = level;
@@ -6695,6 +6782,10 @@ std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTa
 
 		DgnV7::Element e;
 		e.sym = table.get( cat, hid );
+		if ( poly->getMetaData( "qRezy.solid" ).toBool() )
+		{
+			e.sym.style = 0; // plná čára (odkazová čára trámu)
+		}
 		bool ok = true;
 		for ( unsigned k = 0; k < poly->size() && ok; ++k )
 		{

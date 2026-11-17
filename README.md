@@ -131,12 +131,13 @@ s pravoúhlým řezem (tloušťka = posuvník Hloubka). Levé kliknutí 2 body =
 u kurzoru výška nad ±0,000 a v Bpv. Pravé tažení = posun, kolečko = zoom.
 Okno se otevře přiblížené od podlahy ke stropu (odhad z bodů v řezu). Měření se kreslí jako výšková kóta (svislá kótovací čára s patkami a hodnotou, šikmo kliknuté body nevadí) – v pomocném řezu i v 3D náhledu.
 
-**Zápis výšky do půdorysu**: ve sloupci *Do půdorysu* vpravo od pohledu vyberte tlačítkem druh (Překlad / Strop / Výška / Okno / Podlaha), změřte a dejte **Enter** (nebo Zapsat).
+**Zápis výšky do půdorysu**: ve sloupci *Do půdorysu* vpravo od pohledu vyberte tlačítkem druh (Překlad / Strop / Výška / Okno / Podlaha / Trám), změřte a dejte **Enter** (nebo Zapsat).
 Bere se svislý rozdíl, zaokrouhlený na cm, zapsaný v mm, jako text podél čáry pomocného řezu **na místo, kde jste klikli odečtení výšky** (poslední klik):
 - *Okno*: 3 kliky – podlaha, parapet, horní hrana okna (zobrazí se obě kóty) → `2300(850)` = výška okna nad parapetem (parapet nad podlahou);
 - *Překlad* (2 kliky): `Vp=2060`;
 - *Strop* (2 kliky): `Vs=2650` (výška stropu);
 - *Podlaha* (1 klik): `+0,150 (245,320)` – výška podlahy relativně k ±0,000 a v Bpv;
+- *Trám* (2 kliky na protilehlé rohy průřezu – spodní roh a horní roh u stropu): `250x(230)` = šířka x (výška) v mm zaokrouhlené na cm; umisťuje se vždy ručně – 1. klik začátek odkazové čáry u trámu, 2. klik lom, text nad vodorovnou čarou (hladina PREKLADY, plná čára);
 - *Výška* (2 kliky): `2060`.
 Tlačítko **Text 90°** (klávesa **B**, když je myš nad oknem pomocného řezu) zapnuté = text otočený o 90° (kolmo na čáru řezu, začíná u čáry a čte se zdola nahoru), vypnuté = text podél čáry.
 Zaškrtnuté **ručně**: text se neumístí sám, ale visí na kurzoru (podél čáry řezu) a položíte ho klikem do půdorysu (Esc = zrušit) – když je na jednom místě víc údajů.

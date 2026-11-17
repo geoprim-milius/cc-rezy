@@ -231,6 +231,8 @@ public:
 	void clearDoorPending() { m_doorPend = false; m_roomPoly.clear(); m_roomPolyDone = false; }
 	//! připravený text k ručnímu umístění (text visí na kurzoru, střed dole; klik = vložit, Esc = zrušit)
 	void startPlaceText( const QString& text, double angle, int level );
+	//! trám z pomocného řezu: 1. klik = začátek odkazové čáry, 2. klik = lom, text nad vodorovnou čarou (hladina PREKLADY)
+	void startPlaceBeam( const QString& text, int level );
 
 
 	//! střed okna v rovině kreslení (lokálně 3D)
@@ -521,6 +523,16 @@ private:
 	QString m_placeText;
 	double m_placeAng = 0.0;
 	int m_placeLevel = 0;
+	bool m_placeBeam = false; //!< umisťuje se popis trámu s odkazovou čarou
+	CCVector2d m_beamA;       //!< začátek odkazové čáry trámu
+	struct BeamGeom
+	{
+		std::vector<CCVector2d> line; //!< (začátek) – lom – konec podtržení
+		CCVector2d textP;             //!< počátek textu
+		double ang = 0.0;
+	};
+	BeamGeom beamGeom( const CCVector2d* A, const CCVector2d& bend ) const;
+	void buildBeam( const CCVector2d& bend );
 	CCVector2d placeOrigin( const CCVector2d& c ) const;
 	CCVector2d m_rotRef;
 	void rotateItem( ccPolyline* poly, const CCVector2d& C, double ang, UndoItem* undo );

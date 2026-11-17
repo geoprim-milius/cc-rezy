@@ -2543,6 +2543,7 @@ void RezDock::migrateSeedLayers()
 	st.setValue( QStringLiteral( "qRezy/hLevelLin" ), 9 );
 	st.setValue( QStringLiteral( "qRezy/hLevelCeil" ), 9 );
 	st.setValue( QStringLiteral( "qRezy/hLevelFloor" ), 9 );
+	st.setValue( QStringLiteral( "qRezy/hLevelBeam" ), 5 );
 	if ( m_draw )
 	{
 		if ( m_draw->countCategory( Drawing::Beams ) > 0 )
@@ -2813,6 +2814,7 @@ void RezDock::openSaveDialog()
 	auto* hH = mkLvl( "qRezy/hLevelH", 16 );
 	auto* hCeil = mkLvl( "qRezy/hLevelCeil", 9 );
 	auto* hFloor = mkLvl( "qRezy/hLevelFloor", 9 );
+	auto* hBeam = mkLvl( "qRezy/hLevelBeam", 5 );
 	hf->addWidget( new QLabel( QStringLiteral( "Okno:" ) ) );
 	hf->addWidget( hWin );
 	hf->addSpacing( 8 );
@@ -2827,6 +2829,9 @@ void RezDock::openSaveDialog()
 	hf->addSpacing( 8 );
 	hf->addWidget( new QLabel( QStringLiteral( "Podlaha:" ) ) );
 	hf->addWidget( hFloor );
+	hf->addSpacing( 8 );
+	hf->addWidget( new QLabel( QStringLiteral( "Trám:" ) ) );
+	hf->addWidget( hBeam );
 	hf->addStretch( 1 );
 	hBox->setToolTip( QStringLiteral( "Texty zapsané u vložených dřív mají hladinu uloženou u sebe; změna platí pro nové zápisy" ) );
 	l->addWidget( hBox );
@@ -2882,6 +2887,7 @@ void RezDock::openSaveDialog()
 	st.setValue( QStringLiteral( "qRezy/hLevelH" ), hH->value() );
 	st.setValue( QStringLiteral( "qRezy/hLevelCeil" ), hCeil->value() );
 	st.setValue( QStringLiteral( "qRezy/hLevelFloor" ), hFloor->value() );
+	st.setValue( QStringLiteral( "qRezy/hLevelBeam" ), hBeam->value() );
 	st.setValue( QStringLiteral( "qRezy/kotaColor" ), kColor->value() );
 	m_draw->setKotaSymbology( kLevel->value(), kColor->value() );
 	st.setValue( QStringLiteral( "qRezy/ptTextH" ), ptTextH->value() );
@@ -3466,10 +3472,17 @@ void RezDock::writeAuxHeight( const QString& text, int kind, double atX, double 
 	const CCVector2d P = rot90 ? M + perp * ( 0.05 * sc ) + d * ( h / 2.0 * sc )
 	                           : M - d * ( w / 2.0 * sc ) + perp * ( 0.05 * sc );
 	const double ang = std::atan2( d.y, d.x ) + ( rot90 ? 1.5707963267948966 : 0.0 );
-	static const char* keys[] = { "qRezy/hLevelWin", "qRezy/hLevelLin", "qRezy/hLevelH", "qRezy/hLevelCeil", "qRezy/hLevelFloor" };
-	static const int defs[] = { 16, 9, 16, 9, 9 }; // KOTY / VYSKY podle zakládacího seedu
-	const int k = std::max( 0, std::min( 4, kind ) );
+	static const char* keys[] = { "qRezy/hLevelWin", "qRezy/hLevelLin", "qRezy/hLevelH", "qRezy/hLevelCeil", "qRezy/hLevelFloor", "qRezy/hLevelBeam" };
+	static const int defs[] = { 16, 9, 16, 9, 9, 5 }; // KOTY / VYSKY podle zakládacího seedu, trám PREKLADY
+	const int k = std::max( 0, std::min( 5, kind ) );
 	const int level = st.value( QString::fromLatin1( keys[k] ), defs[k] ).toInt();
+	if ( kind == 5 )
+	{
+		// trám: vždy ručně – začátek odkazové čáry, lom s textem nad vodorovnou čarou (hladina PREKLADY)
+		m_draw->startPlaceBeam( text, level );
+		m_app->dispToConsole( QStringLiteral( "[Řezy] Trám %1: klikněte začátek odkazové čáry a lom." ).arg( text ) );
+		return;
+	}
 	if ( st.value( QStringLiteral( "qRezy/auxWriteManual" ), false ).toBool() )
 	{
 		// ručně: text visí na kurzoru, uživatel ho položí klikem

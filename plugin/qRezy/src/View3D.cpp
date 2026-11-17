@@ -399,9 +399,10 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 			{ 2, "Výška", "Výška – 2 kliky  →  2060" },
 			{ 0, "Okno", "Okno – 3 kliky (podlaha, parapet, horní hrana okna)  →  2300(850) = okno nad parapetem (parapet nad podlahou)" },
 			{ 4, "Podlaha", "Výška podlahy – 1 klik na podlahu  →  +0,150 (245,320) = relativně k ±0,000 a v Bpv" },
+			{ 5, "Trám", "Trám – 2 kliky na protilehlé rohy průřezu (spodní roh, horní roh u stropu)  →  250x(230) = šířka x (výška) v mm; umístění vždy ručně: začátek odkazové čáry, lom s textem" },
 		};
 		int cur = QSettings().value( QStringLiteral( "qRezy/auxWriteMode" ), 0 ).toInt();
-		if ( cur < 0 || cur > 4 )
+		if ( cur < 0 || cur > 5 )
 		{
 			cur = 0;
 		}
@@ -1374,6 +1375,10 @@ int View3D::measTotal() const
 
 int View3D::measNeeded() const
 {
+	if ( beamMode() )
+	{
+		return 2; // trám: 2 rohy průřezu, definovaná podlaha se nepoužije
+	}
 	return floorMode() ? 1 : measTotal() - ( m_hasFloor ? 1 : 0 );
 }
 
@@ -1387,10 +1392,23 @@ QString View3D::floorText( const CCVector3d& P ) const
 	return QStringLiteral( "%1 (%2)" ).arg( r, QString::number( zG, 'f', 3 ).replace( '.', ',' ) );
 }
 
+QString View3D::beamText( const CCVector3d& A, const CCVector3d& B ) const
+{
+	// šířka vodorovně v rovině řezu, výška svisle; mm zaokrouhlené na cm
+	const int w = static_cast<int>( std::lround( std::abs( ( B - A ).dot( m_auxU ) ) / m_scale * 100.0 ) ) * 10;
+	const int h = static_cast<int>( std::lround( std::abs( B.z - A.z ) / m_scale * 100.0 ) ) * 10;
+	return QStringLiteral( "%1x(%2)" ).arg( w ).arg( h );
+}
+
+bool View3D::beamMode() const
+{
+	return m_writeMode && m_writeMode->checkedId() == 5;
+}
+
 std::vector<CCVector3d> View3D::measPts( const std::vector<CCVector3d>& clicks ) const
 {
 	std::vector<CCVector3d> r;
-	if ( m_hasFloor && !clicks.empty() && !floorMode() )
+	if ( m_hasFloor && !clicks.empty() && !floorMode() && !beamMode() )
 	{
 		r.push_back( CCVector3d( clicks.front().x, clicks.front().y, m_floorZ ) ); // podlaha pod prvním klikem
 	}
@@ -1480,6 +1498,17 @@ void View3D::updateMeasure( bool live )
 		const int par = static_cast<int>( std::lround( std::abs( full[1].z - full[0].z ) / m_scale * 100.0 ) ) * 10;
 		const int win = static_cast<int>( std::lround( std::abs( full[2].z - full[1].z ) / m_scale * 100.0 ) ) * 10;
 		txt += QStringLiteral( "<br>→ <b>%1(%2)</b> – Enter = zapsat do půdorysu" ).arg( win ).arg( par );
+	}
+	else if ( beamMode() )
+	{
+		if ( full.size() >= 2 )
+		{
+			txt += QStringLiteral( "<br>→ <b>%1</b> – Enter = umístit do půdorysu (začátek odkazové čáry, lom)" ).arg( beamText( full[0], full[1] ) );
+		}
+		else
+		{
+			txt += QStringLiteral( "<br>Trám: klikněte protilehlé rohy průřezu (spodní roh, horní roh u stropu), pak Enter." );
+		}
 	}
 	else if ( floorMode() )
 	{
@@ -1717,6 +1746,10 @@ void View3D::writeMeasured()
 		{
 			m_info->setText( QStringLiteral( "<b>Podlaha</b> – nejdřív klikněte na podlahu, pak Enter." ) );
 		}
+		else if ( beamMode() )
+		{
+			m_info->setText( QStringLiteral( "<b>Trám</b> – klikněte protilehlé rohy průřezu trámu (2 body), pak Enter." ) );
+		}
 		else if ( measTotal() == 3 )
 		{
 			m_info->setText( m_hasFloor ? QStringLiteral( "<b>Okno</b> – klikněte parapet a horní hranu okna (2 body), pak Enter." )
@@ -1750,6 +1783,10 @@ void View3D::writeMeasured()
 	else if ( mode == 4 )
 	{
 		txt = floorText( P[0] );
+	}
+	else if ( mode == 5 )
+	{
+		txt = beamText( P[0], P[1] );
 	}
 	else
 	{

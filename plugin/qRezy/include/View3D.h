@@ -190,6 +190,8 @@ private:
 	int measNeeded() const; //!< počet kliků (bez definované podlahy)
 	int measTotal() const;  //!< počet bodů měření včetně podlahy (okno 3, podlaha 1, jinak 2)
 	bool floorMode() const; //!< režim zápisu Podlaha (výška podlahy)
+	bool beamMode() const;  //!< režim zápisu Trám (šířka x (výška))
+	QString beamText( const CCVector3d& A, const CCVector3d& B ) const;
 	QString floorText( const CCVector3d& P ) const;
 	std::vector<CCVector3d> measPts( const std::vector<CCVector3d>& clicks ) const; //!< kliky + podlaha
 	void updateFloor();
