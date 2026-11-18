@@ -181,6 +181,8 @@ public:
 
 	//! rovina kreslení (půdorys / řez)
 	void setFrame( const DrawFrame& f );
+	//! jen rozsah změřených bodů v řezu/pohledu (po změně hloubky / posunu), bez resetu nástroje
+	void updatePointRange( const DrawFrame& f );
 	//! výška půdorysného řezu (lokálně) – kvůli umístění čar ve 3D, nic neresetuje
 	void setPlanHeight( double zLocal );
 	const DrawFrame& frame() const { return m_frame; }
@@ -240,6 +242,21 @@ public:
 	void startPlaceText( const QString& text, double angle, int level );
 	//! trám z pomocného řezu: 1. klik = začátek odkazové čáry, 2. klik = lom, text nad vodorovnou čarou (hladina PREKLADY)
 	void startPlaceBeam( const QString& text, int level );
+	//! severka (pohled / řez): značka na kurzoru natočená na skutečný sever, klik = umístit (hladina 14)
+	void startPlaceNorth();
+	//! značky řezů a pohledů do půdorysů (A–A', B–B' …): úsečky a texty v souřadnicích půdorysu (lokálně, x y)
+	struct SectionMarks
+	{
+		std::vector<std::pair<CCVector2d, CCVector2d>> segs;
+		struct Text
+		{
+			CCVector2d origin; //!< vlevo dole, natočení 0
+			QString text;
+		};
+		std::vector<Text> texts;
+		double textHeight = 0.0; //!< lokální jednotky
+	};
+	SectionMarks sectionMarks() const;
 
 
 	//! střed okna v rovině kreslení (lokálně 3D)
@@ -550,6 +567,9 @@ private:
 	double m_placeAng = 0.0;
 	int m_placeLevel = 0;
 	bool m_placeBeam = false; //!< umisťuje se popis trámu s odkazovou čarou
+	bool m_placeNorth = false; //!< umisťuje se severka
+	double northAngle() const; //!< natočení severky ve výkresu (sever = nahoru při 0)
+	void buildNorth( const CCVector2d& C, bool preview, std::vector<std::vector<CCVector2d>>* out );
 	CCVector2d m_beamA;       //!< začátek odkazové čáry trámu
 	struct BeamGeom
 	{

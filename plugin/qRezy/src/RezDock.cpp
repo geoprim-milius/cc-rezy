@@ -451,6 +451,7 @@ void RezDock::buildPanel()
 			si.depth = v;
 			saveSection( si );
 			applyClip();
+			m_draw->updatePointRange( frameFor( m_activeView ) ); // změřené body podle nové hloubky
 		}
 		syncDepthSlider();
 	} );
@@ -1240,6 +1241,17 @@ void RezDock::buildToolbar()
 		nc.addSmall( rot );
 		nc.addSmall( north );
 		nc.addSmall( rename );
+		QAction* sev = mkAct( "north", QStringLiteral( "Severka" ), QStringLiteral( "Severka do pohledu / řezu: značka na kurzoru natočená na skutečný sever, klik = umístit (hladina 14)" ) );
+		connect( sev, &QAction::triggered, this, [this]()
+		{
+			if ( !m_draw->isActive() )
+			{
+				m_drawAct->setChecked( true );
+			}
+			m_draw->startPlaceNorth();
+			focusView();
+		} );
+		n.addBig( sev );
 		RibbonGroup s = r->addGroup( pSec, QStringLiteral( "Poloha a tloušťka řezu" ) );
 		RibbonColumn s1 = s.column();
 		s1.addSmall( upA, QStringLiteral( "PgUp" ) );
@@ -1944,6 +1956,7 @@ void RezDock::onPosSlider( int cm )
 		si.offset = v;
 		saveSection( si );
 		applyClip();
+		m_draw->updatePointRange( frameFor( m_activeView ) ); // změřené body podle nové polohy roviny
 	}
 }
 
@@ -2781,13 +2794,13 @@ void RezDock::migrateSeedLayers()
 	}
 	if ( st.value( QStringLiteral( "qRezy/layersVer" ), 0 ).toInt() >= 2 )
 	{
-		// v1.20: POP_DVERE (kóta dveří), v1.22: POP_MISTN a POP_CISLA_MISTN (popis místnosti) – doplnit chybějící
-		if ( st.value( QStringLiteral( "qRezy/layersVer" ), 0 ).toInt() < 4 )
+		// v1.20: POP_DVERE (kóta dveří), v1.22: POP_MISTN a POP_CISLA_MISTN (popis místnosti), v1.28: TASKA a TEREN – doplnit chybějící
+		if ( st.value( QStringLiteral( "qRezy/layersVer" ), 0 ).toInt() < 5 )
 		{
-			st.setValue( QStringLiteral( "qRezy/layersVer" ), 4 );
+			st.setValue( QStringLiteral( "qRezy/layersVer" ), 5 );
 			std::vector<Drawing::Layer> L = Drawing::layers();
 			bool changed = false;
-			for ( int id : { 8, 9, 10 } )
+			for ( int id : { 8, 9, 10, 11, 12 } )
 			{
 				const bool has = std::any_of( L.begin(), L.end(), [id]( const Drawing::Layer& x ) { return x.id == id; } );
 				if ( has )
@@ -2811,7 +2824,7 @@ void RezDock::migrateSeedLayers()
 		}
 		return;
 	}
-	st.setValue( QStringLiteral( "qRezy/layersVer" ), 4 );
+	st.setValue( QStringLiteral( "qRezy/layersVer" ), 5 );
 	const bool hadLayers = !st.value( QStringLiteral( "qRezy/layers" ) ).toStringList().isEmpty();
 	if ( hadLayers
 	     && QMessageBox::question( this, QStringLiteral( "Řezy – hladiny" ),
@@ -3354,6 +3367,45 @@ void RezDock::exportV7( const std::vector<int>& floorIds, bool withSections )
 		};
 		m_draw->setExportSkipImported( st.value( QStringLiteral( "qRezy/skipImported" ), false ).toBool() && m_draw->countImported() > 0 );
 		std::vector<DgnV7::Element> elements = m_draw->exportElements( table, map, userTextLevel, userTextH );
+		// značky řezů a pohledů do každého půdorysu (REZ_CARA 27 čáry, REZ 28 písmena)
+		{
+			const DrawTool::SectionMarks sm = m_draw->sectionMarks();
+			for ( int view : t.views )
+			{
+				if ( !isPlanView( view ) )
+				{
+					continue;
+				}
+				for ( const auto& sg : sm.segs )
+				{
+					DgnV7::Element e;
+					e.sym.level = 27;
+					e.sym.color = 100;
+					DgnV7::Point2 a;
+					DgnV7::Point2 b;
+					if ( map( view, CCVector3d( sg.first.x, sg.first.y, 0.0 ), a ) && map( view, CCVector3d( sg.second.x, sg.second.y, 0.0 ), b ) )
+					{
+						e.pts = { a, b };
+						elements.push_back( e );
+					}
+				}
+				for ( const DrawTool::SectionMarks::Text& tx : sm.texts )
+				{
+					DgnV7::Element e;
+					e.isText = true;
+					e.sym.level = 28;
+					e.sym.color = 0;
+					e.textHeight = sm.textHeight / sc;
+					DgnV7::Point2 a;
+					if ( map( view, CCVector3d( tx.origin.x, tx.origin.y, 0.0 ), a ) )
+					{
+						e.pts = { a };
+						e.text = tx.text.toStdString();
+						elements.push_back( e );
+					}
+				}
+			}
+		}
 		m_draw->setExportSkipImported( false );
 		if ( t.sections && st.value( QStringLiteral( "qRezy/ptExport" ), true ).toBool() )
 		{

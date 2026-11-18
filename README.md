@@ -62,7 +62,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | metr | Měřit | D | dva body → délka, vodorovně/výškově (ΔX/ΔY), úhel; ve výkresu kóta s patkami a délkou (i během měření) |
 | A | Vložit text | A → A | klik = levý dolní roh, napsat (např. naměřenou výšku); přesun (3·2) a kopie (3·1) – stačí kliknout na písmena, posouvaný text je vidět u kurzoru; mazání jako u čar; do DGN na hladinu z okna Uložit |
 | A | Upravit text | A → B | klik na text → změnit jeho obsah |
-| kačena | Kóta (výšková) | | jen v řezu a pohledu: klik na bod = hrot šipky (uchopí se na čáry a body), druhý klik = strana poličky (vlevo / vpravo). Zápis v pásu: *Bpv* (394.410), *místní* k ±0,000 z panelu (+3.315 / ±0.000 / -0.450), *oboje* (místní nad poličkou, Bpv pod ní); 3 desetinná místa. Velikost značky a textu podle měřítka výkresu (pole *1 :*, výchozí 1:70 = základní čára 0,70 m, text 0,175 m). Přesun / kopie / Upravit prvek – výška se přepočítá podle nové polohy. Do DGN čáry + text, hladina 16 a barva 135 (okno Uložit) |
+| kačena | Kóta (výšková) | | jen v řezu a pohledu: 1. klik = bod, odkud se bere výška (uchopí se na čáry a body), 2. klik = kam kótu umístit – **jen vodorovně**, výška zůstává (polička na stranu od bodu). Zápis v pásu: *Bpv* (394.410), *místní* k ±0,000 z panelu (+3.320 / ±0.000 / -0.450), *oboje* (místní nad poličkou, Bpv pod ní); **zaokrouhleno na cm**, 3 desetinná místa. Písmo vždy 0,18 m (šířka 0,09 m), velikost značky podle měřítka (pole *1 :*, výchozí 1:70). Přesun / kopie jen vodorovně. Do DGN čáry + text, hladina 16 a barva 135 (okno Uložit) |
 | šipka zpět | Zpět | Ctrl+Z | |
 | pravý úhel | Orto | F8 | podle natočení pohledu |
 | zelený kříž | Trasování | F11 | podržte kurzor na konci/středu čáry → bod se „získá“ (zelené +); pomocné čáry vodorovně/svisle od získaných bodů i od posledního bodu, **v prodloužení čáry**, na jejímž konci/středu je získaný bod, a **šikmo přes poslední dva získané body**; uchopí se na ně, na jejich průsečíky i na průsečík s čarou; funguje i s Ortho a s kolmicí (Enter); napsané číslo = vzdálenost od získaného bodu |
@@ -83,6 +83,10 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | výška | Výška bodu | | přepínač (Pomůcky): u kurzoru se po chvilce klidu ukáže výška bodu mračna pod ním `+0,083 (268,000)` = vůči ±0,000 a Bpv – v půdorysu, řezu/pohledu (bod nejblíž k oku v ořezu) i ve 3D náhledu a pomocném řezu |
 | složka | Uložit rozdělanou práci | | projekt CloudCompare (.bin): mračno, kresba, řezy, patra, body, nastavení panelu i pohled |
 | disketa | Uložit V7 | | seed, hladiny, umístění řezů, výšky |
+
+**Značky řezů v půdorysech**: každý řez a pohled má ve všech půdorysech na koncích značky – čára 1,05 m ven, trojúhelník s vrcholem ve směru pohledu a písmeno (A / A', B / B' … podle pořadí). Posunou se s řezem, zmizí s ním; do DGN hladina 27 REZ_CARA (barva 100) a 28 REZ (text 0,5 m).
+**Severka** (Řezy a pohledy → Pohled): značka na kurzoru natočená na skutečný sever, klik = umístit do pohledu / řezu; hladina 14 jako ve vzoru.
+**Hladiny TASKA (DGN 25) a TEREN (DGN 24)** – barvy v DGN odhadem, upravíte v *Hladiny a barvy…*.
 
 **Panel nástrojů vlevo** (jako palety v MicroStationu): svislý sloupec vedle panelu CloudCompare s nástroji *Manipulace* (3) a *Úpravy* (7) a vzdáleností rovnoběžky; dá se přetáhnout jinam nebo odpojit. Přepínač *Výška bodu* je ve skupině *Kóta*.
 

@@ -1,4 +1,5 @@
 #include "DrawTool.h"
+#include "NorthData.h"
 #include "CloudLinesV15.h"
 #include "RezLine.h"
 #include "RezLayer.h"
@@ -441,6 +442,18 @@ void DrawTool::setFrame( const DrawFrame& f )
 	updateLineVisibility();
 	rebuildViewRef();
 	resetTool();
+	redraw3D();
+}
+
+void DrawTool::updatePointRange( const DrawFrame& f )
+{
+	if ( f.viewId != m_frame.viewId || f.plan != m_frame.plan )
+	{
+		return;
+	}
+	m_frame.ptMin = f.ptMin;
+	m_frame.ptMax = f.ptMax;
+	refreshLayer();
 	redraw3D();
 }
 
@@ -1638,9 +1651,10 @@ void DrawTool::translateItem( ccPolyline* poly, const CCVector2d& d, bool copy, 
 		return;
 	}
 	std::vector<CCVector2d> pts = polyPoints( poly );
+	const CCVector2d dd = ( isKota( poly ) && !m_frame.plan ) ? CCVector2d( d.x, 0.0 ) : d; // kóta: výška se nemění, jen vodorovně
 	for ( CCVector2d& P : pts )
 	{
-		P += d;
+		P += dd;
 	}
 	if ( pts.empty() )
 	{
@@ -3228,7 +3242,8 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		{
 			const CCVector2d P = cursorPoint( pos, st, nullptr );
 			UndoItem u;
-			addKota( m_kotaTip, P.x < m_kotaTip.x ? -1 : 1, m_kotaFmt, m_kotaScale, &u );
+			// 2. klik = umístění kóty, jen vodorovně (výška zůstává z 1. kliku)
+			addKota( CCVector2d( P.x, m_kotaTip.y ), P.x < m_kotaTip.x ? -1 : 1, m_kotaFmt, m_kotaScale, &u );
 			pushUndo( std::move( u ) );
 			m_step = 0;
 		}
@@ -3299,6 +3314,15 @@ void DrawTool::onDataPoint( const QPoint& pos )
 	case Mode::PlaceText:
 	{
 		const CCVector2d P = cursorPoint( pos, st, nullptr );
+		if ( m_placeNorth )
+		{
+			buildNorth( P, false, nullptr );
+			m_placeNorth = false;
+			m_placeText.clear();
+			const Mode back = ( m_prevMode == Mode::PlaceText ) ? Mode::Select : m_prevMode;
+			QTimer::singleShot( 0, this, [this, back]() { setMode( back ); } );
+			break;
+		}
 		if ( m_placeBeam && !m_placeText.isEmpty() )
 		{
 			if ( m_step == 0 )
@@ -4048,8 +4072,12 @@ void DrawTool::updateTip()
 		// kóta: náhled značky (hrot na kurzoru, nebo pevný hrot a strana podle kurzoru)
 		if ( m_mode == Mode::Kota && !m_frame.plan )
 		{
-			const CCVector2d T = m_step == 1 ? m_kotaTip : m_cursor;
+			const CCVector2d T = m_step == 1 ? CCVector2d( m_cursor.x, m_kotaTip.y ) : m_cursor;
 			const int side = ( m_step == 1 && m_cursor.x < m_kotaTip.x ) ? -1 : 1;
+			if ( m_step == 1 && std::abs( m_cursor.x - m_kotaTip.x ) > 1e-9 )
+			{
+				segment( m_kotaTip, T, cyan, 1.0f ); // odkud se výška bere
+			}
 			const KotaGeom g = kotaGeom( m_frame.to3D( T, false ), m_frame.U, m_frame.V, side, m_kotaFmt, m_kotaScale );
 			for ( size_t k = 0; k + 1 < g.segs.size(); k += 2 )
 			{
@@ -4427,8 +4455,21 @@ void DrawTool::updateTip()
 		}
 	}
 
+	// severka za myší
+	if ( m_mode == Mode::PlaceText && m_placeNorth && m_hasCursor )
+	{
+		std::vector<std::vector<CCVector2d>> polys;
+		buildNorth( m_cursor, true, &polys );
+		for ( const auto& pl : polys )
+		{
+			for ( size_t k = 0; k + 1 < pl.size(); ++k )
+			{
+				segment( pl[k], pl[k + 1], yellow, 1.0f );
+			}
+		}
+	}
 	// trám: odkazová čára, podtržení a text za myší
-	if ( m_mode == Mode::PlaceText && m_placeBeam && m_hasCursor && !m_placeText.isEmpty() )
+	else if ( m_mode == Mode::PlaceText && m_placeBeam && m_hasCursor && !m_placeText.isEmpty() )
 	{
 		const BeamGeom g = beamGeom( m_step == 1 ? &m_beamA : nullptr, m_cursor );
 		for ( size_t k = 0; k + 1 < g.line.size(); ++k )
@@ -4902,7 +4943,8 @@ void DrawTool::updateStatus()
 			prompt = QStringLiteral( "Otočit: cílový směr (bod) – úhel %1°" ).arg( QString::number( rotAngle() * 57.29577951308232, 'f', 2 ).replace( '.', ',' ) );
 		break;
 	case Mode::PlaceText:
-		prompt = !m_placeBeam ? QStringLiteral( "Umístit text „%1“: klikněte do půdorysu (Esc = zrušit)" ).arg( m_placeText )
+		prompt = m_placeNorth ? QStringLiteral( "Severka: klikněte, kam ji umístit (natočená na skutečný sever; Esc = zrušit)" )
+		       : !m_placeBeam ? QStringLiteral( "Umístit text „%1“: klikněte do půdorysu (Esc = zrušit)" ).arg( m_placeText )
 		       : m_step == 0  ? QStringLiteral( "Trám „%1“: klikněte začátek odkazové čáry (u trámu), Esc = zrušit" ).arg( m_placeText )
 		                      : QStringLiteral( "Trám „%1“: klikněte lom – text nad vodorovnou čarou (pravé = zpět)" ).arg( m_placeText );
 		break;
@@ -4923,7 +4965,7 @@ void DrawTool::updateStatus()
 		}
 		const CCVector2d T = m_step == 1 ? m_kotaTip : m_cursor;
 		const KotaGeom g = kotaGeom( m_frame.to3D( T ), m_frame.U, m_frame.V, 1, 2, m_kotaScale );
-		prompt = ( m_step == 0 ? QStringLiteral( "Kóta (%1, 1:%2): klikněte na bod (hrot šipky)" ) : QStringLiteral( "Kóta (%1, 1:%2): klikněte na stranu poličky (vlevo / vpravo)" ) )
+		prompt = ( m_step == 0 ? QStringLiteral( "Kóta (%1, 1:%2): klikněte na bod, odkud se bere výška" ) : QStringLiteral( "Kóta (%1, 1:%2): klikněte, kam kótu umístit (jen vodorovně; poliček na stranu od bodu)" ) )
 		             .arg( QString::fromUtf8( fm[m_kotaFmt] ) ).arg( m_kotaScale );
 		if ( m_hasCursor || m_step == 1 )
 		{
@@ -6055,6 +6097,150 @@ void DrawTool::rotateItem( ccPolyline* poly, const CCVector2d& C, double ang, Un
 	setPolyPoints( poly, pts, undo );
 }
 
+void DrawTool::startPlaceNorth()
+{
+	startPlaceText( QStringLiteral( "S" ), 0.0, 14 );
+	m_placeNorth = true;
+	updateTip();
+}
+
+double DrawTool::northAngle() const
+{
+	// sever (+y místně) v souřadnicích výkresu: vpravo U, „nahoru“ = V v půdorysu, směr pohledu −N v řezu/pohledu
+	const CCVector3d n( 0.0, 1.0, 0.0 );
+	const CCVector3d up = m_frame.plan ? m_frame.V : CCVector3d( -m_frame.N.x, -m_frame.N.y, 0.0 );
+	const double a = n.dot( m_frame.U );
+	const double b = n.dot( up );
+	return std::atan2( b, a ) - 1.5707963267948966;
+}
+
+void DrawTool::buildNorth( const CCVector2d& C, bool preview, std::vector<std::vector<CCVector2d>>* out )
+{
+	const double th = northAngle();
+	const double c = std::cos( th );
+	const double s = std::sin( th );
+	auto tr = [&]( double x, double y ) { return C + CCVector2d( c * x - s * y, s * x + c * y ) * m_scale; };
+	std::vector<std::vector<CCVector2d>> polys;
+	for ( int i = 0; i < NorthData::PolyCount; ++i )
+	{
+		std::vector<CCVector2d> pts;
+		for ( int k = 0; k < NorthData::Polys[i].n; ++k )
+		{
+			pts.push_back( tr( NorthData::Polys[i].xy[2 * k], NorthData::Polys[i].xy[2 * k + 1] ) );
+		}
+		polys.push_back( pts );
+	}
+	if ( preview )
+	{
+		if ( out )
+		{
+			*out = polys;
+		}
+		return;
+	}
+	UndoItem undo;
+	const ccColor::Rgb grey( 128, 128, 128 );
+	for ( const std::vector<CCVector2d>& pts : polys )
+	{
+		if ( ccPolyline* ln = addPolyline( pts, m_category, false, false, &undo ) )
+		{
+			ln->setName( QStringLiteral( "Severka" ) );
+			ln->setMetaData( "qRezy.symLevel", 14 ); // jako ve vzoru (rozpiska)
+			ln->setMetaData( "qRezy.symColor", 0 );
+			ln->setMetaData( "qRezy.north", true );
+			ln->setColor( grey );
+		}
+	}
+	if ( ccPolyline* tx = addText( tr( NorthData::SX, NorthData::SY ), QStringLiteral( "S" ), &undo ) )
+	{
+		tx->setMetaData( "qRezy.textAng", th );
+		tx->setMetaData( "qRezy.textLevel", 14 );
+		tx->setMetaData( "qRezy.textH", NorthData::SH );
+		tx->setMetaData( "qRezy.textHL", NorthData::SH * m_scale );
+	}
+	pushUndo( std::move( undo ) );
+	m_flash = QStringLiteral( "Severka umístěna (natočená na sever)" );
+	redraw2D();
+}
+
+DrawTool::SectionMarks DrawTool::sectionMarks() const
+{
+	// podle vzoru uživatele: čára 1,05 m ven od konce řezové čáry, na vnějším konci trojúhelník (základna 0,525, výška 0,2625)
+	// s vrcholem ve směru pohledu, nad čarou písmeno (výška 0,5 m) – A u jednoho konce, A' u druhého
+	SectionMarks m;
+	ccHObject* group = const_cast<DrawTool*>( this )->drawingGroup( false );
+	if ( !group )
+	{
+		return m;
+	}
+	struct Sec
+	{
+		int id;
+		CCVector2d A, B, N;
+		double offset;
+	};
+	std::vector<Sec> secs;
+	for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+	{
+		ccHObject* ch = group->getChild( i );
+		if ( !ch->isA( CC_TYPES::POLY_LINE ) || !ch->hasMetaData( "qRezy.secId" ) )
+		{
+			continue;
+		}
+		Sec s;
+		s.id = ch->getMetaData( "qRezy.secId" ).toInt();
+		s.A = CCVector2d( ch->getMetaData( "qRezy.secAx" ).toDouble(), ch->getMetaData( "qRezy.secAy" ).toDouble() );
+		s.B = CCVector2d( ch->getMetaData( "qRezy.secBx" ).toDouble(), ch->getMetaData( "qRezy.secBy" ).toDouble() );
+		s.N = CCVector2d( ch->getMetaData( "qRezy.secNx" ).toDouble(), ch->getMetaData( "qRezy.secNy" ).toDouble() );
+		s.offset = ch->getMetaData( "qRezy.secOffset" ).toDouble();
+		secs.push_back( s );
+	}
+	std::sort( secs.begin(), secs.end(), []( const Sec& a, const Sec& b ) { return a.id < b.id; } );
+	const double sc = m_scale;
+	const double th = 0.5 * sc;
+	m.textHeight = th;
+	auto letter = []( int i )
+	{
+		QString r;
+		do
+		{
+			r.prepend( QChar( 'A' + i % 26 ) );
+			i = i / 26 - 1;
+		} while ( i >= 0 );
+		return r;
+	};
+	for ( size_t i = 0; i < secs.size(); ++i )
+	{
+		const Sec& s = secs[i];
+		CCVector2d d = s.B - s.A;
+		if ( d.norm() < 1e-9 || s.N.norm() < 1e-9 )
+		{
+			continue;
+		}
+		d.normalize();
+		const CCVector2d dv = s.N * ( -1.0 / s.N.norm() );     // směr pohledu
+		const CCVector2d shift = s.N * ( -s.offset * sc / s.N.norm() ); // rovina posunutá ve směru pohledu
+		const QString L = letter( static_cast<int>( i ) );
+		const std::pair<CCVector2d, CCVector2d> ends[2] = { { s.A + shift, d * -1.0 }, { s.B + shift, d } };
+		for ( int e = 0; e < 2; ++e )
+		{
+			const CCVector2d E = ends[e].first;
+			const CCVector2d t = ends[e].second; // ven od řezu
+			const CCVector2d B1 = E + t * ( 0.525 * sc );
+			const CCVector2d B2 = E + t * ( 1.05 * sc );
+			const CCVector2d Ap = E + t * ( 0.7875 * sc ) + dv * ( 0.2625 * sc );
+			m.segs.push_back( { E, B2 } );
+			m.segs.push_back( { B1, Ap } );
+			m.segs.push_back( { Ap, B2 } );
+			const QString txt = e == 0 ? L : L + QStringLiteral( "'" );
+			const double w = romansAdvance( txt, th );
+			const CCVector2d Cc = E + t * ( 0.33 * sc ) + dv * ( 0.29 * sc + th / 2.0 );
+			m.texts.push_back( { Cc - CCVector2d( w / 2.0, th / 2.0 ), txt } );
+		}
+	}
+	return m;
+}
+
 void DrawTool::startPlaceBeam( const QString& text, int level )
 {
 	startPlaceText( text, 0.0, level );
@@ -6109,6 +6295,7 @@ void DrawTool::buildBeam( const CCVector2d& bend )
 void DrawTool::startPlaceText( const QString& text, double angle, int level )
 {
 	m_placeBeam = false;
+	m_placeNorth = false;
 	m_placeText = text;
 	m_placeAng = angle;
 	m_placeLevel = level;
@@ -6199,17 +6386,19 @@ DrawTool::KotaGeom DrawTool::kotaGeom( const CCVector3d& tip, const CCVector3d& 
 	const double arm = 2.65;
 	const double stem = 5.9;
 	const double shelf = 8.05;
-	const double th = 2.5;
+	const double th = 180.0 / std::max( 1, scale ); // písmo vždy 0,18 m (šířka 0,09 m – poměr šířky v DGN)
 	const double gap = 0.7;
 	g.segs = { P( -halfBase, 0 ), P( halfBase, 0 ),
 	           P( -arm, arm ), tip, tip, P( arm, arm ),
 	           tip, P( 0, stem ), P( 0, stem ), P( s * shelf, stem ) };
 	g.textH = th * f;
 	const double x0 = s > 0 ? 0.25 : -shelf;
-	const double h = heightOf( tip );
+	// zaokrouhleno na cm, vypsáno na 3 desetinná místa
+	const double hRaw = heightOf( tip );
 	const double zero = m_zeroProvider ? m_zeroProvider() : 0.0;
+	const double h = std::round( hRaw * 100.0 ) / 100.0;
 	const QString bpv = QString::number( h, 'f', 3 );
-	const double r = h - zero;
+	const double r = std::round( ( hRaw - zero ) * 100.0 ) / 100.0;
 	const QString loc = std::abs( r ) < 0.0005 ? QStringLiteral( "±0.000" ) : ( ( r > 0 ? QStringLiteral( "+" ) : QStringLiteral( "-" ) ) + QString::number( std::abs( r ), 'f', 3 ) );
 	if ( fmt == 0 )
 	{
@@ -6639,6 +6828,34 @@ void DrawTool::refreshLayer()
 			m_layer->items.push_back( std::move( g ) );
 		}
 	}
+	// značky řezů a pohledů ve všech půdorysech
+	if ( m_frame.plan )
+	{
+		const SectionMarks sm = sectionMarks();
+		if ( !sm.segs.empty() )
+		{
+			RezLayer::Item g;
+			g.color = ccColor::Rgb( 165, 165, 0 );
+			for ( const auto& sg : sm.segs )
+			{
+				g.segs.push_back( m_frame.to3D( sg.first ) );
+				g.segs.push_back( m_frame.to3D( sg.second ) );
+			}
+			g.P = g.segs.front();
+			m_layer->items.push_back( std::move( g ) );
+		}
+		for ( const SectionMarks::Text& t : sm.texts )
+		{
+			RezLayer::Item it;
+			it.P = m_frame.to3D( t.origin );
+			it.up = m_frame.V;
+			it.dir = m_frame.U; // jako v DGN (natočení 0)
+			it.height = sm.textHeight;
+			it.text = t.text;
+			it.color = ccColor::Rgb( 200, 200, 60 );
+			m_layer->items.push_back( std::move( it ) );
+		}
+	}
 	if ( m_hasPin && m_pinVisible )
 	{
 		RezLayer::Item pi;
@@ -7034,6 +7251,14 @@ std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTa
 		if ( poly->getMetaData( "qRezy.solid" ).toBool() )
 		{
 			e.sym.style = 0; // plná čára (odkazová čára trámu)
+		}
+		if ( poly->hasMetaData( "qRezy.symLevel" ) )
+		{
+			// vlastní symbologie (severka – hladina 14 jako ve vzoru)
+			e.sym.level = poly->getMetaData( "qRezy.symLevel" ).toInt();
+			e.sym.color = poly->getMetaData( "qRezy.symColor" ).toInt();
+			e.sym.style = 0;
+			e.sym.weight = 0;
 		}
 		bool ok = true;
 		for ( unsigned k = 0; k < poly->size() && ok; ++k )

@@ -15,6 +15,7 @@ target_sources( ${PROJECT_NAME}
 		${CMAKE_CURRENT_LIST_DIR}/Extract.h
 		${CMAKE_CURRENT_LIST_DIR}/CloudLines.h
 		${CMAKE_CURRENT_LIST_DIR}/CloudLinesV15.h
+		${CMAKE_CURRENT_LIST_DIR}/NorthData.h
 )
 
 target_include_directories( ${PROJECT_NAME}

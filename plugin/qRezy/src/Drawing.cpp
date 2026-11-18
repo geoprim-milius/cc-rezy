@@ -117,6 +117,8 @@ namespace Drawing
 		v.push_back( { 8, QStringLiteral( "POP_DVERE" ), QColor( 160, 160, 160 ), { mk( 8, 135, 0, -1 ), mk( 8, 135, 0, -3 ) } } ); // kóta dveří
 		v.push_back( { 9, QStringLiteral( "POP_MISTN" ), QColor( 0, 190, 200 ), { mk( 12, 135, 0, -1 ), mk( 12, 135, 0, -3 ) } } );        // popis místnosti
 		v.push_back( { 10, QStringLiteral( "POP_CISLA_MISTN" ), QColor( 210, 70, 210 ), { mk( 13, 133, 0, -1 ), mk( 13, 133, 0, -3 ) } } ); // číslo místnosti
+		v.push_back( { 11, QStringLiteral( "TASKA" ), QColor( 200, 110, 40 ), { mk( 25, 6, 0, -1 ), mk( 25, 6, 0, -3 ) } } );  // v1.28 (barva DGN odhadem)
+		v.push_back( { 12, QStringLiteral( "TEREN" ), QColor( 60, 160, 60 ), { mk( 24, 2, 0, -1 ), mk( 24, 2, 0, -3 ) } } );   // v1.28 (barva DGN odhadem)
 		return v;
 	}
 
