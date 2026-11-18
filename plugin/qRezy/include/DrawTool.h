@@ -94,7 +94,8 @@ public:
 		CloudBatch,   //!< čára z mračna – hromadně: celý plátek → všechny přímé úseky s rohy, Enter potvrdit
 		Door,         //!< dveře v půdorysu: závěs, druhý konec otvoru, strana → křídlo + oblouk + kóta šířky (výška z pomocného řezu)
 		Opening,      //!< okno v půdorysu: 2 body otvoru, strana kóty → kóta délky (výška(parapet) z pomocného řezu, funkce Okno)
-		RoomLabel     //!< popis místnosti: klik do místnosti → pomocný řez (podlaha, strop) → okno s údaji → umístění (případně s odkazovou čárou)
+		RoomLabel,    //!< popis místnosti: klik do místnosti → pomocný řez (podlaha, strop) → okno s údaji → umístění (případně s odkazovou čárou)
+		RefCopy       //!< převzít z reference pohledu: obdélník 2 kliky → čáry reference uvnitř se zkopírují do výkresu
 	};
 
 	enum class SnapType
@@ -202,7 +203,11 @@ public:
 	//! referenční výkres (jiné patro) – šedě, volitelně s uchopením; -1 = žádný
 	void setReference( int viewId, bool snap );
 	//! půdorys jako reference v pohledu/řezu: posun líce (m od ±0,000), barevně podle hladin, svislé vodicí čáry z líce
-	void setViewRefOptions( double shiftM, bool color, bool guides );
+	//! guideMode: 0 bez, 1 viditelné ve směru pohledu (b), 2 průsečíky roviny řezu (a), 3 obojí
+	void setViewRefOptions( double shiftM, bool color, int guideMode );
+	//! reference jiného pohledu / řezu (viewId <= 0 = žádná): vedle (pohled←cokoli, řez←řez) nebo promítnutá v dosahu (řez←pohled)
+	void setViewReference2( int viewId, const DrawFrame& refFrame, int refKind, int curKind, double sideShiftM );
+	void copyFromReference( const CCVector2d& c0, const CCVector2d& c1 );
 	//! výška bodu mračna pod kurzorem: funkce (pozice v okně → bod v lokálních souř. a text) a zapnutí
 	using ProbeFunc = std::function<bool( const QPoint&, CCVector3d&, QString& )>;
 	void setProbeFunc( ProbeFunc f ) { m_probeFunc = std::move( f ); }
@@ -528,7 +533,25 @@ private:
 	class QTimer* m_probeTimer = nullptr;
 	double m_viewRefShift = -1.0; //!< líc půdorysu (strana k pozorovateli) v m od ±0,000
 	bool m_viewRefColor = false;
-	bool m_viewRefGuides = true;
+	int m_viewRefGuideMode = 1;
+	int m_ref2View = -1;
+	DrawFrame m_ref2Frame;
+	bool m_hasRef2Frame = false;
+	int m_ref2Kind = 1;
+	int m_curKind = 1;
+	double m_ref2Shift = 0.0;
+	struct ViewRef2Seg
+	{
+		CCVector2d a, b;
+		ccColor::Rgb color;
+		int cat;
+		bool hidden;
+	};
+	std::vector<ViewRef2Seg> m_viewRef2;    //!< reference jiného pohledu (u, v)
+	std::vector<double> m_viewRefHGuides;   //!< vodorovné vodicí čáry (v) z reference pohledu
+	double m_viewRefHGuideU0 = 0.0;
+	double m_viewRefHGuideU1 = 0.0;
+	CCVector2d m_refCopyA;                  //!< převzít z reference: první roh
 	struct ViewRefSeg
 	{
 		CCVector2d a, b;

@@ -831,6 +831,14 @@ std::vector<DrawTool::Segment> DrawTool::collectSegments() const
 		{
 			segs.push_back( { CCVector2d( u, top ), CCVector2d( u, m_viewRefGuideTop ), nullptr, true, false } );
 		}
+		for ( const ViewRef2Seg& s : m_viewRef2 )
+		{
+			segs.push_back( { s.a, s.b, nullptr, true, false } );
+		}
+		for ( double v : m_viewRefHGuides )
+		{
+			segs.push_back( { CCVector2d( m_viewRefHGuideU0, v ), CCVector2d( m_viewRefHGuideU1, v ), nullptr, true, false } );
+		}
 	}
 	return segs;
 }
@@ -3219,6 +3227,26 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		}
 		break;
 	}
+	case Mode::RefCopy:
+	{
+		const CCVector2d P = cursorPoint( pos, st, nullptr );
+		if ( m_frame.plan )
+		{
+			m_flash = QStringLiteral( "Převzít z reference jde jen v řezu nebo pohledu" );
+			break;
+		}
+		if ( m_step == 0 )
+		{
+			m_refCopyA = P;
+			m_step = 1;
+		}
+		else
+		{
+			copyFromReference( m_refCopyA, P );
+			m_step = 0;
+		}
+		break;
+	}
 	case Mode::Pin:
 	{
 		CCVector2d P = cursorPoint( pos, st, nullptr );
@@ -4068,6 +4096,18 @@ void DrawTool::updateTip()
 				segment( I + CCVector2d( -r, -r ), I + CCVector2d( r, r ), orange, 2.0f );
 				segment( I + CCVector2d( -r, r ), I + CCVector2d( r, -r ), orange, 2.0f );
 			}
+		}
+		// převzít z reference: obdélník
+		if ( m_mode == Mode::RefCopy && m_step == 1 )
+		{
+			const CCVector2d A = m_refCopyA;
+			const CCVector2d C = m_cursor;
+			const CCVector2d B( C.x, A.y );
+			const CCVector2d D( A.x, C.y );
+			segment( A, B, cyan, 1.0f );
+			segment( B, C, cyan, 1.0f );
+			segment( C, D, cyan, 1.0f );
+			segment( D, A, cyan, 1.0f );
 		}
 		// kóta: náhled značky (hrot na kurzoru, nebo pevný hrot a strana podle kurzoru)
 		if ( m_mode == Mode::Kota && !m_frame.plan )
@@ -4951,6 +4991,10 @@ void DrawTool::updateStatus()
 	case Mode::BreakLine:
 		prompt = m_step == 0 ? QStringLiteral( "Rozdělit čarou: první bod řezné čáry" )
 		                     : QStringLiteral( "Rozdělit čarou: druhý bod – protnuté čáry se rozdělí (%1)" ).arg( m_hasCursor ? breakLineHits( m_base, m_cursor ).size() : 0 );
+		break;
+	case Mode::RefCopy:
+		prompt = m_step == 0 ? QStringLiteral( "Převzít z reference: 1. roh obdélníku kolem prvků reference pohledu (např. celé okno)" )
+		                     : QStringLiteral( "Převzít z reference: 2. roh – čáry reference celé uvnitř se zkopírují (pravé = zpět)" );
 		break;
 	case Mode::Pin:
 		prompt = QStringLiteral( "Špendlík: klikněte na místo – ukáže se ve 3D náhledu (také prostřední klik kdekoli)" );
@@ -6479,11 +6523,11 @@ void DrawTool::setProbe( bool on )
 	redraw2D();
 }
 
-void DrawTool::setViewRefOptions( double shiftM, bool color, bool guides )
+void DrawTool::setViewRefOptions( double shiftM, bool color, int guideMode )
 {
 	m_viewRefShift = shiftM;
 	m_viewRefColor = color;
-	m_viewRefGuides = guides;
+	m_viewRefGuideMode = guideMode;
 	rebuildViewRef();
 	redraw3D();
 }
@@ -6492,8 +6536,10 @@ void DrawTool::rebuildViewRef()
 {
 	m_viewRef.clear();
 	m_viewRefGuideU.clear();
+	m_viewRef2.clear();
+	m_viewRefHGuides.clear();
 	ccHObject* group = drawingGroup( false );
-	if ( m_frame.plan || m_refView < 0 || !group )
+	if ( m_frame.plan || !group )
 	{
 		refreshLayer();
 		return;
@@ -6502,14 +6548,19 @@ void DrawTool::rebuildViewRef()
 	// strana k pozorovateli (líc) nahoře v m_viewRefShift od ±0,000
 	const CCVector3d Uh( m_frame.U.x, m_frame.U.y, 0.0 );
 	const CCVector3d Nh( m_frame.N.x, m_frame.N.y, 0.0 );
+	const double dPlane = m_frame.front - m_frame.back; // rovina řezu / pohledu (posun) v souřadnici d
 	struct Raw
 	{
 		double u0, d0, u1, d1;
 		ccColor::Rgb c;
+		CCVector2d a, b; //!< půdorys (x, y)
 	};
 	std::vector<Raw> raw;
 	double dMax = -1e300;
 	double vMaxView = 0.0; //!< nejvyšší čára pohledu (horní konec vodicích čar)
+	double uMinView = 1e300;
+	double uMaxView = -1e300;
+	std::vector<ccPolyline*> ref2Polys;
 	for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
 	{
 		ccHObject* ch = group->getChild( i );
@@ -6523,11 +6574,19 @@ void DrawTool::rebuildViewRef()
 		{
 			for ( unsigned k = 0; k < poly->size(); ++k )
 			{
-				vMaxView = std::max( vMaxView, m_frame.toUV( CCVector3d::fromArray( poly->getPoint( k )->u ) ).y );
+				const CCVector2d uv = m_frame.toUV( CCVector3d::fromArray( poly->getPoint( k )->u ) );
+				vMaxView = std::max( vMaxView, uv.y );
+				uMinView = std::min( uMinView, uv.x );
+				uMaxView = std::max( uMaxView, uv.x );
 			}
 			continue;
 		}
-		if ( view != m_refView || isText( ch ) || isKota( ch ) )
+		if ( view >= 0 && view == m_ref2View && !isText( ch ) && !isKota( ch ) && poly->hasMetaData( Drawing::MetaCategory ) )
+		{
+			ref2Polys.push_back( poly );
+			continue;
+		}
+		if ( m_refView < 0 || view != m_refView || isText( ch ) || isKota( ch ) )
 		{
 			continue;
 		}
@@ -6536,71 +6595,105 @@ void DrawTool::rebuildViewRef()
 		const unsigned segN = poly->isClosed() ? n : ( n > 0 ? n - 1 : 0 );
 		for ( unsigned k = 0; k < segN; ++k )
 		{
-			const CCVector3d A = CCVector3d::fromArray( poly->getPoint( k )->u ) - m_frame.O;
-			const CCVector3d B = CCVector3d::fromArray( poly->getPoint( ( k + 1 ) % n )->u ) - m_frame.O;
-			Raw r{ A.dot( Uh ), A.dot( Nh ), B.dot( Uh ), B.dot( Nh ), col };
+			const CCVector3d A3 = CCVector3d::fromArray( poly->getPoint( k )->u );
+			const CCVector3d B3 = CCVector3d::fromArray( poly->getPoint( ( k + 1 ) % n )->u );
+			const CCVector3d A = A3 - m_frame.O;
+			const CCVector3d B = B3 - m_frame.O;
+			Raw r{ A.dot( Uh ), A.dot( Nh ), B.dot( Uh ), B.dot( Nh ), col, CCVector2d( A3.x, A3.y ), CCVector2d( B3.x, B3.y ) };
 			dMax = std::max( { dMax, r.d0, r.d1 } );
 			raw.push_back( r );
 		}
 	}
-	if ( raw.empty() )
-	{
-		refreshLayer();
-		return;
-	}
-	const double top = m_viewRefShift * m_scale;
-	auto toV = [&]( double d ) { return top - ( dMax - d ); };
-	m_viewRef.reserve( raw.size() );
 	for ( const Raw& r : raw )
 	{
-		m_viewRef.push_back( { CCVector2d( r.u0, toV( r.d0 ) ), CCVector2d( r.u1, toV( r.d1 ) ), r.c } );
+		// rozsah pohledu včetně půdorysu pod ním (reference vedle se nepřekrývá)
+		uMinView = std::min( { uMinView, r.u0, r.u1 } );
+		uMaxView = std::max( { uMaxView, r.u0, r.u1 } );
 	}
-	m_viewRefGuideTop = std::max( { vMaxView, top, 15.0 * m_scale } ) + 1.0 * m_scale; // přes celý pohled (aspoň 15 m nad ±0)
-	if ( m_viewRefGuides )
+	if ( uMinView > uMaxView )
 	{
-		// vrcholy viditelné od pozorovatele: paprsek z vrcholu k pozorovateli (rostoucí d) nenarazí na jinou čáru
-		const double eps = 0.02 * m_scale;
-		std::vector<std::pair<double, double>> verts;
+		uMinView = 0.0;
+		uMaxView = 10.0 * m_scale;
+	}
+	const double top = m_viewRefShift * m_scale;
+	m_viewRefGuideTop = std::max( { vMaxView, top, 15.0 * m_scale } ) + 1.0 * m_scale; // přes celý pohled (aspoň 15 m nad ±0)
+	if ( !raw.empty() )
+	{
+		auto toV = [&]( double d ) { return top - ( dMax - d ); };
+		m_viewRef.reserve( raw.size() );
 		for ( const Raw& r : raw )
 		{
-			verts.emplace_back( r.u0, r.d0 );
-			verts.emplace_back( r.u1, r.d1 );
+			m_viewRef.push_back( { CCVector2d( r.u0, toV( r.d0 ) ), CCVector2d( r.u1, toV( r.d1 ) ), r.c } );
 		}
-		std::sort( verts.begin(), verts.end() );
-		verts.erase( std::unique( verts.begin(), verts.end(), [&]( const std::pair<double, double>& a, const std::pair<double, double>& b )
-		                          { return std::abs( a.first - b.first ) < 1e-6 * m_scale && std::abs( a.second - b.second ) < 1e-6 * m_scale; } ),
-		             verts.end() );
 		std::vector<double> us;
-		for ( const auto& vt : verts )
+		const double eps = 0.02 * m_scale;
+		// (b) vrcholy za rovinou, viditelné ve směru pohledu: paprsek z vrcholu k rovině nenarazí na jinou čáru
+		if ( m_viewRefGuideMode == 1 || m_viewRefGuideMode == 3 )
 		{
-			bool hidden = false;
+			std::vector<std::pair<double, double>> verts;
 			for ( const Raw& r : raw )
 			{
-				const double uLo = std::min( r.u0, r.u1 );
-				const double uHi = std::max( r.u0, r.u1 );
-				if ( vt.first < uLo - 1e-9 || vt.first > uHi + 1e-9 )
+				verts.emplace_back( r.u0, r.d0 );
+				verts.emplace_back( r.u1, r.d1 );
+			}
+			std::sort( verts.begin(), verts.end() );
+			verts.erase( std::unique( verts.begin(), verts.end(), [&]( const std::pair<double, double>& a, const std::pair<double, double>& b )
+			                          { return std::abs( a.first - b.first ) < 1e-6 * m_scale && std::abs( a.second - b.second ) < 1e-6 * m_scale; } ),
+			             verts.end() );
+			for ( const auto& vt : verts )
+			{
+				if ( vt.second > dPlane + eps )
 				{
-					continue;
+					continue; // před rovinou (odříznuté)
 				}
-				double dAt;
-				if ( uHi - uLo < 1e-9 )
+				bool hidden = false;
+				for ( const Raw& r : raw )
 				{
-					dAt = std::max( r.d0, r.d1 ); // úsečka kolmo k pohledu (ostění): její bližší konec
+					const double uLo = std::min( r.u0, r.u1 );
+					const double uHi = std::max( r.u0, r.u1 );
+					if ( vt.first < uLo - 1e-9 || vt.first > uHi + 1e-9 )
+					{
+						continue;
+					}
+					double dAt;
+					if ( uHi - uLo < 1e-9 )
+					{
+						dAt = std::max( r.d0, r.d1 ); // úsečka kolmo k pohledu (ostění): její bližší konec
+						dAt = std::min( dAt, dPlane );
+					}
+					else
+					{
+						const double t = ( vt.first - r.u0 ) / ( r.u1 - r.u0 );
+						dAt = r.d0 + t * ( r.d1 - r.d0 );
+					}
+					if ( dAt > vt.second + eps && dAt < dPlane - 1e-9 )
+					{
+						hidden = true;
+						break;
+					}
 				}
-				else
+				if ( !hidden )
 				{
-					const double t = ( vt.first - r.u0 ) / ( r.u1 - r.u0 );
-					dAt = r.d0 + t * ( r.d1 - r.d0 );
-				}
-				if ( dAt > vt.second + eps )
-				{
-					hidden = true;
-					break;
+					us.push_back( vt.first );
 				}
 			}
-			if ( !hidden )
+		}
+		// (a) průsečíky roviny řezu s čarami půdorysu
+		if ( m_viewRefGuideMode == 2 || m_viewRefGuideMode == 3 )
+		{
+			for ( const Raw& r : raw )
 			{
-				us.push_back( vt.first );
+				const double s0 = r.d0 - dPlane;
+				const double s1 = r.d1 - dPlane;
+				if ( ( s0 < 0 && s1 > 0 ) || ( s0 > 0 && s1 < 0 ) || s0 == 0.0 || s1 == 0.0 )
+				{
+					if ( std::abs( s1 - s0 ) < 1e-12 )
+					{
+						continue; // čára v rovině
+					}
+					const double t = s0 / ( s0 - s1 );
+					us.push_back( r.u0 + t * ( r.u1 - r.u0 ) );
+				}
 			}
 		}
 		std::sort( us.begin(), us.end() );
@@ -6612,7 +6705,165 @@ void DrawTool::rebuildViewRef()
 			}
 		}
 	}
+
+	// reference jiného pohledu / řezu
+	if ( !ref2Polys.empty() && m_hasRef2Frame )
+	{
+		const DrawFrame& rf = m_ref2Frame;
+		const bool project = ( m_curKind == 0 && m_ref2Kind == 1 ); // řez ← pohled: promítnout v dosahu řezu
+		const ccColor::Rgb col( 120, 120, 200 );
+		if ( project )
+		{
+			// skutečná poloha čar referenčního pohledu (rovina s posunem), promítnutí do roviny řezu;
+			// jen za rovinou řezu ve směru pohledu a bez zdi půdorysu mezi bodem a rovinou (jen místnost, kterou řez prochází)
+			const CCVector3d dv( -m_frame.N.x, -m_frame.N.y, 0.0 );
+			auto visible = [&]( const CCVector3d& P ) -> bool
+			{
+				const double depth = ( P - m_frame.O ).dot( dv ) - ( -dPlane ); // > 0 = za rovinou
+				if ( depth < -0.05 * m_scale )
+				{
+					return false;
+				}
+				if ( raw.empty() )
+				{
+					return true;
+				}
+				// půdorys: úsečka od bodu k rovině řezu (proti směru pohledu); zdi do 1 m od bodu (stěna s oknem) se nepočítají
+				const CCVector2d Q( P.x, P.y );
+				const CCVector2d D( -dv.x, -dv.y );
+				const CCVector2d Q1 = Q + D * depth;
+				// první zeď od bodu (fasáda s oknem, tloušťka do 1 m) se nepočítá; další zeď = jiná místnost
+				std::vector<double> hits;
+				for ( const Raw& r : raw )
+				{
+					CCVector2d I;
+					if ( !lineIntersection( Q, Q1, r.a, r.b, I ) )
+					{
+						continue;
+					}
+					const double t1 = paramOn( Q, Q1, I );
+					const double t2 = paramOn( r.a, r.b, I );
+					if ( t1 < 0.0 || t1 > 1.0 || t2 < 0.0 || t2 > 1.0 )
+					{
+						continue;
+					}
+					hits.push_back( dist( Q, I ) );
+				}
+				if ( hits.empty() )
+				{
+					return true;
+				}
+				const double first = *std::min_element( hits.begin(), hits.end() );
+				for ( double h : hits )
+				{
+					if ( h > first + 1.0 * m_scale )
+					{
+						return false;
+					}
+				}
+				return true;
+			};
+			for ( ccPolyline* poly : ref2Polys )
+			{
+				const unsigned n = poly->size();
+				const int cat = poly->getMetaData( Drawing::MetaCategory ).toInt();
+				const bool hid = poly->getMetaData( Drawing::MetaHidden ).toBool();
+				for ( unsigned k = 0; k + 1 < n; ++k )
+				{
+					const CCVector3d A = CCVector3d::fromArray( poly->getPoint( k )->u ) - rf.N * rf.back;
+					const CCVector3d B = CCVector3d::fromArray( poly->getPoint( k + 1 )->u ) - rf.N * rf.back;
+					if ( !visible( A ) || !visible( B ) )
+					{
+						continue;
+					}
+					m_viewRef2.push_back( { m_frame.toUV( A ), m_frame.toUV( B ), col, cat, hid } );
+				}
+			}
+		}
+		else
+		{
+			// vedle pohledu: stejné výšky (±0,000), posun do strany; vodorovné vodicí čáry z vrcholů
+			double uMinR = 1e300;
+			for ( ccPolyline* poly : ref2Polys )
+			{
+				for ( unsigned k = 0; k < poly->size(); ++k )
+				{
+					uMinR = std::min( uMinR, rf.toUV( CCVector3d::fromArray( poly->getPoint( k )->u ) ).x );
+				}
+			}
+			const double du = uMaxView + 3.0 * m_scale - uMinR + m_ref2Shift * m_scale;
+			std::vector<double> vs;
+			double uMaxR = -1e300;
+			for ( ccPolyline* poly : ref2Polys )
+			{
+				const unsigned n = poly->size();
+				const int cat = poly->getMetaData( Drawing::MetaCategory ).toInt();
+				const bool hid = poly->getMetaData( Drawing::MetaHidden ).toBool();
+				for ( unsigned k = 0; k + 1 < n; ++k )
+				{
+					CCVector2d a = rf.toUV( CCVector3d::fromArray( poly->getPoint( k )->u ) );
+					CCVector2d b = rf.toUV( CCVector3d::fromArray( poly->getPoint( k + 1 )->u ) );
+					a.x += du;
+					b.x += du;
+					uMaxR = std::max( { uMaxR, a.x, b.x } );
+					m_viewRef2.push_back( { a, b, col, cat, hid } );
+					vs.push_back( a.y );
+					vs.push_back( b.y );
+				}
+			}
+			std::sort( vs.begin(), vs.end() );
+			for ( double v : vs )
+			{
+				if ( m_viewRefHGuides.empty() || v - m_viewRefHGuides.back() > 0.01 * m_scale )
+				{
+					m_viewRefHGuides.push_back( v );
+				}
+			}
+			m_viewRefHGuideU0 = std::min( uMinView, uMinR + du ) - 1.0 * m_scale;
+			m_viewRefHGuideU1 = std::max( uMaxView, uMaxR ) + 1.0 * m_scale;
+		}
+	}
 	refreshLayer();
+}
+
+void DrawTool::setViewReference2( int viewId, const DrawFrame& refFrame, int refKind, int curKind, double sideShiftM )
+{
+	m_ref2View = viewId;
+	m_ref2Frame = refFrame;
+	m_hasRef2Frame = viewId > 0;
+	m_ref2Kind = refKind;
+	m_curKind = curKind;
+	m_ref2Shift = sideShiftM;
+	rebuildViewRef();
+	redraw3D();
+}
+
+void DrawTool::copyFromReference( const CCVector2d& c0, const CCVector2d& c1 )
+{
+	// úseky reference pohledu celé uvnitř obdélníku → nové čáry ve výkresu (stejná hladina a zakrytí)
+	const double x0 = std::min( c0.x, c1.x );
+	const double x1 = std::max( c0.x, c1.x );
+	const double y0 = std::min( c0.y, c1.y );
+	const double y1 = std::max( c0.y, c1.y );
+	auto in = [&]( const CCVector2d& P ) { return P.x >= x0 && P.x <= x1 && P.y >= y0 && P.y <= y1; };
+	UndoItem undo;
+	int n = 0;
+	for ( const ViewRef2Seg& s : m_viewRef2 )
+	{
+		if ( in( s.a ) && in( s.b ) && dist( s.a, s.b ) > 1e-9 )
+		{
+			if ( addPolyline( { s.a, s.b }, s.cat, s.hidden, false, &undo ) )
+			{
+				++n;
+			}
+		}
+	}
+	if ( n > 0 )
+	{
+		pushUndo( std::move( undo ) );
+	}
+	m_flash = n > 0 ? QStringLiteral( "Převzato z reference: %1 čar" ).arg( n ) : QStringLiteral( "V obdélníku není žádná čára reference pohledu" );
+	redraw2D();
 }
 
 void zoomAtCursor( ccGLWindowInterface* win, const QPoint& pos, float wheelDeltaDeg )
@@ -6823,6 +7074,33 @@ void DrawTool::refreshLayer()
 			{
 				g.segs.push_back( m_frame.to3D( CCVector2d( u, top ) ) );
 				g.segs.push_back( m_frame.to3D( CCVector2d( u, m_viewRefGuideTop ) ) );
+			}
+			g.P = g.segs.front();
+			m_layer->items.push_back( std::move( g ) );
+		}
+	}
+	// reference jiného pohledu / řezu a vodorovné vodicí čáry
+	if ( !m_frame.plan && !m_viewRef2.empty() )
+	{
+		RezLayer::Item r;
+		r.color = m_viewRef2.front().color;
+		r.lineWidth = 1.0f;
+		for ( const ViewRef2Seg& s : m_viewRef2 )
+		{
+			r.segs.push_back( m_frame.to3D( s.a ) );
+			r.segs.push_back( m_frame.to3D( s.b ) );
+		}
+		r.P = r.segs.front();
+		m_layer->items.push_back( std::move( r ) );
+		if ( !m_viewRefHGuides.empty() )
+		{
+			RezLayer::Item g;
+			g.color = ccColor::Rgb( 0, 175, 190 );
+			g.lineWidth = 1.0f;
+			for ( double v : m_viewRefHGuides )
+			{
+				g.segs.push_back( m_frame.to3D( CCVector2d( m_viewRefHGuideU0, v ) ) );
+				g.segs.push_back( m_frame.to3D( CCVector2d( m_viewRefHGuideU1, v ) ) );
 			}
 			g.P = g.segs.front();
 			m_layer->items.push_back( std::move( g ) );

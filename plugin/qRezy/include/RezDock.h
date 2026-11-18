@@ -210,7 +210,14 @@ private:
 	QLabel* m_viewRefLabel = nullptr;            //!< pohled: posun půdorysu, barva, vodicí čáry
 	QDoubleSpinBox* m_viewRefShift = nullptr;
 	QCheckBox* m_viewRefColor = nullptr;
-	QCheckBox* m_viewRefGuides = nullptr;
+	QComboBox* m_viewRefGuides = nullptr;     //!< vodicí čáry: bez / viditelné / průsečíky řezu / obojí
+	QWidget* m_ref2Row = nullptr;             //!< reference jiného pohledu / řezu
+	QLabel* m_ref2Label = nullptr;
+	QComboBox* m_ref2Combo = nullptr;
+	QDoubleSpinBox* m_ref2Shift = nullptr;
+	std::map<int, int> m_ref2For;
+	void refreshRef2Combo();
+	void applyRef2();
 	void applyViewRefOptions();
 	int m_lastPlan = 0;
 	QShortcut* m_down = nullptr;

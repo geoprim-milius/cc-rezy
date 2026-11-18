@@ -369,15 +369,40 @@ void RezDock::buildPanel()
 		m_viewRefColor = new QCheckBox( QStringLiteral( "barva" ) );
 		m_viewRefColor->setToolTip( QStringLiteral( "Půdorys barevně podle hladin (jinak šedě)" ) );
 		m_viewRefColor->setChecked( QSettings().value( QStringLiteral( "qRezy/viewRefColor" ), false ).toBool() );
-		m_viewRefGuides = new QCheckBox( QStringLiteral( "vodicí čáry" ) );
-		m_viewRefGuides->setToolTip( QStringLiteral( "Svislé čáry z rohů zdí, ostění oken a lomů na straně k pozorovateli – nahoru přes pohled (uchopí se, když je zapnuté „uchopit“)" ) );
-		m_viewRefGuides->setChecked( QSettings().value( QStringLiteral( "qRezy/viewRefGuides" ), true ).toBool() );
+		m_viewRefGuides = new QComboBox;
+		m_viewRefGuides->addItem( QStringLiteral( "bez vodicích" ), 0 );
+		m_viewRefGuides->addItem( QStringLiteral( "vodicí: viditelné" ), 1 );
+		m_viewRefGuides->addItem( QStringLiteral( "vodicí: průsečíky" ), 2 );
+		m_viewRefGuides->addItem( QStringLiteral( "vodicí: obojí" ), 3 );
+		m_viewRefGuides->setToolTip( QStringLiteral( "Svislé vodicí čáry z půdorysu (uchopí se, když je zapnuté „uchopit“):<br>"
+		                                             "<b>viditelné</b> – rohy zdí, ostění oken a lomy za rovinou, které jsou vidět ve směru pohledu (dveře, okna…),<br>"
+		                                             "<b>průsečíky</b> – místa, kde rovina řezu protíná čáry půdorysu (zdi v řezu),<br><b>obojí</b>." ) );
+		{
+			QSettings st;
+			const int def = st.value( QStringLiteral( "qRezy/viewRefGuides" ), true ).toBool() ? 1 : 0;
+			m_viewRefGuides->setCurrentIndex( std::max( 0, std::min( 3, st.value( QStringLiteral( "qRezy/viewRefGuideMode" ), def ).toInt() ) ) );
+		}
 		vl->addWidget( m_viewRefShift, 1 );
 		vl->addWidget( m_viewRefColor );
 		vl->addWidget( m_viewRefGuides );
 	}
 	m_viewRefLabel = new QLabel( QStringLiteral( "Půdorys v pohledu:" ) );
 	form->addRow( m_viewRefLabel, m_viewRefRow );
+	// reference jiného pohledu / řezu
+	m_ref2Row = new QWidget;
+	{
+		auto* rl2 = new QHBoxLayout( m_ref2Row );
+		rl2->setContentsMargins( 0, 0, 0, 0 );
+		m_ref2Combo = new QComboBox;
+		m_ref2Combo->setToolTip( QStringLiteral( "Jiný pohled / řez jako reference:<br>v pohledu (a u řezu z řezu) <b>vedle</b> – stejné výšky, vodorovné vodicí čáry (střecha, římsy);<br>"
+		                                         "v řezu z pohledu <b>promítnutý</b> – jen část, kterou řez vidí (do první zdi půdorysu – vyberte Referenci půdorysu); převezme se nástrojem <i>Převzít z reference</i>" ) );
+		m_ref2Shift = makeSpin( -1000.0, 1000.0, 0.0, 1.0, 1, QStringLiteral( " m" ) );
+		m_ref2Shift->setToolTip( QStringLiteral( "Posun reference vedle pohledu do strany (m)" ) );
+		rl2->addWidget( m_ref2Combo, 1 );
+		rl2->addWidget( m_ref2Shift );
+	}
+	m_ref2Label = new QLabel( QStringLiteral( "Ref. pohledu:" ) );
+	form->addRow( m_ref2Label, m_ref2Row );
 	lay->addLayout( form );
 
 	m_status = new QLabel;
@@ -470,7 +495,14 @@ void RezDock::buildPanel()
 	connect( m_refCombo, qOverload<int>( &QComboBox::activated ), this, refChanged );
 	connect( m_viewRefShift, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]() { applyViewRefOptions(); } );
 	connect( m_viewRefColor, &QCheckBox::toggled, this, [this]() { applyViewRefOptions(); } );
-	connect( m_viewRefGuides, &QCheckBox::toggled, this, [this]() { applyViewRefOptions(); } );
+	connect( m_viewRefGuides, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this]() { applyViewRefOptions(); } );
+	connect( m_ref2Combo, qOverload<int>( &QComboBox::activated ), this, [this]()
+	{
+		m_ref2For[m_activeView] = m_ref2Combo->currentData().toInt();
+		applyRef2();
+		focusView();
+	} );
+	connect( m_ref2Shift, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]() { applyRef2(); } );
 	applyViewRefOptions();
 	connect( m_refSnap, &QCheckBox::toggled, this, refChanged );
 	connect( m_zero, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]()
@@ -795,7 +827,8 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Door, "door", "Dveře", "Dveře v půdorysu: 1. klik = závěs (konec otvoru), 2. klik = druhý konec otvoru (kde dosedne oblouk), 3. klik = strana otevírání. Nakreslí křídlo a oblouk (DVERE) a kótu (POP_DVERE): čára středem otvoru, šířka otvoru v mm (na cm); pak vyskočí pomocný řez – změřte výšku otvoru a Enter, výška se zapíše pod šířku." },
 		{ DrawTool::Mode::Opening, "winopen", "Okno", "Okno v půdorysu: 1. a 2. klik = konce okenního otvoru, 3. klik = strana kóty (do místnosti). Nakreslí kótu (POP_DVERE): čára středem otvoru, délka otvoru v mm (na cm); pak vyskočí pomocný řez v režimu Okno – změřte okno a Enter, výška(parapet) se zapíše pod délku." },
 		{ DrawTool::Mode::RoomLabel, "roomlabel", "Popis místnosti", "Popis místnosti (klávesa H): klik doprostřed místnosti → výměra z nakreslených zdí; v pomocném řezu klikněte podlahu a strop, Enter → okno s číslem (další se počítá samo), podlahou Bpv, světlou výškou, výměrou a názvem → popis za myší, klik = umístit. Volba „mimo místnost“ v okně: kroužek, lom odkazové čáry, popis." },
-		{ DrawTool::Mode::Kota, "kota", "Kóta", "Výšková kóta (kačena) v řezu nebo pohledu: klik na bod = hrot šipky, druhý klik = strana poličky. Výška v Bpv, místní (k ±0,000) nebo obojí; velikost podle měřítka výkresu. Přesun, kopie (výška se přepočítá) a mazání jako u čar." },
+		{ DrawTool::Mode::Kota, "kota", "Kóta", "Výšková kóta (kačena) v řezu nebo pohledu: 1. klik = bod, odkud se bere výška, 2. klik = kam kótu umístit (jen vodorovně). Výška v Bpv, místní (k ±0,000) nebo obojí, na cm; písmo 0,18 m. Přesun a kopie jen vodorovně." },
+		{ DrawTool::Mode::RefCopy, "copy", "Převzít z reference", "Převzít z reference pohledu: obdélník dvěma kliky kolem prvků reference (např. celé okno) → čáry reference celé uvnitř se zkopírují do řezu / pohledu ve stejné hladině." },
 	};
 	for ( const ToolDef& t : tools )
 	{
@@ -1241,6 +1274,8 @@ void RezDock::buildToolbar()
 		nc.addSmall( rot );
 		nc.addSmall( north );
 		nc.addSmall( rename );
+		RibbonColumn nc2 = n.column();
+		nc2.addSmall( T( DrawTool::Mode::RefCopy ) );
 		QAction* sev = mkAct( "north", QStringLiteral( "Severka" ), QStringLiteral( "Severka do pohledu / řezu: značka na kurzoru natočená na skutečný sever, klik = umístit (hladina 14)" ) );
 		connect( sev, &QAction::triggered, this, [this]()
 		{
@@ -1565,6 +1600,7 @@ void RezDock::refreshRefCombo()
 	}
 	m_refCombo->setCurrentIndex( idx );
 	m_draw->setReference( m_refCombo->currentData().toInt(), m_refSnap->isChecked() );
+	refreshRef2Combo();
 }
 
 void RezDock::applyViewRefOptions()
@@ -1576,8 +1612,57 @@ void RezDock::applyViewRefOptions()
 	QSettings st;
 	st.setValue( QStringLiteral( "qRezy/viewRefShift" ), m_viewRefShift->value() );
 	st.setValue( QStringLiteral( "qRezy/viewRefColor" ), m_viewRefColor->isChecked() );
-	st.setValue( QStringLiteral( "qRezy/viewRefGuides" ), m_viewRefGuides->isChecked() );
-	m_draw->setViewRefOptions( m_viewRefShift->value(), m_viewRefColor->isChecked(), m_viewRefGuides->isChecked() );
+	st.setValue( QStringLiteral( "qRezy/viewRefGuideMode" ), m_viewRefGuides->currentIndex() );
+	m_draw->setViewRefOptions( m_viewRefShift->value(), m_viewRefColor->isChecked(), m_viewRefGuides->currentIndex() );
+}
+
+void RezDock::refreshRef2Combo()
+{
+	if ( !m_ref2Combo )
+	{
+		return;
+	}
+	int prev = -1;
+	const auto rf = m_ref2For.find( m_activeView );
+	if ( rf != m_ref2For.end() )
+	{
+		prev = rf->second;
+	}
+	const QSignalBlocker b( m_ref2Combo );
+	m_ref2Combo->clear();
+	m_ref2Combo->addItem( QStringLiteral( "žádná" ), -1 );
+	if ( !isPlanView( m_activeView ) )
+	{
+		for ( const SectionInfo& si : loadSections() )
+		{
+			if ( si.id != m_activeView )
+			{
+				m_ref2Combo->addItem( si.name, si.id );
+			}
+		}
+	}
+	const int idx = m_ref2Combo->findData( prev );
+	m_ref2Combo->setCurrentIndex( idx >= 0 ? idx : 0 );
+	applyRef2();
+}
+
+void RezDock::applyRef2()
+{
+	if ( !m_ref2Combo || !m_draw )
+	{
+		return;
+	}
+	const int id = m_ref2Combo->currentData().isValid() ? m_ref2Combo->currentData().toInt() : -1;
+	SectionInfo cur;
+	SectionInfo ref;
+	if ( id > 0 && !isPlanView( m_activeView ) && sectionById( m_activeView, cur ) && sectionById( id, ref ) )
+	{
+		m_draw->setViewReference2( id, frameFor( id ), ref.kind, cur.kind, m_ref2Shift->value() );
+	}
+	else
+	{
+		m_draw->setViewReference2( -1, DrawFrame(), 0, 0, 0.0 );
+	}
 }
 
 // ================================================================ panel
@@ -2378,6 +2463,8 @@ void RezDock::updateLabels()
 	{
 		m_viewRefRow->setVisible( !isPlanView( m_activeView ) );
 		m_viewRefLabel->setVisible( !isPlanView( m_activeView ) );
+		m_ref2Row->setVisible( !isPlanView( m_activeView ) );
+		m_ref2Label->setVisible( !isPlanView( m_activeView ) );
 	}
 	syncPosSlider();
 	m_thickness->setEnabled( !sec || si.kind == 0 );
