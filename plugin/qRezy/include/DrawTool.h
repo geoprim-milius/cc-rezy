@@ -282,6 +282,8 @@ Q_SIGNALS:
 	void hiddenChanged( bool hidden );
 	void orthoChanged( bool on );
 	void modeChanged( Mode m );
+	//! klávesa vodicích čar v řezu / pohledu: 0 = N (svislé z půdorysu), 1 = M (vodorovné z reference)
+	void guideKey( int which );
 	void rotateViewRequested( double angleRad );
 	//! prostřední klik: místo v lokálních 3D souřadnicích (v půdorysu je z = NaN)
 	void show3DRequested( double x, double y, double z );
@@ -546,8 +548,13 @@ private:
 		ccColor::Rgb color;
 		int cat;
 		bool hidden;
+		ccPolyline* src;
 	};
-	std::vector<ViewRef2Seg> m_viewRef2;    //!< reference jiného pohledu (u, v)
+	std::vector<ViewRef2Seg> m_viewRef2;
+	std::vector<ccPolyline*> m_refSel;      //!< Převzít z reference: vybrané čáry reference
+	ccPolyline* refPick( const QPoint& pos ) const;
+	void refWindow( const QPoint& a, const QPoint& b, bool ctrl );
+	void copyRefSelection();    //!< reference jiného pohledu (u, v)
 	struct HGuide
 	{
 		double v, u0, u1;

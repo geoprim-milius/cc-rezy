@@ -376,7 +376,7 @@ void RezDock::buildPanel()
 		m_viewRefGuides->addItem( QStringLiteral( "vodicí: obojí" ), 3 );
 		m_viewRefGuides->setToolTip( QStringLiteral( "Svislé vodicí čáry z půdorysu (uchopí se, když je zapnuté „uchopit“):<br>"
 		                                             "<b>viditelné</b> – rohy zdí, ostění oken a lomy za rovinou, které jsou vidět ve směru pohledu (dveře, okna…),<br>"
-		                                             "<b>průsečíky</b> – místa, kde rovina řezu protíná čáry půdorysu (zdi v řezu),<br><b>obojí</b>." ) );
+		                                             "<b>průsečíky</b> – místa, kde rovina řezu protíná čáry půdorysu (zdi v řezu),<br><b>obojí</b>.<br>Klávesa <b>N</b> = zapnout / vypnout." ) );
 		{
 			QSettings st;
 			const int def = st.value( QStringLiteral( "qRezy/viewRefGuides" ), true ).toBool() ? 1 : 0;
@@ -409,7 +409,7 @@ void RezDock::buildPanel()
 		gl->setContentsMargins( 0, 0, 0, 0 );
 		QSettings st;
 		m_ref2Guides = new QCheckBox( QStringLiteral( "vodorovné" ) );
-		m_ref2Guides->setToolTip( QStringLiteral( "Vodorovné vodicí čáry z reference pohledu (výšky střechy, říms…) – jen ze strany společného rohu" ) );
+		m_ref2Guides->setToolTip( QStringLiteral( "Vodorovné vodicí čáry z reference pohledu (výšky střechy, říms…) – jen ze strany společného rohu. Klávesa M = zapnout / vypnout." ) );
 		m_ref2Guides->setChecked( st.value( QStringLiteral( "qRezy/ref2Guides" ), true ).toBool() );
 		m_ref2Band = new QSlider( Qt::Horizontal );
 		m_ref2Band->setRange( 0, 100 ); // 0–10 m po 10 cm
@@ -523,6 +523,30 @@ void RezDock::buildPanel()
 		focusView();
 	} );
 	connect( m_ref2Shift, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]() { applyRef2(); } );
+	// klávesy N / M v řezu / pohledu: svislé vodicí z půdorysu / vodorovné z reference
+	connect( m_draw, &DrawTool::guideKey, this, [this]( int which )
+	{
+		if ( which == 0 )
+		{
+			static int last = 1;
+			const int cur = m_viewRefGuides->currentIndex();
+			if ( cur > 0 )
+			{
+				last = cur;
+				m_viewRefGuides->setCurrentIndex( 0 );
+			}
+			else
+			{
+				m_viewRefGuides->setCurrentIndex( std::max( 1, last ) );
+			}
+			m_status->setText( m_viewRefGuides->currentIndex() > 0 ? QStringLiteral( "Svislé vodicí čáry zapnuté (N)" ) : QStringLiteral( "Svislé vodicí čáry vypnuté (N)" ) );
+		}
+		else
+		{
+			m_ref2Guides->toggle();
+			m_status->setText( m_ref2Guides->isChecked() ? QStringLiteral( "Vodorovné vodicí čáry z reference zapnuté (M)" ) : QStringLiteral( "Vodorovné vodicí čáry z reference vypnuté (M)" ) );
+		}
+	} );
 	connect( m_ref2Guides, &QCheckBox::toggled, this, [this]( bool on )
 	{
 		QSettings().setValue( QStringLiteral( "qRezy/ref2Guides" ), on );
@@ -858,7 +882,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Opening, "winopen", "Okno", "Okno v půdorysu: 1. a 2. klik = konce okenního otvoru, 3. klik = strana kóty (do místnosti). Nakreslí kótu (POP_DVERE): čára středem otvoru, délka otvoru v mm (na cm); pak vyskočí pomocný řez v režimu Okno – změřte okno a Enter, výška(parapet) se zapíše pod délku." },
 		{ DrawTool::Mode::RoomLabel, "roomlabel", "Popis místnosti", "Popis místnosti (klávesa H): klik doprostřed místnosti → výměra z nakreslených zdí; v pomocném řezu klikněte podlahu a strop, Enter → okno s číslem (další se počítá samo), podlahou Bpv, světlou výškou, výměrou a názvem → popis za myší, klik = umístit. Volba „mimo místnost“ v okně: kroužek, lom odkazové čáry, popis." },
 		{ DrawTool::Mode::Kota, "kota", "Kóta", "Výšková kóta (kačena) v řezu nebo pohledu: 1. klik = bod, odkud se bere výška, 2. klik = kam kótu umístit (jen vodorovně). Výška v Bpv, místní (k ±0,000) nebo obojí, na cm; písmo 0,18 m. Přesun a kopie jen vodorovně." },
-		{ DrawTool::Mode::RefCopy, "copy", "Převzít z reference", "Převzít z reference pohledu: obdélník dvěma kliky kolem prvků reference (např. celé okno) → čáry reference celé uvnitř se zkopírují do řezu / pohledu ve stejné hladině." },
+		{ DrawTool::Mode::RefCopy, "copy", "Převzít z reference", "Převzít z reference pohledu: vyberte čáry reference jako ve Výběru (klik, Ctrl+klik, okno tažením zleva = uvnitř, zprava = křížem), Enter = zkopírovat do řezu / pohledu na stejné místo ve stejné hladině; pravé = zrušit výběr." },
 	};
 	for ( const ToolDef& t : tools )
 	{

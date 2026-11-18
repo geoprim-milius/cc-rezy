@@ -4183,7 +4183,7 @@ void DrawTool::updateTip()
 	}
 
 	// okno výběru: zleva doprava modré (uvnitř), zprava doleva zelené čárkované (křížem)
-	if ( m_mode == Mode::Select && m_winDragging )
+	if ( ( m_mode == Mode::Select || m_mode == Mode::RefCopy ) && m_winDragging )
 	{
 		const QPointF g0 = m_win->toCornerGLCoordinates( m_winStart.x(), m_winStart.y() );
 		const QPointF g1 = m_win->toCornerGLCoordinates( m_mousePos.x(), m_mousePos.y() );
@@ -4992,8 +4992,8 @@ void DrawTool::updateStatus()
 		                     : QStringLiteral( "Rozdělit čarou: druhý bod – protnuté čáry se rozdělí (%1)" ).arg( m_hasCursor ? breakLineHits( m_base, m_cursor ).size() : 0 );
 		break;
 	case Mode::RefCopy:
-		prompt = m_step == 0 ? QStringLiteral( "Převzít z reference: 1. roh obdélníku kolem prvků reference pohledu (např. celé okno)" )
-		                     : QStringLiteral( "Převzít z reference: 2. roh – čáry reference celé uvnitř se zkopírují (pravé = zpět)" );
+		prompt = m_refSel.empty() ? QStringLiteral( "Převzít z reference: vyberte čáry reference – klik, Ctrl+klik, okno tažením (zleva = uvnitř, zprava = křížem)" )
+		                          : QStringLiteral( "Převzít z reference: vybráno %1 – Enter = zkopírovat do výkresu, Ctrl+klik = přidat/odebrat, pravé = zrušit" ).arg( m_refSel.size() );
 		break;
 	case Mode::Pin:
 		prompt = QStringLiteral( "Špendlík: klikněte na místo – ukáže se ve 3D náhledu (také prostřední klik kdekoli)" );
@@ -5179,6 +5179,13 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 					m_winStart = e->pos();
 				}
 			}
+			else if ( m_mode == Mode::RefCopy && !m_frame.plan )
+			{
+				// převzít z reference: výběr jako ve Výběru (klik, okno), Enter = zkopírovat
+				m_winPressed = true;
+				m_winDragging = false;
+				m_winStart = e->pos();
+			}
 			else
 			{
 				onDataPoint( e->pos() );
@@ -5223,6 +5230,40 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 					onDataPoint( e->pos() ); // Shift + kliknutí = obyčejný bod
 				}
 			}
+		}
+		else if ( e->button() == Qt::LeftButton && m_winPressed && m_mode == Mode::RefCopy )
+		{
+			m_winPressed = false;
+			const bool ctrl = ( e->modifiers() & Qt::ControlModifier );
+			if ( m_winDragging )
+			{
+				m_winDragging = false;
+				refWindow( m_winStart, e->pos(), ctrl );
+			}
+			else
+			{
+				ccPolyline* p = refPick( e->pos() );
+				auto it = std::find( m_refSel.begin(), m_refSel.end(), p );
+				if ( ctrl )
+				{
+					if ( p && it != m_refSel.end() )
+						m_refSel.erase( it );
+					else if ( p )
+						m_refSel.push_back( p );
+				}
+				else
+				{
+					m_refSel.clear();
+					if ( p )
+						m_refSel.push_back( p );
+				}
+			}
+			m_flash = QStringLiteral( "Vybráno z reference: %1 – Enter = zkopírovat, pravé = zrušit výběr" ).arg( m_refSel.size() );
+			refreshLayer();
+			updateTip();
+			updateStatus();
+			redraw2D();
+			return true;
 		}
 		else if ( e->button() == Qt::LeftButton && m_winPressed )
 		{
@@ -5294,6 +5335,18 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 				return true;
 			}
 			m_cycle.clear();
+			// převzít z reference: pravé = zrušit výběr
+			if ( m_mode == Mode::RefCopy && !m_refSel.empty() )
+			{
+				m_refSel.clear();
+				m_flash = QStringLiteral( "Výběr z reference zrušen" );
+				refreshLayer();
+				updateStatus();
+				keepCrossCursor();
+				updateTip();
+				redraw2D();
+				return true;
+			}
 			// popis místnosti: pravé = zpět o poslední bod obrysu
 			if ( m_mode == Mode::RoomLabel && !m_roomPlacing && !m_roomPolyDone && !m_roomPoly.empty() )
 			{
@@ -5532,6 +5585,22 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 				updateTip();
 				updateStatus();
 				redraw2D();
+			}
+		}
+		else if ( ( k == Qt::Key_Return || k == Qt::Key_Enter ) && m_typed.isEmpty() && m_mode == Mode::RefCopy )
+		{
+			if ( event->type() == QEvent::KeyPress )
+			{
+				copyRefSelection(); // Enter = zkopírovat výběr z reference
+				updateTip();
+				updateStatus();
+			}
+		}
+		else if ( plain && ( k == Qt::Key_N || k == Qt::Key_M ) && !m_frame.plan )
+		{
+			if ( event->type() == QEvent::KeyPress && !e->isAutoRepeat() )
+			{
+				Q_EMIT guideKey( k == Qt::Key_N ? 0 : 1 ); // N = svislé vodicí z půdorysu, M = vodorovné z reference
 			}
 		}
 		else if ( ( k == Qt::Key_Return || k == Qt::Key_Enter ) && m_typed.isEmpty() && m_mode == Mode::RoomLabel && !m_roomPlacing && !m_roomPolyDone && m_roomPoly.size() >= 3 )
@@ -6840,7 +6909,7 @@ void DrawTool::rebuildViewRef()
 					{
 						continue;
 					}
-					m_viewRef2.push_back( { m_frame.toUV( A ), m_frame.toUV( B ), col, cat, hid } );
+					m_viewRef2.push_back( { m_frame.toUV( A ), m_frame.toUV( B ), col, cat, hid, poly } );
 				}
 			}
 		}
@@ -6896,7 +6965,7 @@ void DrawTool::rebuildViewRef()
 					}
 					a.x += du;
 					b.x += du;
-					m_viewRef2.push_back( { a, b, col, cat, hid } );
+					m_viewRef2.push_back( { a, b, col, cat, hid, poly } );
 				}
 			}
 			if ( m_ref2HGuides && band > 0.0 )
@@ -6927,6 +6996,10 @@ void DrawTool::setViewReference2( int viewId, const DrawFrame& refFrame, int ref
 {
 	m_ref2HGuides = hGuides;
 	m_ref2Band = bandM;
+	if ( viewId != m_ref2View )
+	{
+		m_refSel.clear();
+	}
 	m_ref2View = viewId;
 	m_ref2Frame = refFrame;
 	m_hasRef2Frame = viewId > 0;
@@ -6935,6 +7008,146 @@ void DrawTool::setViewReference2( int viewId, const DrawFrame& refFrame, int ref
 	m_ref2Shift = sideShiftM;
 	rebuildViewRef();
 	redraw3D();
+}
+
+ccPolyline* DrawTool::refPick( const QPoint& pos ) const
+{
+	CCVector2d P;
+	if ( !screenToLocal( pos, P ) )
+	{
+		return nullptr;
+	}
+	double best = PickPixels * pixelSize();
+	ccPolyline* out = nullptr;
+	for ( const ViewRef2Seg& s : m_viewRef2 )
+	{
+		const CCVector2d d = s.b - s.a;
+		const double L2 = d.dot( d );
+		double t = L2 > 0 ? ( P - s.a ).dot( d ) / L2 : 0.0;
+		t = std::max( 0.0, std::min( 1.0, t ) );
+		const double dd = dist( P, s.a + d * t );
+		if ( dd < best )
+		{
+			best = dd;
+			out = s.src;
+		}
+	}
+	return out;
+}
+
+void DrawTool::refWindow( const QPoint& a, const QPoint& b, bool ctrl )
+{
+	// jako Výběr: zleva doprava = celé uvnitř, zprava doleva = křížem
+	CCVector2d c0;
+	CCVector2d c1;
+	if ( !screenToLocal( a, c0 ) || !screenToLocal( b, c1 ) )
+	{
+		return;
+	}
+	const bool inside = b.x() >= a.x();
+	const double x0 = std::min( c0.x, c1.x );
+	const double x1 = std::max( c0.x, c1.x );
+	const double y0 = std::min( c0.y, c1.y );
+	const double y1 = std::max( c0.y, c1.y );
+	auto in = [&]( const CCVector2d& P ) { return P.x >= x0 && P.x <= x1 && P.y >= y0 && P.y <= y1; };
+	auto crosses = [&]( const CCVector2d& A, const CCVector2d& B )
+	{
+		if ( in( A ) || in( B ) )
+		{
+			return true;
+		}
+		const CCVector2d R[4] = { { x0, y0 }, { x1, y0 }, { x1, y1 }, { x0, y1 } };
+		for ( int i = 0; i < 4; ++i )
+		{
+			CCVector2d I;
+			if ( lineIntersection( A, B, R[i], R[( i + 1 ) % 4], I ) )
+			{
+				const double t1 = paramOn( A, B, I );
+				const double t2 = paramOn( R[i], R[( i + 1 ) % 4], I );
+				if ( t1 >= 0.0 && t1 <= 1.0 && t2 >= 0.0 && t2 <= 1.0 )
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+	std::vector<ccPolyline*> order;
+	std::vector<std::pair<bool, bool>> state; // (vše uvnitř, něco zasaženo)
+	for ( const ViewRef2Seg& s : m_viewRef2 )
+	{
+		size_t i = std::find( order.begin(), order.end(), s.src ) - order.begin();
+		if ( i == order.size() )
+		{
+			order.push_back( s.src );
+			state.push_back( { true, false } );
+		}
+		const bool allIn = in( s.a ) && in( s.b );
+		state[i].first = state[i].first && allIn;
+		state[i].second = state[i].second || crosses( s.a, s.b );
+	}
+	if ( !ctrl )
+	{
+		m_refSel.clear();
+	}
+	for ( size_t i = 0; i < order.size(); ++i )
+	{
+		const bool hit = inside ? state[i].first : state[i].second;
+		if ( hit && std::find( m_refSel.begin(), m_refSel.end(), order[i] ) == m_refSel.end() )
+		{
+			m_refSel.push_back( order[i] );
+		}
+	}
+}
+
+void DrawTool::copyRefSelection()
+{
+	// vybrané čáry reference → nové čáry v aktuálním výkresu na stejném místě (hladina a zakrytí ze zdroje)
+	UndoItem undo;
+	int n = 0;
+	for ( ccPolyline* src : m_refSel )
+	{
+		std::vector<CCVector2d> pts;
+		int cat = 0;
+		bool hid = false;
+		for ( const ViewRef2Seg& s : m_viewRef2 )
+		{
+			if ( s.src != src )
+			{
+				continue;
+			}
+			cat = s.cat;
+			hid = s.hidden;
+			if ( pts.empty() || dist( pts.back(), s.a ) > 1e-9 )
+			{
+				if ( pts.size() >= 2 )
+				{
+					// přerušená lomená čára (část mimo dosah) → samostatné kusy
+					if ( addPolyline( pts, cat, hid, false, &undo ) )
+						++n;
+					pts.clear();
+				}
+				else
+				{
+					pts.clear();
+				}
+				pts.push_back( s.a );
+			}
+			pts.push_back( s.b );
+		}
+		if ( pts.size() >= 2 && addPolyline( pts, cat, hid, false, &undo ) )
+		{
+			++n;
+		}
+	}
+	if ( n > 0 )
+	{
+		pushUndo( std::move( undo ) );
+	}
+	m_flash = n > 0 ? QStringLiteral( "Převzato z reference: %1 čar" ).arg( n ) : QStringLiteral( "Nic nevybráno – klikněte na čáry reference nebo táhněte obdélník" );
+	m_refSel.clear();
+	refreshLayer();
+	redraw2D();
 }
 
 void DrawTool::copyFromReference( const CCVector2d& c0, const CCVector2d& c1 )
@@ -7190,6 +7403,25 @@ void DrawTool::refreshLayer()
 		}
 		r.P = r.segs.front();
 		m_layer->items.push_back( std::move( r ) );
+		if ( !m_refSel.empty() )
+		{
+			RezLayer::Item h;
+			h.color = ccColor::Rgb( 255, 220, 0 );
+			h.lineWidth = 2.5f;
+			for ( const ViewRef2Seg& s : m_viewRef2 )
+			{
+				if ( std::find( m_refSel.begin(), m_refSel.end(), s.src ) != m_refSel.end() )
+				{
+					h.segs.push_back( m_frame.to3D( s.a ) );
+					h.segs.push_back( m_frame.to3D( s.b ) );
+				}
+			}
+			if ( !h.segs.empty() )
+			{
+				h.P = h.segs.front();
+				m_layer->items.push_back( std::move( h ) );
+			}
+		}
 		if ( !m_viewRefHGuides.empty() )
 		{
 			RezLayer::Item g;
