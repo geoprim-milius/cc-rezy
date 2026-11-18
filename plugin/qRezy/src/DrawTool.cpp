@@ -6684,6 +6684,15 @@ void DrawTool::rebuildViewRef()
 		{
 			continue;
 		}
+		if ( ch->hasMetaData( Drawing::MetaCategory ) )
+		{
+			// popisy (kóty otvorů POP_DVERE, popis místnosti POP_MISTN, POP_CISLA_MISTN) v referenci ani vodicích čarách ne
+			const int c = ch->getMetaData( Drawing::MetaCategory ).toInt();
+			if ( c == 8 || c == 9 || c == 10 )
+			{
+				continue;
+			}
+		}
 		const ccColor::Rgb col = m_viewRefColor ? poly->getColor() : ccColor::Rgb( 140, 140, 140 );
 		const unsigned n = poly->size();
 		const unsigned segN = poly->isClosed() ? n : ( n > 0 ? n - 1 : 0 );
