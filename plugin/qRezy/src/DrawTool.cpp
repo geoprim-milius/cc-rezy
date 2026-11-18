@@ -6902,7 +6902,7 @@ void DrawTool::rebuildViewRef()
 			if ( m_ref2HGuides && band > 0.0 )
 			{
 				std::sort( vs.begin(), vs.end() );
-				const double far = commonLeft ? uMinView - 1.0 * m_scale : uMaxView + 1.0 * m_scale;
+				const double uFar = commonLeft ? uMinView - 1.0 * m_scale : uMaxView + 1.0 * m_scale;
 				for ( const auto& p : vs )
 				{
 					if ( !m_viewRefHGuides.empty() && p.first - m_viewRefHGuides.back().v <= 0.01 * m_scale )
@@ -6915,7 +6915,7 @@ void DrawTool::rebuildViewRef()
 							h.u0 = std::max( h.u0, p.second );
 						continue;
 					}
-					m_viewRefHGuides.push_back( commonLeft ? HGuide{ p.first, far, p.second } : HGuide{ p.first, p.second, far } );
+					m_viewRefHGuides.push_back( commonLeft ? HGuide{ p.first, uFar, p.second } : HGuide{ p.first, p.second, uFar } );
 				}
 			}
 		}
