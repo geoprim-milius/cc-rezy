@@ -484,6 +484,62 @@ void RezDock::buildPanel()
 	syncThicknessSlider();
 }
 
+void RezDock::buildToolPalette( const std::vector<std::pair<QString, std::vector<PaletteItem>>>& groups )
+{
+	QMainWindow* mw = m_app ? m_app->getMainWindow() : nullptr;
+	if ( !mw )
+	{
+		return;
+	}
+	m_palette = new QToolBar( QStringLiteral( "Řezy – nástroje" ), mw );
+	m_palette->setObjectName( QStringLiteral( "qRezyToolPalette" ) );
+	m_palette->setOrientation( Qt::Vertical );
+	m_palette->setMovable( true );
+	auto* w = new QWidget;
+	auto* lay = new QVBoxLayout( w );
+	lay->setContentsMargins( 3, 3, 3, 3 );
+	lay->setSpacing( 2 );
+	bool first = true;
+	for ( const auto& g : groups )
+	{
+		auto* title = new QLabel( g.first );
+		QFont f = title->font();
+		f.setBold( true );
+		f.setPointSizeF( std::max( 7.0, f.pointSizeF() - 1.0 ) );
+		title->setFont( f );
+		title->setAlignment( Qt::AlignHCenter );
+		lay->addSpacing( first ? 0 : 6 );
+		lay->addWidget( title );
+		auto* grid = new QGridLayout;
+		grid->setSpacing( 1 );
+		int k = 0;
+		for ( const PaletteItem& it : g.second )
+		{
+			auto* b = new QToolButton;
+			b->setDefaultAction( it.action );
+			b->setAutoRaise( true );
+			b->setIconSize( QSize( 26, 26 ) );
+			b->setToolButtonStyle( Qt::ToolButtonIconOnly );
+			b->setToolTip( QStringLiteral( "%1  (%2)" ).arg( it.action->text(), QString::fromUtf8( it.key ) ) );
+			grid->addWidget( b, k / 2, k % 2 );
+			++k;
+		}
+		lay->addLayout( grid );
+		if ( first && m_offsetSpin )
+		{
+			// vzdálenost rovnoběžky pod Manipulací
+			m_offsetSpin->setFixedWidth( 76 );
+			lay->addWidget( m_offsetSpin, 0, Qt::AlignHCenter );
+		}
+		first = false;
+	}
+	lay->addStretch( 1 );
+	m_palette->addWidget( w );
+	// svislý pruh vlevo přes celou výšku (vedle svislého panelu CloudCompare)
+	mw->addToolBarBreak( Qt::LeftToolBarArea ); // vlastní sloupec vedle panelu CloudCompare
+	mw->addToolBar( Qt::LeftToolBarArea, m_palette );
+}
+
 QAction* RezDock::mkAct( const char* icon, const QString& label, const QString& tip, bool checkable )
 {
 	auto* a = new QAction( Icons::get( QString::fromLatin1( icon ) ), label, this );
@@ -607,9 +663,9 @@ void RezDock::setWorkMode( bool on )
 		}
 		for ( QToolBar* tb : mw->findChildren<QToolBar*>( QString(), Qt::FindDirectChildrenOnly ) )
 		{
-			if ( tb != m_toolbar )
+			if ( tb != m_toolbar && tb != m_palette )
 			{
-				tb->hide();
+				tb->hide(); // panel nástrojů Řezy zůstává
 			}
 		}
 		for ( QDockWidget* dw : mw->findChildren<QDockWidget*>( QString(), Qt::FindDirectChildrenOnly ) )
@@ -1109,63 +1165,6 @@ void RezDock::buildToolbar()
 		RibbonColumn c3 = g.column();
 		c3.addSmall( T( DrawTool::Mode::Opening ), QStringLiteral( "F" ) );
 		c3.addSmall( T( DrawTool::Mode::RoomLabel ), QStringLiteral( "H" ) );
-		RibbonGroup kg = r->addGroup( pDraw, QStringLiteral( "Kóta" ) );
-		kg.addBig( T( DrawTool::Mode::Kota ) );
-		RibbonColumn kc = kg.column();
-		kc.widget( kotaFmt );
-		kc.widget( kotaScale, QStringLiteral( "1 :" ) );
-		RibbonGroup cg = r->addGroup( pDraw, QStringLiteral( "Z mračna" ) );
-		cg.addBigWith( T( DrawTool::Mode::CloudLine ), QStringLiteral( "V" ), clReach, QStringLiteral( "roh do" ) );
-		RibbonColumn cc = cg.column();
-		cc.widget( clGap, QStringLiteral( "mezera" ) );
-		cc.widget( clTol, QStringLiteral( "tol." ) );
-		cc.addSmall( clSquare );
-		RibbonColumn cc2 = cg.column();
-		cc2.addSmall( T( DrawTool::Mode::CloudRoom ) );
-		cc2.addSmall( T( DrawTool::Mode::CloudBatch ) );
-		cc2.widget( clMin, QStringLiteral( "min." ) );
-		RibbonGroup m = r->addGroup( pDraw, QStringLiteral( "Manipulace · 3" ) );
-		RibbonColumn mc = m.column();
-		mc.addSmall( T( DrawTool::Mode::Copy ), QStringLiteral( "3·1" ) );
-		mc.addSmall( T( DrawTool::Mode::Move ), QStringLiteral( "3·2" ) );
-		mc.addSmall( T( DrawTool::Mode::Offset ), QStringLiteral( "3·9" ) );
-		RibbonColumn mc2 = m.column();
-		mc2.addSmall( T( DrawTool::Mode::Rotate ), QStringLiteral( "3·4" ) );
-		{
-			auto* gap = new QWidget;
-			gap->setFixedHeight( 24 );
-			mc2.widget( gap );
-		}
-		mc2.widget( m_offsetSpin );
-		RibbonGroup u = r->addGroup( pDraw, QStringLiteral( "Úpravy · 7" ) );
-		RibbonColumn u1 = u.column();
-		u1.addSmall( T( DrawTool::Mode::Modify ), QStringLiteral( "7·1" ) );
-		u1.addSmall( T( DrawTool::Mode::Break ), QStringLiteral( "7·2" ) );
-		u1.addSmall( T( DrawTool::Mode::Extend ), QStringLiteral( "7·3" ) );
-		RibbonColumn u2 = u.column();
-		u2.addSmall( T( DrawTool::Mode::Corner ), QStringLiteral( "7·4" ) );
-		u2.addSmall( T( DrawTool::Mode::Trim ), QStringLiteral( "7·5" ) );
-		u2.addSmall( T( DrawTool::Mode::InsertVertex ), QStringLiteral( "7·7" ) );
-		RibbonColumn u3 = u.column();
-		u3.addSmall( T( DrawTool::Mode::DeleteVertex ), QStringLiteral( "7·8" ) );
-		u3.addSmall( T( DrawTool::Mode::Delete ), QStringLiteral( "8" ) );
-		u3.addSmall( T( DrawTool::Mode::BreakLine ), QStringLiteral( "7·6" ) );
-		RibbonGroup h = r->addGroup( pDraw, QStringLiteral( "Hladina" ) );
-		RibbonColumn hc = h.column();
-		hc.widget( m_catCombo );
-		hc.addSmall( m_hiddenAct, QStringLiteral( "F6" ) );
-		hc.addSmall( symb );
-		RibbonGroup p = r->addGroup( pDraw, QStringLiteral( "Pomůcky" ) );
-		RibbonColumn pc = p.column();
-		pc.addSmall( m_orthoAct, QStringLiteral( "F8" ) );
-		pc.addSmall( m_trackAct, QStringLiteral( "F11" ) );
-		pc.addSmall( T( DrawTool::Mode::Pin ) );
-		pc.addSmall( undo, QStringLiteral( "Ctrl+Z" ) );
-		QAction* pinVis = mkAct( "pin", QStringLiteral( "Zobrazit špendlík" ), QStringLiteral( "Špendlík ve výkresu (z prostředního kliku do 3D náhledu) zobrazit / skrýt" ), true );
-		pinVis->setChecked( true );
-		connect( pinVis, &QAction::toggled, this, [this]( bool on ) { m_draw->setPinVisible( on ); focusView(); } );
-		RibbonColumn pc2 = p.column();
-		pc2.addSmall( pinVis );
 		m_probeAct = mkAct( "probe", QStringLiteral( "Výška bodu" ), QStringLiteral( "Výška bodu mračna pod kurzorem (vůči ±0,000 a Bpv) – v půdorysu, řezu i ve 3D náhledu a pomocném řezu" ), true );
 		m_probeAct->setChecked( QSettings().value( QStringLiteral( "qRezy/probe" ), false ).toBool() );
 		connect( m_probeAct, &QAction::toggled, this, [this]( bool on )
@@ -1182,7 +1181,45 @@ void RezDock::buildToolbar()
 			focusView();
 		} );
 		m_draw->setProbe( m_probeAct->isChecked() );
-		pc2.addSmall( m_probeAct );
+		RibbonGroup kg = r->addGroup( pDraw, QStringLiteral( "Kóta" ) );
+		kg.addBig( T( DrawTool::Mode::Kota ) );
+		RibbonColumn kc = kg.column();
+		kc.widget( kotaFmt );
+		kc.widget( kotaScale, QStringLiteral( "1 :" ) );
+		kc.addSmall( m_probeAct );
+		RibbonGroup cg = r->addGroup( pDraw, QStringLiteral( "Z mračna" ) );
+		cg.addBigWith( T( DrawTool::Mode::CloudLine ), QStringLiteral( "V" ), clReach, QStringLiteral( "roh do" ) );
+		RibbonColumn cc = cg.column();
+		cc.widget( clGap, QStringLiteral( "mezera" ) );
+		cc.widget( clTol, QStringLiteral( "tol." ) );
+		cc.addSmall( clSquare );
+		RibbonColumn cc2 = cg.column();
+		cc2.addSmall( T( DrawTool::Mode::CloudRoom ) );
+		cc2.addSmall( T( DrawTool::Mode::CloudBatch ) );
+		cc2.widget( clMin, QStringLiteral( "min." ) );
+		// Manipulace a Úpravy: svislý panel nástrojů vlevo od výkresu (jako palety v MicroStationu)
+		buildToolPalette( {
+			{ QStringLiteral( "Manipulace\n3" ), { { T( DrawTool::Mode::Copy ), "3·1" }, { T( DrawTool::Mode::Move ), "3·2" }, { T( DrawTool::Mode::Rotate ), "3·4" }, { T( DrawTool::Mode::Offset ), "3·9" } } },
+			{ QStringLiteral( "Úpravy\n7" ), { { T( DrawTool::Mode::Modify ), "7·1" }, { T( DrawTool::Mode::Break ), "7·2" }, { T( DrawTool::Mode::Extend ), "7·3" }, { T( DrawTool::Mode::Corner ), "7·4" },
+			                                    { T( DrawTool::Mode::Trim ), "7·5" }, { T( DrawTool::Mode::BreakLine ), "7·6" }, { T( DrawTool::Mode::InsertVertex ), "7·7" }, { T( DrawTool::Mode::DeleteVertex ), "7·8" },
+			                                    { T( DrawTool::Mode::Delete ), "8" } } },
+		} );
+		RibbonGroup h = r->addGroup( pDraw, QStringLiteral( "Hladina" ) );
+		RibbonColumn hc = h.column();
+		hc.widget( m_catCombo );
+		hc.addSmall( m_hiddenAct, QStringLiteral( "F6" ) );
+		hc.addSmall( symb );
+		RibbonGroup p = r->addGroup( pDraw, QStringLiteral( "Pomůcky" ) );
+		RibbonColumn pc = p.column();
+		pc.addSmall( m_orthoAct, QStringLiteral( "F8" ) );
+		pc.addSmall( m_trackAct, QStringLiteral( "F11" ) );
+		pc.addSmall( T( DrawTool::Mode::Pin ) );
+		pc.addSmall( undo, QStringLiteral( "Ctrl+Z" ) );
+		QAction* pinVis = mkAct( "pin", QStringLiteral( "Zobrazit špendlík" ), QStringLiteral( "Špendlík ve výkresu (z prostředního kliku do 3D náhledu) zobrazit / skrýt" ), true );
+		pinVis->setChecked( true );
+		connect( pinVis, &QAction::toggled, this, [this]( bool on ) { m_draw->setPinVisible( on ); focusView(); } );
+		RibbonColumn pc2 = p.column();
+		pc2.addSmall( pinVis );
 		RibbonGroup bg = r->addGroup( pDraw, QStringLiteral( "Změřené body" ) );
 		bg.addBig( ptLoad );
 		RibbonColumn b1 = bg.column();
@@ -1539,6 +1576,10 @@ void RezDock::showEvent( QShowEvent* event )
 	{
 		m_toolbar->show();
 	}
+	if ( m_palette )
+	{
+		m_palette->show();
+	}
 	QDockWidget::showEvent( event );
 	fitPanelWidth();
 }
@@ -1567,6 +1608,10 @@ void RezDock::closeEvent( QCloseEvent* event )
 	if ( m_toolbar )
 	{
 		m_toolbar->hide();
+	}
+	if ( m_palette )
+	{
+		m_palette->hide();
 	}
 	updateLabels();
 	QDockWidget::closeEvent( event );

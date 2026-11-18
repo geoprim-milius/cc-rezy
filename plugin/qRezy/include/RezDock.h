@@ -89,6 +89,14 @@ private:
 	void buildPanel();
 	void buildToolbar();
 	QAction* mkAct( const char* icon, const QString& label, const QString& tip, bool checkable = false );
+	//! svislý panel nástrojů vlevo od výkresu (skupiny: název, akce + klávesy)
+	struct PaletteItem
+	{
+		QAction* action;
+		const char* key;
+	};
+	void buildToolPalette( const std::vector<std::pair<QString, std::vector<PaletteItem>>>& groups );
+	class QToolBar* m_palette = nullptr;
 	void refreshIcons();
 	void refreshCatCombo();
 	void fitPanelWidth(); //!< šířka panelu podle obsahu

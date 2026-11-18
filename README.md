@@ -84,6 +84,8 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | složka | Uložit rozdělanou práci | | projekt CloudCompare (.bin): mračno, kresba, řezy, patra, body, nastavení panelu i pohled |
 | disketa | Uložit V7 | | seed, hladiny, umístění řezů, výšky |
 
+**Panel nástrojů vlevo** (jako palety v MicroStationu): svislý sloupec vedle panelu CloudCompare s nástroji *Manipulace* (3) a *Úpravy* (7) a vzdáleností rovnoběžky; dá se přetáhnout jinam nebo odpojit. Přepínač *Výška bodu* je ve skupině *Kóta*.
+
 **Klávesy jako MicroStation:** horní řada čísel otevírá menu (3 = Manipulace, 7 = Úpravy),
 v menu se volí opět číslem horní řady. Funguje podle polohy klávesy, na české klávesnici tedy
 + ě š č ř ž ý á í é. **Vzdálenost** se píše na numerické klávesnici (nebo Shift + horní řada) a Enter.
