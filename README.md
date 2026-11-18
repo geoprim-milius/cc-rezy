@@ -98,6 +98,9 @@ Uchopení: konec (čtverec), průsečík (křížek), střed (trojúhelník), na
 
 ## 3D náhled
 
+**Zobrazit mračno** (Řezy a pohledy → Zobrazení): body mračna skrýt / ukázat, kresba zůstane (i u velkých mračen s plátkem).
+**Hloubka pohledu**: v panelu Řezy posuvník *Hloubka* (0,1–50 m) – menší hloubka = za fasádou neprosvítají místnosti.
+
 Na posuvníku **Výška** jsou oranžové značky podlah pater (podle výkresů; přízemí = ±0,000), po najetí myší název patra a výška podlahy.
 Okno se zředěnou kopií mračna a nakreslenými čarami. Nahoře posuvníky **od – do**
 (jako Cross Section v CloudCompare): **Šířka**, **Hloubka** (podle natočení pohledu) a **Výška**

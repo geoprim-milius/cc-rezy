@@ -182,6 +182,11 @@ private:
 	QDoubleSpinBox* m_zero = nullptr;
 	QWidget* m_depthRow = nullptr;
 	QDoubleSpinBox* m_depth = nullptr;
+	QSlider* m_depthSlider = nullptr; //!< pohled: hloubka posuvníkem (0,1–50 m, logaritmicky)
+	void syncDepthSlider();
+	bool m_cloudShown = true;         //!< přepínač Zobrazit mračno (kresba zůstává)
+	QAction* m_cloudAct = nullptr;
+	void applyCloudShown();
 	QLabel* m_relLabel = nullptr;
 	QToolButton* m_upBtn = nullptr;
 	QToolButton* m_downBtn = nullptr;

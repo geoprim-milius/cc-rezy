@@ -306,10 +306,27 @@ void RezDock::buildPanel()
 	}
 	form->addRow( QString(), presetRow );
 
-	m_depth = makeSpin( 0.1, 1000.0, 15.0, 1.0, 1, QStringLiteral( " m" ) );
+	m_depth = makeSpin( 0.1, 1000.0, 15.0, 0.1, 2, QStringLiteral( " m" ) );
 	m_depth->setToolTip( QStringLiteral( "Pohled: jak daleko za rovinou je mračno vidět" ) );
-	m_depthRow = m_depth;
-	form->addRow( QStringLiteral( "Hloubka:" ), m_depth );
+	m_depthSlider = new QSlider( Qt::Horizontal );
+	m_depthSlider->setRange( 0, 1000 );
+	m_depthSlider->setToolTip( QStringLiteral( "Pohled: hloubka za rovinou (0,1 – 50 m) – menší = nevidět místnosti za fasádou" ) );
+	m_depthRow = new QWidget;
+	{
+		auto* dl = new QHBoxLayout( m_depthRow );
+		dl->setContentsMargins( 0, 0, 0, 0 );
+		dl->addWidget( m_depthSlider, 1 );
+		dl->addWidget( m_depth );
+	}
+	form->addRow( QStringLiteral( "Hloubka:" ), m_depthRow );
+	connect( m_depthSlider, &QSlider::valueChanged, this, [this]( int v )
+	{
+		// logaritmicky 0,1 – 50 m, zaokrouhleno (jemně u malých hloubek)
+		double d = 0.1 * std::pow( 500.0, v / 1000.0 );
+		d = ( d < 2.0 ) ? std::round( d * 20.0 ) / 20.0 : ( d < 10.0 ? std::round( d * 4.0 ) / 4.0 : std::round( d ) );
+		const QSignalBlocker b( m_depthSlider );
+		m_depth->setValue( std::max( 0.1, d ) );
+	} );
 
 	m_step = makeSpin( 0.001, 100.0, 0.05, 0.01, 3, QStringLiteral( " m" ) );
 	form->addRow( QStringLiteral( "Krok PgUp/PgDn:" ), m_step );
@@ -435,6 +452,7 @@ void RezDock::buildPanel()
 			saveSection( si );
 			applyClip();
 		}
+		syncDepthSlider();
 	} );
 	connect( m_floorLevel, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]()
 	{
@@ -1212,6 +1230,16 @@ void RezDock::buildToolbar()
 			m_draw->refreshDisplay(); // 3D náhled se překreslí při další změně pohledu
 		} );
 		v1.widget( dash );
+		m_cloudAct = mkAct( "cloud", QStringLiteral( "Zobrazit mračno" ), QStringLiteral( "Body mračna ukázat / skrýt – kresba zůstane vidět (funguje i u velkých mračen s plátkem)" ), true );
+		m_cloudAct->setChecked( true );
+		connect( m_cloudAct, &QAction::toggled, this, [this]( bool on )
+		{
+			m_cloudShown = on;
+			applyCloudShown();
+			m_draw->setProbe( m_probeAct && m_probeAct->isChecked() ); // smazat starý popisek výšky
+			focusView();
+		} );
+		v1.addSmall( m_cloudAct );
 		RibbonColumn v2 = vg.column();
 		v2.addSmall( m_bgDarkAct );
 		v2.addSmall( m_bgLightAct );
@@ -1745,16 +1773,12 @@ void RezDock::saveProject()
 	if ( a )
 	{
 		// mračno skryté kvůli plátku se musí uložit jako viditelné
-		const bool slab = m_slab != nullptr;
-		if ( slab )
+		if ( cloud() )
 		{
-			cloud()->setVisible( true );
+			cloud()->setVisible( true ); // uložit jako viditelné (skryté kvůli plátku nebo přepínači)
 		}
 		a->trigger();
-		if ( slab && cloud() )
-		{
-			cloud()->setVisible( false );
-		}
+		applyCloudShown();
 	}
 	else
 	{
@@ -2017,9 +2041,9 @@ bool RezDock::probePoint( const QPoint& pos, CCVector3d& P, QString& text )
 {
 	ccGenericPointCloud* c = cloud();
 	ccGLWindowInterface* win = m_app ? m_app->getActiveGLWindow() : nullptr;
-	if ( !c || !win )
+	if ( !c || !win || !m_cloudShown )
 	{
-		return false;
+		return false; // skryté mračno: výška se neukazuje
 	}
 	ccGenericPointCloud* ent = ( m_slab && m_slab->isEnabled() ) ? static_cast<ccGenericPointCloud*>( m_slab ) : c;
 	ccGLCameraParameters cam;
@@ -2206,7 +2230,7 @@ void RezDock::extractSlab()
 	}
 	m_slab->setPointSize( pc->getPointSize() );
 	m_slab->setEnabled( true );
-	m_slab->setVisible( true );
+	m_slab->setVisible( m_cloudShown );
 	m_slab->setDisplay( c->getDisplay() );
 	for ( const Tuple4Tpl<double>& e : m_slabExact )
 	{
@@ -2246,7 +2270,7 @@ void RezDock::removeSlab()
 	{
 		if ( ccHObject* src = m_app->dbRootObject()->find( m_slabSrc ) )
 		{
-			src->setVisible( true );
+			src->setVisible( m_cloudShown );
 			src->prepareDisplayForRefresh();
 		}
 	}
@@ -2301,11 +2325,48 @@ void RezDock::updateLabels()
 	m_thickness->setEnabled( !sec || si.kind == 0 );
 	m_thickSlider->setEnabled( !sec || si.kind == 0 );
 	m_depth->setEnabled( sec && si.kind == 1 );
+	m_depthSlider->setEnabled( sec && si.kind == 1 );
 	if ( sec && si.kind == 1 )
 	{
 		const QSignalBlocker b( m_depth );
 		m_depth->setValue( si.depth );
 	}
+	syncDepthSlider();
+}
+
+void RezDock::syncDepthSlider()
+{
+	if ( !m_depthSlider )
+	{
+		return;
+	}
+	const double d = std::max( 0.1, std::min( 50.0, m_depth->value() ) );
+	const QSignalBlocker b( m_depthSlider );
+	m_depthSlider->setValue( static_cast<int>( std::lround( std::log( d / 0.1 ) / std::log( 500.0 ) * 1000.0 ) ) );
+}
+
+void RezDock::applyCloudShown()
+{
+	// mračno (nebo u velkého mračna kopie plátku) skrýt / ukázat; kresba je samostatný objekt a zůstává
+	ccGenericPointCloud* c = cloud();
+	if ( m_slab )
+	{
+		m_slab->setVisible( m_cloudShown );
+		m_slab->prepareDisplayForRefresh();
+		if ( c )
+		{
+			c->setVisible( false );
+		}
+	}
+	else if ( c )
+	{
+		c->setVisible( m_cloudShown );
+	}
+	if ( c )
+	{
+		c->prepareDisplayForRefresh();
+	}
+	m_app->refreshAll();
 }
 
 void RezDock::onStatus( const QString& text )
