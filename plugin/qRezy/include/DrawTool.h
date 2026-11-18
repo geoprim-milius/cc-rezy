@@ -199,6 +199,13 @@ public:
 	void setShowCodes( bool on );
 	//! referenční výkres (jiné patro) – šedě, volitelně s uchopením; -1 = žádný
 	void setReference( int viewId, bool snap );
+	//! půdorys jako reference v pohledu/řezu: posun líce (m od ±0,000), barevně podle hladin, svislé vodicí čáry z líce
+	void setViewRefOptions( double shiftM, bool color, bool guides );
+	//! výška bodu mračna pod kurzorem: funkce (pozice v okně → bod v lokálních souř. a text) a zapnutí
+	using ProbeFunc = std::function<bool( const QPoint&, CCVector3d&, QString& )>;
+	void setProbeFunc( ProbeFunc f ) { m_probeFunc = std::move( f ); }
+	void setProbe( bool on );
+	double viewRefTop() const { return m_viewRefShift; }
 	//! překreslí popisky (po změně barev apod.)
 	void refreshDisplay() { redraw2D(); }
 	bool showCodes() const { return m_showCodes; }
@@ -495,6 +502,25 @@ private:
 	CCVector2d m_fixed;                //!< pevný konec (úprava prvku / úchop)
 	CCVector2d m_far2;                 //!< vložit vrchol: druhý konec
 	bool m_refSnap = false;
+	// půdorys v pohledu (reference): úsečky v souřadnicích pohledu, barvy, vodicí čáry
+	ProbeFunc m_probeFunc;
+	bool m_probeOn = false;
+	bool m_probeHas = false;
+	CCVector3d m_probeP;
+	QString m_probeText;
+	class QTimer* m_probeTimer = nullptr;
+	double m_viewRefShift = -1.0; //!< líc půdorysu (strana k pozorovateli) v m od ±0,000
+	bool m_viewRefColor = false;
+	bool m_viewRefGuides = true;
+	struct ViewRefSeg
+	{
+		CCVector2d a, b;
+		ccColor::Rgb color;
+	};
+	std::vector<ViewRefSeg> m_viewRef;     //!< promítnutý půdorys (u, v)
+	std::vector<double> m_viewRefGuideU;   //!< vodicí čáry (u) z lícové strany
+	double m_viewRefGuideTop = 0.0;        //!< horní konec vodicích čar (v)
+	void rebuildViewRef();
 	QString m_lastText;
 	QString m_flash; //!< jednorázová zpráva ve stavovém řádku
 	bool m_exportSkipImported = false;

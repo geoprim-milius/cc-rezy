@@ -25,6 +25,7 @@ public:
 		ccColor::Rgb color2 = ccColor::Rgb( 0, 230, 255 );
 		bool background = false; //!< tmavý podklad pod textem
 		std::vector<CCVector3d> segs; //!< úsečky po dvojicích (značka kóty), barva color
+		float lineWidth = 1.5f;       //!< tloušťka úseček segs
 		bool pin = false;
 		CCVector3d dir = CCVector3d( 0, 0, 0 ); //!< směr textu (natočený text); nula = vodorovně na obrazovce
 		QString text3;       //!< třetí text pod číslem (výška bodu)

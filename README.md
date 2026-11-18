@@ -21,6 +21,7 @@ Rozbalte zip do nové složky a spusťte `CloudCompare.exe`.
 - ±0,000 = výška podlahy 1. patra (ikona = odhad z mračna)
 - **Podlaha patra** (jen vyšší patra): výšky v patře se počítají od ní, ve 3D na ní leží kresba
 - **Reference**: jiné patro šedě pod kresbou (kontrola, zda jsou zdi nad sebou), *uchopit* = uchopovat i na jeho čáry
+- **Reference v pohledu / řezu**: vybraný půdorys se ukáže pod pohledem jako na výkrese – vodorovně sedí přesně na pohled, strana k pozorovateli (líc) je nahoře. *Půdorys v pohledu*: výška líce v m od ±0,000 (posun nahoru/dolů přes pohled), *barva* = barevně podle hladin (jinak šedě), *vodicí čáry* = svislé čáry z rohů zdí, ostění oken a lomů na straně k pozorovateli nahoru přes pohled (vnitřní příčky ne). Se zaškrtnutým *uchopit* se dá uchopit na půdorys i vodicí čáry. Reference se pamatuje pro každý výkres zvlášť.
 
 ## Pás karet
 Karty **Kreslení** (kreslení, úpravy, pomůcky vč. pomocného řezu, změřené body), **Řezy a pohledy** (řezy, pohledy, patra, zobrazení), **Výstup**; vlevo tlačítko **Kreslit**
@@ -79,6 +80,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | dům | Nový pohled (fasáda) | | rovina před objektem: 2 body, pak strana pohledu; vidět je vše za rovinou do *Hloubky* |
 | kostka | 3D náhled | | výchozí šikmý pohled kolem středu okna (zároveň „reset“ 3D náhledu) |
 | špendlík | Špendlík | prostřední klik | klik na místo ve výkresu → 3D náhled se tam posune a ukáže červený špendlík; **natočení, přiblížení, perspektiva a nastavení posuvníků zůstanou**. Skrýt: ve 3D náhledu zaškrtávátko *špendlík*, ve výkresu *Zobrazit špendlík* (Pomůcky). V půdorysu jde jehla přes celou výšku ořezu, v řezu/pohledu ukazuje přesně na místo |
+| výška | Výška bodu | | přepínač (Pomůcky): u kurzoru se po chvilce klidu ukáže výška bodu mračna pod ním `+0,083 (268,000)` = vůči ±0,000 a Bpv – v půdorysu, řezu/pohledu (bod nejblíž k oku v ořezu) i ve 3D náhledu a pomocném řezu |
 | složka | Uložit rozdělanou práci | | projekt CloudCompare (.bin): mračno, kresba, řezy, patra, body, nastavení panelu i pohled |
 | disketa | Uložit V7 | | seed, hladiny, umístění řezů, výšky |
 
@@ -95,6 +97,8 @@ Kurzor je nitkový kříž (na výběr čáry se čtverečkem).
 Uchopení: konec (čtverec), průsečík (křížek), střed (trojúhelník), na čáře (kosočtverec).
 
 ## 3D náhled
+
+Na posuvníku **Výška** jsou oranžové značky podlah pater (podle výkresů; přízemí = ±0,000), po najetí myší název patra a výška podlahy.
 Okno se zředěnou kopií mračna a nakreslenými čarami. Nahoře posuvníky **od – do**
 (jako Cross Section v CloudCompare): **Šířka**, **Hloubka** (podle natočení pohledu) a **Výška**
 v metrech od místa kliknutí; horní jezdec výšky doleva = uříznutá střecha.

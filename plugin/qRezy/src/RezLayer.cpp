@@ -50,7 +50,7 @@ void RezLayer::drawMeOnly( CC_DRAW_CONTEXT& context )
 		if ( !it.segs.empty() )
 		{
 			gl->glColor3ub( it.color.r, it.color.g, it.color.b );
-			gl->glLineWidth( 1.5f );
+			gl->glLineWidth( it.lineWidth );
 			gl->glBegin( GL_LINES );
 			for ( size_t k = 0; k + 1 < it.segs.size(); k += 2 )
 			{

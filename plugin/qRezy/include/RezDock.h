@@ -9,6 +9,7 @@
 
 #include <array>
 
+#include <map>
 #include <vector>
 
 class ccMainAppInterface;
@@ -122,6 +123,11 @@ private:
 	std::vector<Tuple4Tpl<double>> m_slabWide;  //!< roviny výběru (s rezervou)
 	std::vector<Tuple4Tpl<double>> m_slabExact; //!< aktuální přesný ořez
 	double m_slabMargin = 0.0;
+	std::vector<Tuple4Tpl<double>> m_curPlanes; //!< aktuální ořezové roviny zobrazeného mračna
+	//! výška bodu pod kurzorem v hlavním okně (bod mračna nejblíž k oku v ořezu)
+	bool probePoint( const QPoint& pos, CCVector3d& P, QString& text );
+	class QAction* m_probeAct = nullptr;
+	void pushFloorMarks( View3D* v ) const; //!< značky podlah pater na posuvník Výška a ±0,000
 	class QTimer* m_slabTimer = nullptr;
 	void updateLabels();
 	void topView();
@@ -186,6 +192,13 @@ private:
 	QComboBox* m_refCombo = nullptr;
 	QCheckBox* m_refSnap = nullptr;
 	QWidget* m_refRow = nullptr;
+	std::map<int, int> m_refFor; //!< zvolená reference pro každý výkres (půdorys / pohled)
+	QWidget* m_viewRefRow = nullptr;
+	QLabel* m_viewRefLabel = nullptr;            //!< pohled: posun půdorysu, barva, vodicí čáry
+	QDoubleSpinBox* m_viewRefShift = nullptr;
+	QCheckBox* m_viewRefColor = nullptr;
+	QCheckBox* m_viewRefGuides = nullptr;
+	void applyViewRefOptions();
 	int m_lastPlan = 0;
 	QShortcut* m_down = nullptr;
 

@@ -36,6 +36,7 @@
 #include <QOpenGLFunctions_2_1>
 #include <QWheelEvent>
 #include <QSettings>
+#include <QToolTip>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -105,6 +106,12 @@ public:
 	}
 	double v0() const { return m_v0; }
 	double v1() const { return m_v1; }
+	//! značky (hodnota, popis) – podlahy pater
+	void setMarks( const std::vector<std::pair<double, QString>>& marks )
+	{
+		m_marks = marks;
+		update();
+	}
 	double minimum() const { return m_min; }
 	double maximum() const { return m_max; }
 
@@ -129,6 +136,18 @@ protected:
 			p.setPen( QPen( pal.color( QPalette::Text ), 1 ) );
 			const double xz = toX( 0.0 );
 			p.drawLine( QPointF( xz, cy - 7 ), QPointF( xz, cy + 7 ) );
+		}
+		// podlahy pater
+		p.setPen( QPen( QColor( 255, 150, 40 ), 2 ) );
+		for ( const auto& mk : m_marks )
+		{
+			if ( mk.first < m_min || mk.first > m_max )
+			{
+				continue;
+			}
+			const double xm = toX( mk.first );
+			p.drawLine( QPointF( xm, cy - 9 ), QPointF( xm, cy - 4 ) );
+			p.drawLine( QPointF( xm, cy + 4 ), QPointF( xm, cy + 9 ) );
 		}
 		p.setPen( QPen( pal.color( QPalette::Dark ), 1 ) );
 		p.setBrush( pal.color( QPalette::Button ) );
@@ -157,6 +176,24 @@ protected:
 		if ( m_drag >= 0 && ( e->buttons() & Qt::LeftButton ) )
 		{
 			moveTo( e->pos().x() );
+			return;
+		}
+		// popis značky patra pod myší
+		QString tip;
+		for ( const auto& mk : m_marks )
+		{
+			if ( mk.first >= m_min && mk.first <= m_max && std::abs( toX( mk.first ) - e->pos().x() ) <= 4.0 )
+			{
+				tip += ( tip.isEmpty() ? QString() : QStringLiteral( "\n" ) ) + mk.second;
+			}
+		}
+		if ( !tip.isEmpty() )
+		{
+			QToolTip::showText( e->globalPos(), tip, this );
+		}
+		else
+		{
+			QToolTip::hideText();
 		}
 	}
 	void mouseReleaseEvent( QMouseEvent* ) override
@@ -206,6 +243,7 @@ private:
 	double m_v0 = -1.5;
 	double m_v1 = 1.5;
 	int m_drag = -1;
+	std::vector<std::pair<double, QString>> m_marks;
 };
 
 namespace
@@ -613,6 +651,7 @@ void View3D::updateRanges()
 		m_rs[i]->setRange( lo, hi );
 		m_rs[i]->setEnabled( true );
 	}
+	updateFloorMarks();
 	updateValueLabels();
 }
 
@@ -1382,6 +1421,79 @@ int View3D::measNeeded() const
 	return floorMode() ? 1 : measTotal() - ( m_hasFloor ? 1 : 0 );
 }
 
+void View3D::setFloorMarks( const std::vector<FloorMark>& marks )
+{
+	m_floorMarks = marks;
+	updateFloorMarks();
+}
+
+void View3D::updateFloorMarks()
+{
+	if ( !m_rs[2] )
+	{
+		return;
+	}
+	std::vector<std::pair<double, QString>> mk;
+	if ( m_clone && m_hasFocus )
+	{
+		for ( const FloorMark& f : m_floorMarks )
+		{
+			const double zL = m_clone->toLocal3d( CCVector3d( 0, 0, f.zG ) ).z;
+			const QString lvl = QString::number( f.zG, 'f', 3 ).replace( '.', ',' );
+			mk.emplace_back( ( zL - m_focus.z ) / m_scale, QStringLiteral( "%1 – podlaha %2" ).arg( f.name, lvl ) );
+		}
+	}
+	m_rs[2]->setMarks( mk );
+}
+
+void View3D::setProbe( bool on )
+{
+	m_probeOn = on;
+	if ( !m_probeTimer )
+	{
+		m_probeTimer = new QTimer( this );
+		m_probeTimer->setSingleShot( true );
+		m_probeTimer->setInterval( 120 );
+		connect( m_probeTimer, &QTimer::timeout, this, [this]() { probeNow(); } );
+	}
+	if ( !on && m_probeLayer )
+	{
+		m_probeLayer->items.clear();
+		if ( m_win )
+		{
+			m_win->redraw( true, false );
+		}
+	}
+}
+
+void View3D::probeNow()
+{
+	if ( !m_probeOn || !m_win )
+	{
+		return;
+	}
+	if ( !m_probeLayer )
+	{
+		m_probeLayer = new RezLayer;
+		m_probeLayer->setDisplay( m_win );
+		m_win->addToOwnDB( m_probeLayer );
+	}
+	m_probeLayer->items.clear();
+	CCVector3d P;
+	if ( pickPoint( m_probePos, P ) || ( m_aux && auxPoint( m_probePos, P ) ) )
+	{
+		RezLayer::Item it;
+		it.P = P;
+		it.marker = true;
+		it.markerColor = ccColor::Rgb( 255, 140, 0 );
+		it.text = floorText( P );
+		it.color = ccColor::Rgb( 255, 200, 90 );
+		it.background = true;
+		m_probeLayer->items.push_back( it );
+	}
+	m_win->redraw( true, false );
+}
+
 QString View3D::floorText( const CCVector3d& P ) const
 {
 	// „+0,150 (245,320)“ – relativně k ±0,000 a v Bpv
@@ -1527,6 +1639,25 @@ void View3D::updateMeasure( bool live )
 
 bool View3D::eventFilter( QObject* obj, QEvent* event )
 {
+	// výška bodu pod kurzorem (po krátkém klidu myši)
+	if ( m_probeOn && obj == m_widget && m_probeTimer )
+	{
+		if ( event->type() == QEvent::MouseMove )
+		{
+			m_probePos = static_cast<QMouseEvent*>( event )->pos();
+			if ( m_probeLayer && !m_probeLayer->items.empty() )
+			{
+				m_probeLayer->items.clear();
+			}
+			m_probeTimer->start();
+		}
+		else if ( event->type() == QEvent::Leave && m_probeLayer )
+		{
+			m_probeTimer->stop();
+			m_probeLayer->items.clear();
+			m_win->redraw( true, false );
+		}
+	}
 	// pomocný řez: klávesy V a B (bez Ctrl/Alt/Shift), když je fokus v tomto okně nebo nad ním myš (i zadokované) → Def. podlahy
 	if ( m_aux && m_floorBtn && ( event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress ) )
 	{

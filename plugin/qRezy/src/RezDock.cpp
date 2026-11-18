@@ -20,6 +20,7 @@
 #include <limits>
 #include <ccHObjectCaster.h>
 #include <ccPointCloud.h>
+#include <ccOctree.h>
 #include <ccPolyline.h>
 
 #include <QAbstractSpinBox>
@@ -150,6 +151,7 @@ RezDock::RezDock( ccMainAppInterface* app, QWidget* parent )
 
 	setObjectName( QStringLiteral( "qRezyDock" ) );
 	m_draw = new DrawTool( m_app, this );
+	m_draw->setProbeFunc( [this]( const QPoint& pos, CCVector3d& P, QString& t ) { return probePoint( pos, P, t ); } );
 
 	buildPanel();
 	buildToolbar();
@@ -340,6 +342,25 @@ void RezDock::buildPanel()
 	rl->addWidget( m_refCombo, 1 );
 	rl->addWidget( m_refSnap );
 	form->addRow( QStringLiteral( "Reference:" ), m_refRow );
+	// pohled / řez: půdorys pod pohledem (líc nahoře), posun nahoru/dolů, barva, vodicí čáry z líce
+	m_viewRefRow = new QWidget;
+	{
+		auto* vl = new QHBoxLayout( m_viewRefRow );
+		vl->setContentsMargins( 0, 0, 0, 0 );
+		m_viewRefShift = makeSpin( -1000.0, 1000.0, QSettings().value( QStringLiteral( "qRezy/viewRefShift" ), -1.0 ).toDouble(), 0.5, 2, QStringLiteral( " m" ) );
+		m_viewRefShift->setToolTip( QStringLiteral( "Výška líce půdorysu (strana k pozorovateli) v pohledu, m od ±0,000 – posun půdorysu nahoru/dolů přes pohled" ) );
+		m_viewRefColor = new QCheckBox( QStringLiteral( "barva" ) );
+		m_viewRefColor->setToolTip( QStringLiteral( "Půdorys barevně podle hladin (jinak šedě)" ) );
+		m_viewRefColor->setChecked( QSettings().value( QStringLiteral( "qRezy/viewRefColor" ), false ).toBool() );
+		m_viewRefGuides = new QCheckBox( QStringLiteral( "vodicí čáry" ) );
+		m_viewRefGuides->setToolTip( QStringLiteral( "Svislé čáry z rohů zdí, ostění oken a lomů na straně k pozorovateli – nahoru přes pohled (uchopí se, když je zapnuté „uchopit“)" ) );
+		m_viewRefGuides->setChecked( QSettings().value( QStringLiteral( "qRezy/viewRefGuides" ), true ).toBool() );
+		vl->addWidget( m_viewRefShift, 1 );
+		vl->addWidget( m_viewRefColor );
+		vl->addWidget( m_viewRefGuides );
+	}
+	m_viewRefLabel = new QLabel( QStringLiteral( "Půdorys v pohledu:" ) );
+	form->addRow( m_viewRefLabel, m_viewRefRow );
 	lay->addLayout( form );
 
 	m_status = new QLabel;
@@ -423,10 +444,15 @@ void RezDock::buildPanel()
 	} );
 	auto refChanged = [this]()
 	{
+		m_refFor[m_activeView] = m_refCombo->currentData().toInt();
 		m_draw->setReference( m_refCombo->currentData().toInt(), m_refSnap->isChecked() );
 		focusView();
 	};
 	connect( m_refCombo, qOverload<int>( &QComboBox::activated ), this, refChanged );
+	connect( m_viewRefShift, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]() { applyViewRefOptions(); } );
+	connect( m_viewRefColor, &QCheckBox::toggled, this, [this]() { applyViewRefOptions(); } );
+	connect( m_viewRefGuides, &QCheckBox::toggled, this, [this]() { applyViewRefOptions(); } );
+	applyViewRefOptions();
 	connect( m_refSnap, &QCheckBox::toggled, this, refChanged );
 	connect( m_zero, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]()
 	{
@@ -1122,6 +1148,23 @@ void RezDock::buildToolbar()
 		connect( pinVis, &QAction::toggled, this, [this]( bool on ) { m_draw->setPinVisible( on ); focusView(); } );
 		RibbonColumn pc2 = p.column();
 		pc2.addSmall( pinVis );
+		m_probeAct = mkAct( "probe", QStringLiteral( "Výška bodu" ), QStringLiteral( "Výška bodu mračna pod kurzorem (vůči ±0,000 a Bpv) – v půdorysu, řezu i ve 3D náhledu a pomocném řezu" ), true );
+		m_probeAct->setChecked( QSettings().value( QStringLiteral( "qRezy/probe" ), false ).toBool() );
+		connect( m_probeAct, &QAction::toggled, this, [this]( bool on )
+		{
+			QSettings().setValue( QStringLiteral( "qRezy/probe" ), on );
+			m_draw->setProbe( on );
+			for ( View3D* v : { m_view3D, m_viewAux } )
+			{
+				if ( v )
+				{
+					v->setProbe( on );
+				}
+			}
+			focusView();
+		} );
+		m_draw->setProbe( m_probeAct->isChecked() );
+		pc2.addSmall( m_probeAct );
 		RibbonGroup bg = r->addGroup( pDraw, QStringLiteral( "Změřené body" ) );
 		bg.addBig( ptLoad );
 		RibbonColumn b1 = bg.column();
@@ -1422,7 +1465,12 @@ void RezDock::refreshRefCombo()
 	{
 		return;
 	}
-	const int prev = m_refCombo->currentData().isValid() ? m_refCombo->currentData().toInt() : -1;
+	int prev = m_refCombo->currentData().isValid() ? m_refCombo->currentData().toInt() : -1;
+	const auto rf = m_refFor.find( m_activeView );
+	if ( rf != m_refFor.end() )
+	{
+		prev = rf->second; // reference naposledy zvolená v tomto výkresu
+	}
 	const QSignalBlocker b( m_refCombo );
 	m_refCombo->clear();
 	m_refCombo->addItem( QStringLiteral( "žádná" ), -1 );
@@ -1439,7 +1487,20 @@ void RezDock::refreshRefCombo()
 		idx = 0;
 	}
 	m_refCombo->setCurrentIndex( idx );
-	m_draw->setReference( isPlanView( m_activeView ) ? m_refCombo->currentData().toInt() : -1, m_refSnap->isChecked() );
+	m_draw->setReference( m_refCombo->currentData().toInt(), m_refSnap->isChecked() );
+}
+
+void RezDock::applyViewRefOptions()
+{
+	if ( !m_viewRefShift || !m_draw )
+	{
+		return;
+	}
+	QSettings st;
+	st.setValue( QStringLiteral( "qRezy/viewRefShift" ), m_viewRefShift->value() );
+	st.setValue( QStringLiteral( "qRezy/viewRefColor" ), m_viewRefColor->isChecked() );
+	st.setValue( QStringLiteral( "qRezy/viewRefGuides" ), m_viewRefGuides->isChecked() );
+	m_draw->setViewRefOptions( m_viewRefShift->value(), m_viewRefColor->isChecked(), m_viewRefGuides->isChecked() );
 }
 
 // ================================================================ panel
@@ -1952,8 +2013,102 @@ void RezDock::applyClip()
 	storeState( false );
 }
 
+bool RezDock::probePoint( const QPoint& pos, CCVector3d& P, QString& text )
+{
+	ccGenericPointCloud* c = cloud();
+	ccGLWindowInterface* win = m_app ? m_app->getActiveGLWindow() : nullptr;
+	if ( !c || !win )
+	{
+		return false;
+	}
+	ccGenericPointCloud* ent = ( m_slab && m_slab->isEnabled() ) ? static_cast<ccGenericPointCloud*>( m_slab ) : c;
+	ccGLCameraParameters cam;
+	win->getGLCameraParameters( cam );
+	const double dpr = win->getDevicePixelRatio();
+	const double sx = pos.x() * dpr;
+	const double sy = cam.viewport[3] - 1 - pos.y() * dpr;
+	CCVector3d A;
+	CCVector3d B;
+	CCVector3d A2;
+	if ( !cam.unproject( CCVector3d( sx, sy, 0.0 ), A ) || !cam.unproject( CCVector3d( sx, sy, 1.0 ), B ) || !cam.unproject( CCVector3d( sx + 5.0 * dpr, sy, 0.0 ), A2 ) )
+	{
+		return false;
+	}
+	CCVector3d dir = B - A;
+	if ( dir.norm() < 1e-12 )
+	{
+		return false;
+	}
+	dir.normalize();
+	const double radius = std::max( 1e-6, ( A2 - A ).norm() ); // 5 px
+	// válec podél paprsku přes obálku mračna
+	ccBBox bb = ent->getOwnBB();
+	if ( !bb.isValid() )
+	{
+		return false;
+	}
+	const CCVector3d bc = CCVector3d::fromArray( bb.getCenter().u );
+	const double halfLen = bb.getDiagNormd() / 2.0 + radius;
+	const CCVector3d center = A + dir * ( bc - A ).dot( dir );
+	ccOctree::Shared oct = ent->getOctree();
+	if ( !oct )
+	{
+		QApplication::setOverrideCursor( Qt::WaitCursor );
+		oct = ent->computeOctree( nullptr, false );
+		QApplication::restoreOverrideCursor();
+		if ( !oct )
+		{
+			return false;
+		}
+	}
+	CCCoreLib::DgmOctree::CylindricalNeighbourhood cn;
+	cn.center = CCVector3::fromArray( center.u );
+	cn.dir = CCVector3::fromArray( dir.u );
+	cn.radius = static_cast<PointCoordinateType>( radius );
+	cn.maxHalfLength = static_cast<PointCoordinateType>( halfLen );
+	cn.level = oct->findBestLevelForAGivenNeighbourhoodSizeExtraction( cn.radius );
+	oct->getPointsInCylindricalNeighbourhood( cn );
+	bool found = false;
+	double best = 1e300;
+	for ( const CCCoreLib::DgmOctree::PointDescriptor& pd : cn.neighbours )
+	{
+		const CCVector3d Q = CCVector3d::fromArray( pd.point->u );
+		bool in = true;
+		for ( const Tuple4Tpl<double>& e : m_curPlanes )
+		{
+			if ( e.x * Q.x + e.y * Q.y + e.z * Q.z + e.w < 0.0 )
+			{
+				in = false;
+				break;
+			}
+		}
+		if ( !in )
+		{
+			continue;
+		}
+		const double t = ( Q - A ).dot( dir ); // vzdálenost od oka
+		if ( t < best )
+		{
+			best = t;
+			P = Q;
+			found = true;
+		}
+	}
+	if ( !found )
+	{
+		return false;
+	}
+	const double zG = ent->toGlobal3d( P ).z;
+	const double rel = zG - m_zero->value();
+	QString r = QString::number( std::abs( rel ), 'f', 3 ).replace( '.', ',' );
+	r = ( std::abs( rel ) < 0.0005 ) ? QStringLiteral( "±0,000" ) : ( ( rel > 0 ? QStringLiteral( "+" ) : QStringLiteral( "-" ) ) + r );
+	text = QStringLiteral( "%1 (%2)" ).arg( r, QString::number( zG, 'f', 3 ).replace( '.', ',' ) );
+	return true;
+}
+
 void RezDock::showClip( ccGenericPointCloud* c, const std::vector<Tuple4Tpl<double>>& planes, double margin )
 {
+	m_curPlanes = planes;
 	ccPointCloud* pc = ccHObjectCaster::ToPointCloud( c );
 	// malé mračno nebo bez ořezu: přímo ořezové roviny na mračnu (jako dřív)
 	const unsigned SlabMin = 8000000;
@@ -2134,7 +2289,14 @@ void RezDock::updateLabels()
 	}
 	m_height->setEnabled( !sec );
 	m_floorLevel->setEnabled( isPlanView( m_activeView ) && m_activeView != 0 );
-	m_refRow->setEnabled( isPlanView( m_activeView ) );
+	m_refRow->setEnabled( true );
+	m_refCombo->setToolTip( isPlanView( m_activeView ) ? QStringLiteral( "Jiné patro šedě pod kresbou – kontrola, zda jsou zdi nad sebou" )
+	                                                   : QStringLiteral( "Půdorys pod pohledem (strana k pozorovateli nahoře) – kontrola, že pohled sedí na půdorys" ) );
+	if ( m_viewRefRow )
+	{
+		m_viewRefRow->setVisible( !isPlanView( m_activeView ) );
+		m_viewRefLabel->setVisible( !isPlanView( m_activeView ) );
+	}
 	syncPosSlider();
 	m_thickness->setEnabled( !sec || si.kind == 0 );
 	m_thickSlider->setEnabled( !sec || si.kind == 0 );
@@ -2257,6 +2419,8 @@ bool RezDock::ensure3D( bool aux )
 		m_app->getMainWindow()->addDockWidget( Qt::RightDockWidgetArea, v );
 		v->setFloating( true );
 		v->resize( 760, 600 );
+		v->setProbe( m_probeAct && m_probeAct->isChecked() );
+		pushFloorMarks( v );
 		if ( !aux )
 		{
 			connect( v, &View3D::pinPicked, this, [this]( double x, double y, double z )
@@ -2314,10 +2478,28 @@ bool RezDock::ensure3D( bool aux )
 	return ok;
 }
 
+void RezDock::pushFloorMarks( View3D* v ) const
+{
+	if ( !v )
+	{
+		return;
+	}
+	std::vector<View3D::FloorMark> out;
+	for ( const FloorInfo& f : loadFloors() )
+	{
+		const double z = ( f.id == 0 ) ? m_zero->value() : f.level; // přízemí: ±0,000
+		out.push_back( { z, f.name.isEmpty() ? QStringLiteral( "Půdorys" ) : f.name } );
+	}
+	v->setZeroGlobal( m_zero->value() );
+	v->setFloorMarks( out );
+}
+
 void RezDock::refresh3DLines()
 {
 	const bool v3 = m_view3D && m_view3D->isVisible();
 	const bool va = m_viewAux && m_viewAux->isVisible();
+	pushFloorMarks( m_view3D );
+	pushFloorMarks( m_viewAux );
 	if ( !v3 && !va )
 	{
 		return;

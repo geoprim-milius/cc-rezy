@@ -81,6 +81,18 @@ public:
 
 	unsigned sourceID() const { return m_sourceID; }
 
+	//! výška bodu mračna pod kurzorem (přepínač „Výška bodu“)
+	void setProbe( bool on );
+	//! ±0,000 (Bpv) pro relativní výšky
+	void setZeroGlobal( double z ) { m_zeroG = z; }
+	//! značky podlah pater na posuvníku Výška (Bpv, název)
+	struct FloorMark
+	{
+		double zG;
+		QString name;
+	};
+	void setFloorMarks( const std::vector<FloorMark>& marks );
+
 Q_SIGNALS:
 	//! prostřední klik do mračna ve 3D náhledu → místo (lokální souřadnice) pro špendlík ve výkresu
 	void pinPicked( double x, double y, double z );
@@ -174,6 +186,13 @@ private:
 	double m_auxFloor = 0.0; //!< odhad podlahy (místní z)
 	double m_auxCeil = 0.0;  //!< odhad stropu
 	double m_zeroG = 0.0;
+	bool m_probeOn = false;
+	QPoint m_probePos;
+	class QTimer* m_probeTimer = nullptr;
+	class RezLayer* m_probeLayer = nullptr;
+	void probeNow();
+	std::vector<FloorMark> m_floorMarks;
+	void updateFloorMarks();
 	class QPushButton* m_backBtn = nullptr;
 	class ccPolyline* m_measPoly = nullptr;
 	// zápis výšky do půdorysu (jen pomocný řez)

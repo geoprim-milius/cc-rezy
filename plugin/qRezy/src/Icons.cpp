@@ -606,6 +606,18 @@ namespace Icons
 				p.drawLine( QPointF( 13, 13 ), QPointF( 13, 25 ) );
 				p.drawLine( QPointF( 19, 13 ), QPointF( 19, 25 ) );
 			}
+			else if ( n == "probe" )
+			{
+				// kříž kurzoru a výška (svislá kóta)
+				p.setPen( QPen( Ink, 1.6 ) );
+				p.drawLine( QPointF( 4, 20 ), QPointF( 18, 20 ) );
+				p.drawLine( QPointF( 11, 13 ), QPointF( 11, 27 ) );
+				p.setPen( QPen( Accent, 2 ) );
+				p.drawLine( QPointF( 25, 5 ), QPointF( 25, 20 ) );
+				p.drawLine( QPointF( 21, 5 ), QPointF( 29, 5 ) );
+				p.drawLine( QPointF( 21, 20 ), QPointF( 29, 20 ) );
+				arrowHead( p, QPointF( 25, 6 ), QPointF( 25, 14 ), 6 );
+			}
 			else if ( n == "floor" )
 			{
 				p.drawLine( QPointF( 3, 24 ), QPointF( 29, 24 ) );
