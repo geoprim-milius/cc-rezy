@@ -403,6 +403,26 @@ void RezDock::buildPanel()
 	}
 	m_ref2Label = new QLabel( QStringLiteral( "Ref. pohledu:" ) );
 	form->addRow( m_ref2Label, m_ref2Row );
+	m_ref2GuideRow = new QWidget;
+	{
+		auto* gl = new QHBoxLayout( m_ref2GuideRow );
+		gl->setContentsMargins( 0, 0, 0, 0 );
+		QSettings st;
+		m_ref2Guides = new QCheckBox( QStringLiteral( "vodorovné" ) );
+		m_ref2Guides->setToolTip( QStringLiteral( "Vodorovné vodicí čáry z reference pohledu (výšky střechy, říms…) – jen ze strany společného rohu" ) );
+		m_ref2Guides->setChecked( st.value( QStringLiteral( "qRezy/ref2Guides" ), true ).toBool() );
+		m_ref2Band = new QSlider( Qt::Horizontal );
+		m_ref2Band->setRange( 0, 100 ); // 0–10 m po 10 cm
+		m_ref2Band->setValue( static_cast<int>( std::lround( st.value( QStringLiteral( "qRezy/ref2Band" ), 2.0 ).toDouble() * 10.0 ) ) );
+		m_ref2Band->setToolTip( QStringLiteral( "Odkud až se vodorovné čáry vedou: pás od společného kraje reference (0–10 m)" ) );
+		m_ref2BandLbl = new QLabel;
+		m_ref2BandLbl->setMinimumWidth( 44 );
+		gl->addWidget( m_ref2Guides );
+		gl->addWidget( m_ref2Band, 1 );
+		gl->addWidget( m_ref2BandLbl );
+	}
+	m_ref2GuideLabel = new QLabel( QStringLiteral( "Vodicí z ref.:" ) );
+	form->addRow( m_ref2GuideLabel, m_ref2GuideRow );
 	lay->addLayout( form );
 
 	m_status = new QLabel;
@@ -503,6 +523,16 @@ void RezDock::buildPanel()
 		focusView();
 	} );
 	connect( m_ref2Shift, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]() { applyRef2(); } );
+	connect( m_ref2Guides, &QCheckBox::toggled, this, [this]( bool on )
+	{
+		QSettings().setValue( QStringLiteral( "qRezy/ref2Guides" ), on );
+		applyRef2();
+	} );
+	connect( m_ref2Band, &QSlider::valueChanged, this, [this]( int v )
+	{
+		QSettings().setValue( QStringLiteral( "qRezy/ref2Band" ), v / 10.0 );
+		applyRef2();
+	} );
 	applyViewRefOptions();
 	connect( m_refSnap, &QCheckBox::toggled, this, refChanged );
 	connect( m_zero, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]()
@@ -1657,12 +1687,13 @@ void RezDock::applyRef2()
 	SectionInfo ref;
 	if ( id > 0 && !isPlanView( m_activeView ) && sectionById( m_activeView, cur ) && sectionById( id, ref ) )
 	{
-		m_draw->setViewReference2( id, frameFor( id ), ref.kind, cur.kind, m_ref2Shift->value() );
+		m_draw->setViewReference2( id, frameFor( id ), ref.kind, cur.kind, m_ref2Shift->value(), m_ref2Guides->isChecked(), m_ref2Band->value() / 10.0 );
 	}
 	else
 	{
-		m_draw->setViewReference2( -1, DrawFrame(), 0, 0, 0.0 );
+		m_draw->setViewReference2( -1, DrawFrame(), 0, 0, 0.0, false, 0.0 );
 	}
+	m_ref2BandLbl->setText( QString::number( m_ref2Band->value() / 10.0, 'f', 1 ).replace( '.', ',' ) + QStringLiteral( " m" ) );
 }
 
 // ================================================================ panel
@@ -2465,6 +2496,8 @@ void RezDock::updateLabels()
 		m_viewRefLabel->setVisible( !isPlanView( m_activeView ) );
 		m_ref2Row->setVisible( !isPlanView( m_activeView ) );
 		m_ref2Label->setVisible( !isPlanView( m_activeView ) );
+		m_ref2GuideRow->setVisible( !isPlanView( m_activeView ) );
+		m_ref2GuideLabel->setVisible( !isPlanView( m_activeView ) );
 	}
 	syncPosSlider();
 	m_thickness->setEnabled( !sec || si.kind == 0 );

@@ -215,6 +215,11 @@ private:
 	QLabel* m_ref2Label = nullptr;
 	QComboBox* m_ref2Combo = nullptr;
 	QDoubleSpinBox* m_ref2Shift = nullptr;
+	QWidget* m_ref2GuideRow = nullptr;        //!< vodorovné vodicí čáry z reference: zapnout, pás od společného kraje
+	QLabel* m_ref2GuideLabel = nullptr;
+	QCheckBox* m_ref2Guides = nullptr;
+	QSlider* m_ref2Band = nullptr;
+	QLabel* m_ref2BandLbl = nullptr;
 	std::map<int, int> m_ref2For;
 	void refreshRef2Combo();
 	void applyRef2();

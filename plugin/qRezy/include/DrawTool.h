@@ -206,7 +206,7 @@ public:
 	//! guideMode: 0 bez, 1 viditelné ve směru pohledu (b), 2 průsečíky roviny řezu (a), 3 obojí
 	void setViewRefOptions( double shiftM, bool color, int guideMode );
 	//! reference jiného pohledu / řezu (viewId <= 0 = žádná): vedle (pohled←cokoli, řez←řez) nebo promítnutá v dosahu (řez←pohled)
-	void setViewReference2( int viewId, const DrawFrame& refFrame, int refKind, int curKind, double sideShiftM );
+	void setViewReference2( int viewId, const DrawFrame& refFrame, int refKind, int curKind, double sideShiftM, bool hGuides, double bandM );
 	void copyFromReference( const CCVector2d& c0, const CCVector2d& c1 );
 	//! výška bodu mračna pod kurzorem: funkce (pozice v okně → bod v lokálních souř. a text) a zapnutí
 	using ProbeFunc = std::function<bool( const QPoint&, CCVector3d&, QString& )>;
@@ -548,9 +548,13 @@ private:
 		bool hidden;
 	};
 	std::vector<ViewRef2Seg> m_viewRef2;    //!< reference jiného pohledu (u, v)
-	std::vector<double> m_viewRefHGuides;   //!< vodorovné vodicí čáry (v) z reference pohledu
-	double m_viewRefHGuideU0 = 0.0;
-	double m_viewRefHGuideU1 = 0.0;
+	struct HGuide
+	{
+		double v, u0, u1;
+	};
+	std::vector<HGuide> m_viewRefHGuides;   //!< vodorovné vodicí čáry z reference pohledu (ze společné strany)
+	bool m_ref2HGuides = true;
+	double m_ref2Band = 2.0;                //!< pás od společného kraje reference, ze kterého se vedou vodorovné čáry (m)
 	CCVector2d m_refCopyA;                  //!< převzít z reference: první roh
 	struct ViewRefSeg
 	{
@@ -558,7 +562,7 @@ private:
 		ccColor::Rgb color;
 	};
 	std::vector<ViewRefSeg> m_viewRef;     //!< promítnutý půdorys (u, v)
-	std::vector<double> m_viewRefGuideU;   //!< vodicí čáry (u) z lícové strany
+	std::vector<CCVector2d> m_viewRefGuideU; //!< svislé vodicí čáry: (u, v začátku v promítnutém půdorysu)
 	double m_viewRefGuideTop = 0.0;        //!< horní konec vodicích čar (v)
 	void rebuildViewRef();
 	QString m_lastText;

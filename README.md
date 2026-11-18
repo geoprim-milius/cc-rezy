@@ -22,8 +22,9 @@ Rozbalte zip do nové složky a spusťte `CloudCompare.exe`.
 - **Podlaha patra** (jen vyšší patra): výšky v patře se počítají od ní, ve 3D na ní leží kresba
 - **Reference**: jiné patro šedě pod kresbou (kontrola, zda jsou zdi nad sebou), *uchopit* = uchopovat i na jeho čáry
 - **Reference v pohledu / řezu**: vybraný půdorys se ukáže pod pohledem jako na výkrese – vodorovně sedí přesně na pohled, strana k pozorovateli (líc) je nahoře. *Půdorys v pohledu*: výška líce v m od ±0,000 (posun nahoru/dolů přes pohled), *barva* = barevně podle hladin (jinak šedě), *vodicí čáry* = svislé čáry z rohů zdí, ostění oken a lomů na straně k pozorovateli nahoru přes pohled (vnitřní příčky ne). Se zaškrtnutým *uchopit* se dá uchopit na půdorys i vodicí čáry. Reference se pamatuje pro každý výkres zvlášť.
+- V řezu je v promítnutém půdorysu **oranžově čárkovaně čára řezu**, část před ní (odříznutá) je tlumeně; vodicí čáry začínají v bodě půdorysu, ze kterého vedou.
 - **Vodicí čáry z půdorysu** (pole vedle *barva*): *viditelné* = rohy, ostění a lomy za rovinou, které jsou vidět ve směru pohledu; *průsečíky* = kde rovina řezu protíná čáry půdorysu (zdi v řezu); *obojí*; nebo bez.
-- **Ref. pohledu** (jen v řezu / pohledu): jiný pohled nebo řez jako reference. V pohledu (a u řezu z řezu) se ukáže **vedle** – stejné výšky, vodorovné vodicí čáry z jeho vrcholů (střecha, římsy…), posun do strany polem vedle. V řezu z pohledu se pohled **promítne** do roviny řezu – jen část, kterou řez vidí (za rovinou, do první zdi půdorysu – vyberte i Referenci půdorysu); natočená fasáda se ukáže zkreslená. Nástrojem **Převzít z reference** (Řezy a pohledy → Pohled) obdélníkem dvěma kliky zkopírujete čáry reference (např. celé okno) do výkresu ve stejné hladině.
+- **Ref. pohledu** (jen v řezu / pohledu): jiný pohled nebo řez jako reference. V pohledu (a u řezu z řezu) se ukáže **vedle** – stejné výšky, vodorovné vodicí čáry z jeho vrcholů (střecha, římsy…), posun do strany polem vedle; reference se postaví na stranu společného rohu obou výkresů. Řádek *Vodicí z ref.*: *vodorovné* zapne/vypne vodorovné čáry, posuvník = pás od společného kraje reference (0–10 m), ze kterého se vedou (jen k aktuálnímu výkresu). V řezu z pohledu se pohled **promítne** do roviny řezu – jen část, kterou řez vidí (za rovinou, do první zdi půdorysu – vyberte i Referenci půdorysu); natočená fasáda se ukáže zkreslená. Nástrojem **Převzít z reference** (Řezy a pohledy → Pohled) obdélníkem dvěma kliky zkopírujete čáry reference (např. celé okno) do výkresu ve stejné hladině.
 
 ## Pás karet
 Karty **Kreslení** (kreslení, úpravy, pomůcky vč. pomocného řezu, změřené body), **Řezy a pohledy** (řezy, pohledy, patra, zobrazení), **Výstup**; vlevo tlačítko **Kreslit**
@@ -86,7 +87,7 @@ Dvojklik na kartu pás sbalí / rozbalí.
 | složka | Uložit rozdělanou práci | | projekt CloudCompare (.bin): mračno, kresba, řezy, patra, body, nastavení panelu i pohled |
 | disketa | Uložit V7 | | seed, hladiny, umístění řezů, výšky |
 
-**Značky řezů v půdorysech**: každý řez a pohled má ve všech půdorysech na koncích značky – čára 1,05 m ven, trojúhelník s vrcholem ve směru pohledu a písmeno (A / A', B / B' … podle pořadí). Posunou se s řezem, zmizí s ním; do DGN hladina 27 REZ_CARA (barva 100) a 28 REZ (text 0,5 m).
+**Značky řezů v půdorysech**: každý řez a pohled má ve všech půdorysech na koncích značky – čára 1,05 m ven, trojúhelník s vrcholem ve směru pohledu; u řezu písmena A / A', B / B' … (podle čísla řezu), u pohledu jeho název (např. Pohled 1) u obou šipek. Posunou se s řezem, zmizí s ním; do DGN hladina 27 REZ_CARA (barva 100) a 28 REZ (text 0,5 m).
 **Severka** (Řezy a pohledy → Pohled): značka na kurzoru natočená na skutečný sever, klik = umístit do pohledu / řezu; hladina 14 jako ve vzoru.
 **Hladiny TASKA (DGN 25) a TEREN (DGN 24)** – barvy v DGN odhadem, upravíte v *Hladiny a barvy…*.
 
