@@ -61,6 +61,9 @@
 #include <QToolBar>
 #include <QToolButton>
 #include <QMenu>
+#include <QMouseEvent>
+#include <QPixmap>
+#include <QCursor>
 #include <QVBoxLayout>
 #include <QLineEdit>
 #include <map>
@@ -356,7 +359,11 @@ void RezDock::buildPanel()
 	m_refCombo->setToolTip( QStringLiteral( "Jiné patro šedě pod kresbou – kontrola, zda jsou zdi nad sebou" ) );
 	m_refSnap = new QCheckBox( QStringLiteral( "uchopit" ) );
 	m_refSnap->setToolTip( QStringLiteral( "Uchopovat i na čáry referenčního patra" ) );
+	m_refColor = new QCheckBox( QStringLiteral( "barva" ) );
+	m_refColor->setToolTip( QStringLiteral( "Referenční patro barevně podle hladin (jinak šedě)" ) );
+	m_refColor->setChecked( QSettings().value( QStringLiteral( "qRezy/planRefColor" ), false ).toBool() );
 	rl->addWidget( m_refCombo, 1 );
+	rl->addWidget( m_refColor );
 	rl->addWidget( m_refSnap );
 	form->addRow( QStringLiteral( "Reference:" ), m_refRow );
 	// pohled / řez: půdorys pod pohledem (líc nahoře), posun nahoru/dolů, barva, vodicí čáry z líce
@@ -388,6 +395,22 @@ void RezDock::buildPanel()
 	}
 	m_viewRefLabel = new QLabel( QStringLiteral( "Půdorys v pohledu:" ) );
 	form->addRow( m_viewRefLabel, m_viewRefRow );
+	// hloubka pro viditelné vodicí čáry
+	m_guideDepthRow = new QWidget;
+	{
+		auto* dl = new QHBoxLayout( m_guideDepthRow );
+		dl->setContentsMargins( 0, 0, 0, 0 );
+		m_guideDepth = new QSlider( Qt::Horizontal );
+		m_guideDepth->setRange( 1, 200 ); // 0,1 – 20 m
+		m_guideDepth->setValue( static_cast<int>( std::lround( QSettings().value( QStringLiteral( "qRezy/guideDepth" ), 20.0 ).toDouble() * 10.0 ) ) );
+		m_guideDepth->setToolTip( QStringLiteral( "Vodicí čáry „viditelné“: jak daleko za rovinou řezu / pohledu brát rohy a ostění (0,1–20 m)" ) );
+		m_guideDepthLbl = new QLabel;
+		m_guideDepthLbl->setMinimumWidth( 48 );
+		dl->addWidget( m_guideDepth, 1 );
+		dl->addWidget( m_guideDepthLbl );
+	}
+	m_guideDepthLabel = new QLabel( QStringLiteral( "Hloubka vodicích:" ) );
+	form->addRow( m_guideDepthLabel, m_guideDepthRow );
 	// reference jiného pohledu / řezu
 	m_ref2Row = new QWidget;
 	{
@@ -559,6 +582,23 @@ void RezDock::buildPanel()
 	} );
 	applyViewRefOptions();
 	connect( m_refSnap, &QCheckBox::toggled, this, refChanged );
+	connect( m_refColor, &QCheckBox::toggled, this, [this]( bool on )
+	{
+		QSettings().setValue( QStringLiteral( "qRezy/planRefColor" ), on );
+		m_draw->setPlanRefColor( on );
+		focusView();
+	} );
+	m_draw->setPlanRefColor( m_refColor->isChecked() );
+	auto depthChanged = [this]()
+	{
+		const double m = m_guideDepth->value() / 10.0;
+		QSettings().setValue( QStringLiteral( "qRezy/guideDepth" ), m );
+		m_guideDepthLbl->setText( QString::number( m, 'f', 1 ).replace( '.', ',' ) + QStringLiteral( " m" ) );
+		m_draw->setGuideDepth( m );
+	};
+	connect( m_guideDepth, &QSlider::valueChanged, this, depthChanged );
+	depthChanged();
+	m_draw->setHiddenLayers( loadHiddenLayers() );
 	connect( m_zero, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]()
 	{
 		updateLabels();
@@ -1297,6 +1337,10 @@ void RezDock::buildToolbar()
 		hc.widget( m_catCombo );
 		hc.addSmall( m_hiddenAct, QStringLiteral( "F6" ) );
 		hc.addSmall( symb );
+		QAction* lvlDisp = mkAct( "layers", QStringLiteral( "Zobrazení hladin…" ), QStringLiteral( "Zapnout / vypnout zobrazení hladin (jako Level Display v MicroStationu) – vypnutá hladina se nekreslí ve výkresech ani referencích, nevedou z ní vodicí čáry a nejde na ni uchopit; do DGN se ukládají všechny hladiny" ) );
+		connect( lvlDisp, &QAction::triggered, this, [this]() { showLayerDisplayMenu(); } );
+		RibbonColumn hc2 = h.column();
+		hc2.addSmall( lvlDisp );
 		RibbonGroup p = r->addGroup( pDraw, QStringLiteral( "Pomůcky" ) );
 		RibbonColumn pc = p.column();
 		pc.addSmall( m_orthoAct, QStringLiteral( "F8" ) );
@@ -1668,6 +1712,97 @@ void RezDock::applyViewRefOptions()
 	st.setValue( QStringLiteral( "qRezy/viewRefColor" ), m_viewRefColor->isChecked() );
 	st.setValue( QStringLiteral( "qRezy/viewRefGuideMode" ), m_viewRefGuides->currentIndex() );
 	m_draw->setViewRefOptions( m_viewRefShift->value(), m_viewRefColor->isChecked(), m_viewRefGuides->currentIndex() );
+}
+
+std::set<int> RezDock::loadHiddenLayers() const
+{
+	std::set<int> out;
+	for ( const QString& s : QSettings().value( QStringLiteral( "qRezy/hiddenLayers" ) ).toString().split( ',', Qt::SkipEmptyParts ) )
+	{
+		out.insert( s.toInt() );
+	}
+	return out;
+}
+
+namespace
+{
+	//! nabídka, která se po zaškrtnutí nezavře (zobrazení hladin)
+	class StayMenu : public QMenu
+	{
+	public:
+		using QMenu::QMenu;
+
+	protected:
+		void mouseReleaseEvent( QMouseEvent* e ) override
+		{
+			QAction* a = activeAction();
+			if ( a && a->isCheckable() && a->isEnabled() )
+			{
+				a->trigger();
+				return;
+			}
+			QMenu::mouseReleaseEvent( e );
+		}
+	};
+}
+
+void RezDock::showLayerDisplayMenu()
+{
+	StayMenu menu( this );
+	std::set<int> hidden = loadHiddenLayers();
+	auto apply = [this]( const std::set<int>& h )
+	{
+		QStringList ids;
+		for ( int id : h )
+		{
+			ids << QString::number( id );
+		}
+		QSettings().setValue( QStringLiteral( "qRezy/hiddenLayers" ), ids.join( ',' ) );
+		m_draw->setHiddenLayers( h );
+		refresh3DLines();
+		m_app->refreshAll();
+	};
+	QAction* all = menu.addAction( QStringLiteral( "Zapnout všechny" ) );
+	connect( all, &QAction::triggered, this, [&]()
+	{
+		hidden.clear();
+		for ( QAction* a : menu.actions() )
+		{
+			if ( a->isCheckable() )
+			{
+				const QSignalBlocker b( a );
+				a->setChecked( true );
+				a->setText( QString( QChar( 0x2611 ) ) + a->text().mid( 1 ) );
+			}
+		}
+		apply( hidden );
+	} );
+	menu.addSeparator();
+	for ( const Drawing::Layer& L : Drawing::layers() )
+	{
+		QPixmap pm( 12, 12 );
+		pm.fill( L.color );
+		const QString name = QStringLiteral( "%1 (DGN %2)" ).arg( L.name ).arg( L.sym[0].level );
+		QAction* a = menu.addAction( QIcon( pm ), QString() );
+		a->setCheckable( true );
+		a->setChecked( !hidden.count( L.id ) );
+		// stav i v textu (u ikon barvy styl nemusí ukázat zaškrtnutí)
+		const QString onTxt = QString( QChar( 0x2611 ) ) + QStringLiteral( "  " ) + name;
+		const QString offTxt = QString( QChar( 0x2610 ) ) + QStringLiteral( "  " ) + name;
+		auto label = [onTxt, offTxt]( bool on ) { return on ? onTxt : offTxt; };
+		a->setText( label( a->isChecked() ) );
+		const int id = L.id;
+		connect( a, &QAction::toggled, this, [&, id, a, label]( bool on )
+		{
+			a->setText( label( on ) );
+			if ( on )
+				hidden.erase( id );
+			else
+				hidden.insert( id );
+			apply( hidden );
+		} );
+	}
+	menu.exec( QCursor::pos() );
 }
 
 void RezDock::refreshRef2Combo()
@@ -2522,6 +2657,8 @@ void RezDock::updateLabels()
 		m_ref2Label->setVisible( !isPlanView( m_activeView ) );
 		m_ref2GuideRow->setVisible( !isPlanView( m_activeView ) );
 		m_ref2GuideLabel->setVisible( !isPlanView( m_activeView ) );
+		m_guideDepthRow->setVisible( !isPlanView( m_activeView ) );
+		m_guideDepthLabel->setVisible( !isPlanView( m_activeView ) );
 	}
 	syncPosSlider();
 	m_thickness->setEnabled( !sec || si.kind == 0 );
@@ -2776,7 +2913,7 @@ void RezDock::refresh3DLines()
 		for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
 		{
 			ccHObject* ch = group->getChild( i );
-			if ( !ch->isA( CC_TYPES::POLY_LINE ) || !ch->hasMetaData( Drawing::MetaCategory ) )
+			if ( !ch->isA( CC_TYPES::POLY_LINE ) || !ch->hasMetaData( Drawing::MetaCategory ) || m_draw->layerHidden( ch ) )
 			{
 				continue;
 			}

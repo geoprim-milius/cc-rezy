@@ -10,6 +10,7 @@
 #include <array>
 
 #include <map>
+#include <set>
 #include <vector>
 
 class ccMainAppInterface;
@@ -204,6 +205,13 @@ private:
 	QDoubleSpinBox* m_floorLevel = nullptr;
 	QComboBox* m_refCombo = nullptr;
 	QCheckBox* m_refSnap = nullptr;
+	QCheckBox* m_refColor = nullptr;          //!< reference patra v půdorysu barevně
+	QWidget* m_guideDepthRow = nullptr;       //!< hloubka viditelných vodicích čar (řez / pohled)
+	QLabel* m_guideDepthLabel = nullptr;
+	QSlider* m_guideDepth = nullptr;
+	QLabel* m_guideDepthLbl = nullptr;
+	void showLayerDisplayMenu();
+	std::set<int> loadHiddenLayers() const;
 	QWidget* m_refRow = nullptr;
 	std::map<int, int> m_refFor; //!< zvolená reference pro každý výkres (půdorys / pohled)
 	QWidget* m_viewRefRow = nullptr;

@@ -20,6 +20,7 @@
 
 #include <array>
 #include <functional>
+#include <set>
 #include <vector>
 
 class ccMainAppInterface;
@@ -212,6 +213,13 @@ public:
 	using ProbeFunc = std::function<bool( const QPoint&, CCVector3d&, QString& )>;
 	void setProbeFunc( ProbeFunc f ) { m_probeFunc = std::move( f ); }
 	void setProbe( bool on );
+	//! zobrazení hladin: vypnuté hladiny (id) se nekreslí, nejsou v referencích, vodicích čarách ani uchopení (export beze změny)
+	void setHiddenLayers( const std::set<int>& cats );
+	bool layerHidden( const ccHObject* obj ) const;
+	//! reference jiného patra v půdorysu barevně (jinak šedě)
+	void setPlanRefColor( bool on );
+	//! viditelné vodicí čáry: jak daleko za rovinou řezu brát vrcholy (m)
+	void setGuideDepth( double m );
 	double viewRefTop() const { return m_viewRefShift; }
 	//! překreslí popisky (po změně barev apod.)
 	void refreshDisplay() { redraw2D(); }
@@ -536,6 +544,11 @@ private:
 	double m_viewRefShift = -1.0; //!< líc půdorysu (strana k pozorovateli) v m od ±0,000
 	bool m_viewRefColor = false;
 	int m_viewRefGuideMode = 1;
+	std::set<int> m_hiddenCats;
+	std::set<int> m_hiddenLevels; //!< DGN hladiny vypnutých hladin (texty)
+	bool m_planRefColor = false;
+	double m_guideDepth = 20.0;
+	std::vector<ccColor::Rgb> m_viewRefGuideCol; //!< barva svislých vodicích čar (podle hladiny, když „barva“)
 	int m_ref2View = -1;
 	DrawFrame m_ref2Frame;
 	bool m_hasRef2Frame = false;

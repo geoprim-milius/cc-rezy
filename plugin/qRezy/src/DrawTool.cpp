@@ -486,10 +486,10 @@ void DrawTool::updateLineVisibility()
 		// -1 = čára definice řezu (vidět jen v půdorysu)
 		const bool isRef = m_frame.plan && m_refView >= 0 && view == m_refView && view != m_frame.viewId;
 		const bool on = ( view == m_frame.viewId ) || ( view == -1 && m_frame.plan ) || isRef;
-		ch->setEnabled( on && !( isRef && isText( ch ) ) );
-		// referenční patro šedě
+		ch->setEnabled( on && !( isRef && isText( ch ) ) && !layerHidden( ch ) );
+		// referenční patro šedě (nebo barevně)
 		auto* poly = static_cast<ccPolyline*>( ch );
-		if ( isRef )
+		if ( isRef && !m_planRefColor )
 		{
 			poly->setTempColor( ccColor::Rgb( 125, 125, 125 ), true );
 		}
@@ -805,7 +805,7 @@ std::vector<DrawTool::Segment> DrawTool::collectSegments() const
 		}
 		const int view = ch->hasMetaData( Drawing::MetaView ) ? ch->getMetaData( Drawing::MetaView ).toInt() : 0;
 		const bool ref = m_frame.plan && m_refSnap && m_refView >= 0 && view == m_refView && view != m_frame.viewId && !isText( ch );
-		if ( view != m_frame.viewId && !ref )
+		if ( ( view != m_frame.viewId && !ref ) || layerHidden( ch ) )
 		{
 			continue;
 		}
@@ -6602,6 +6602,54 @@ void DrawTool::setReference( int viewId, bool snap )
 	redraw3D();
 }
 
+bool DrawTool::layerHidden( const ccHObject* obj ) const
+{
+	if ( !obj || ( m_hiddenCats.empty() ) )
+	{
+		return false;
+	}
+	if ( obj->hasMetaData( Drawing::MetaCategory ) && m_hiddenCats.count( obj->getMetaData( Drawing::MetaCategory ).toInt() ) )
+	{
+		return true;
+	}
+	if ( isText( obj ) && !isKota( obj ) && obj->hasMetaData( "qRezy.textLevel" ) )
+	{
+		return m_hiddenLevels.count( obj->getMetaData( "qRezy.textLevel" ).toInt() ) > 0;
+	}
+	return false;
+}
+
+void DrawTool::setHiddenLayers( const std::set<int>& cats )
+{
+	m_hiddenCats = cats;
+	m_hiddenLevels.clear();
+	for ( const Drawing::Layer& L : Drawing::layers() )
+	{
+		if ( cats.count( L.id ) )
+		{
+			m_hiddenLevels.insert( L.sym[0].level );
+		}
+	}
+	setSelection( {} );
+	updateLineVisibility();
+	rebuildViewRef();
+	redraw3D();
+}
+
+void DrawTool::setPlanRefColor( bool on )
+{
+	m_planRefColor = on;
+	updateLineVisibility();
+	redraw3D();
+}
+
+void DrawTool::setGuideDepth( double m )
+{
+	m_guideDepth = std::max( 0.05, m );
+	rebuildViewRef();
+	redraw3D();
+}
+
 void DrawTool::setProbe( bool on )
 {
 	m_probeOn = on;
@@ -6673,6 +6721,10 @@ void DrawTool::rebuildViewRef()
 				uMinView = std::min( uMinView, uv.x );
 				uMaxView = std::max( uMaxView, uv.x );
 			}
+			continue;
+		}
+		if ( layerHidden( ch ) )
+		{
 			continue;
 		}
 		if ( view >= 0 && view == m_ref2View && !isText( ch ) && !isKota( ch ) && poly->hasMetaData( Drawing::MetaCategory ) )
@@ -6763,26 +6815,37 @@ void DrawTool::rebuildViewRef()
 				m_viewRef.push_back( { CCVector2d( u, vc ), CCVector2d( std::min( u + dash, u1 ), vc ), ccColor::Rgb( 255, 140, 0 ) } );
 			}
 		}
-		std::vector<CCVector2d> us; // (u, v začátku)
+		struct GuideCand
+		{
+			double u, v;
+			ccColor::Rgb c;
+		};
+		std::vector<GuideCand> us; // (u, v začátku, barva hladiny)
+		const ccColor::Rgb guideDefault( 0, 175, 190 );
 		const double eps = 0.02 * m_scale;
 		// (b) vrcholy za rovinou, viditelné ve směru pohledu: paprsek z vrcholu k rovině nenarazí na jinou čáru
 		if ( m_viewRefGuideMode == 1 || m_viewRefGuideMode == 3 )
 		{
-			std::vector<std::pair<double, double>> verts;
+			struct Vt
+			{
+				double first, second;
+				ccColor::Rgb c;
+			};
+			std::vector<Vt> verts;
 			for ( const Raw& r : raw )
 			{
-				verts.emplace_back( r.u0, r.d0 );
-				verts.emplace_back( r.u1, r.d1 );
+				verts.push_back( { r.u0, r.d0, r.c } );
+				verts.push_back( { r.u1, r.d1, r.c } );
 			}
-			std::sort( verts.begin(), verts.end() );
-			verts.erase( std::unique( verts.begin(), verts.end(), [&]( const std::pair<double, double>& a, const std::pair<double, double>& b )
+			std::sort( verts.begin(), verts.end(), []( const Vt& a, const Vt& b ) { return a.first < b.first || ( a.first == b.first && a.second < b.second ); } );
+			verts.erase( std::unique( verts.begin(), verts.end(), [&]( const Vt& a, const Vt& b )
 			                          { return std::abs( a.first - b.first ) < 1e-6 * m_scale && std::abs( a.second - b.second ) < 1e-6 * m_scale; } ),
 			             verts.end() );
 			for ( const auto& vt : verts )
 			{
-				if ( vt.second > dPlane + eps )
+				if ( vt.second > dPlane + eps || vt.second < dPlane - m_guideDepth * m_scale )
 				{
-					continue; // před rovinou (odříznuté)
+					continue; // před rovinou (odříznuté) nebo dál, než je nastavená hloubka
 				}
 				bool hidden = false;
 				for ( const Raw& r : raw )
@@ -6812,7 +6875,7 @@ void DrawTool::rebuildViewRef()
 				}
 				if ( !hidden )
 				{
-					us.emplace_back( vt.first, toV( vt.second ) );
+					us.push_back( { vt.first, toV( vt.second ), m_viewRefColor ? vt.c : guideDefault } );
 				}
 			}
 		}
@@ -6830,20 +6893,23 @@ void DrawTool::rebuildViewRef()
 						continue; // čára v rovině
 					}
 					const double t = s0 / ( s0 - s1 );
-					us.emplace_back( r.u0 + t * ( r.u1 - r.u0 ), toV( dPlane ) );
+					us.push_back( { r.u0 + t * ( r.u1 - r.u0 ), toV( dPlane ), m_viewRefColor ? r.c : guideDefault } );
 				}
 			}
 		}
-		std::sort( us.begin(), us.end(), []( const CCVector2d& a, const CCVector2d& b ) { return a.x < b.x; } );
-		for ( const CCVector2d& g : us )
+		std::sort( us.begin(), us.end(), []( const GuideCand& a, const GuideCand& b ) { return a.u < b.u; } );
+		m_viewRefGuideCol.clear();
+		for ( const GuideCand& g : us )
 		{
-			if ( m_viewRefGuideU.empty() || g.x - m_viewRefGuideU.back().x > 0.005 * m_scale )
+			if ( m_viewRefGuideU.empty() || g.u - m_viewRefGuideU.back().x > 0.005 * m_scale )
 			{
-				m_viewRefGuideU.push_back( g );
+				m_viewRefGuideU.emplace_back( g.u, g.v );
+				m_viewRefGuideCol.push_back( g.c );
 			}
-			else
+			else if ( g.v > m_viewRefGuideU.back().y )
 			{
-				m_viewRefGuideU.back().y = std::max( m_viewRefGuideU.back().y, g.y ); // z nejbližšího bodu k rovině
+				m_viewRefGuideU.back().y = g.v; // z nejbližšího bodu k rovině (i jeho barva)
+				m_viewRefGuideCol.back() = g.c;
 			}
 		}
 	}
@@ -7387,16 +7453,29 @@ void DrawTool::refreshLayer()
 		}
 		if ( !m_viewRefGuideU.empty() )
 		{
-			RezLayer::Item g;
-			g.color = ccColor::Rgb( 0, 175, 190 );
-			g.lineWidth = 1.0f;
-			for ( const CCVector2d& gu : m_viewRefGuideU )
+			// po barvách (barva hladiny, ze které čára vede, nebo tyrkysová)
+			std::vector<RezLayer::Item> gs;
+			for ( size_t k = 0; k < m_viewRefGuideU.size(); ++k )
 			{
-				g.segs.push_back( m_frame.to3D( gu ) ); // od bodu v promítnutém půdorysu
-				g.segs.push_back( m_frame.to3D( CCVector2d( gu.x, m_viewRefGuideTop ) ) );
+				const CCVector2d& gu = m_viewRefGuideU[k];
+				const ccColor::Rgb c = k < m_viewRefGuideCol.size() ? m_viewRefGuideCol[k] : ccColor::Rgb( 0, 175, 190 );
+				auto it = std::find_if( gs.begin(), gs.end(), [&]( const RezLayer::Item& x ) { return x.color.r == c.r && x.color.g == c.g && x.color.b == c.b; } );
+				if ( it == gs.end() )
+				{
+					RezLayer::Item ni;
+					ni.color = c;
+					ni.lineWidth = 1.0f;
+					gs.push_back( ni );
+					it = gs.end() - 1;
+				}
+				it->segs.push_back( m_frame.to3D( gu ) ); // od bodu v promítnutém půdorysu
+				it->segs.push_back( m_frame.to3D( CCVector2d( gu.x, m_viewRefGuideTop ) ) );
 			}
-			g.P = g.segs.front();
-			m_layer->items.push_back( std::move( g ) );
+			for ( RezLayer::Item& g : gs )
+			{
+				g.P = g.segs.front();
+				m_layer->items.push_back( std::move( g ) );
+			}
 		}
 	}
 	// reference jiného pohledu / řezu a vodorovné vodicí čáry
@@ -7538,7 +7617,7 @@ void DrawTool::refreshLayer()
 			}
 			const int view = ch->getMetaData( Drawing::MetaView ).toInt();
 			auto* poly = static_cast<ccPolyline*>( ch );
-			if ( view != m_frame.viewId || poly->size() == 0 )
+			if ( view != m_frame.viewId || poly->size() == 0 || layerHidden( ch ) )
 			{
 				continue;
 			}
