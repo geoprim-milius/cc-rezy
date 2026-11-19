@@ -6117,6 +6117,12 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			if ( event->type() == QEvent::KeyPress )
 				setMode( Mode::RoomLabel );
 		}
+		else if ( plain && k == Qt::Key_J )
+		{
+			// J = délková kóta, další J = výšková (kačena) a zpět
+			if ( event->type() == QEvent::KeyPress )
+				setMode( m_mode == Mode::Dim ? Mode::Kota : Mode::Dim );
+		}
 		else
 		{
 			handled = false;
@@ -7545,7 +7551,8 @@ void DrawTool::rebuildViewRef()
 		const bool wall = ch->hasMetaData( Drawing::MetaCategory ) && ch->getMetaData( Drawing::MetaCategory ).toInt() == Drawing::Walls
 		                  && !( ch->hasMetaData( Drawing::MetaHidden ) && ch->getMetaData( Drawing::MetaHidden ).toBool() );
 		const bool arcPoly = isArc( poly );
-		const bool noGuide = ch->hasMetaData( Drawing::MetaCategory ) && m_guideOff.count( ch->getMetaData( Drawing::MetaCategory ).toInt() ) > 0;
+		const bool noGuide = ch->hasMetaData( "qRezy.solid" ) // odkazová čára trámu
+		                     || ( ch->hasMetaData( Drawing::MetaCategory ) && m_guideOff.count( ch->getMetaData( Drawing::MetaCategory ).toInt() ) > 0 );
 		const unsigned n = poly->size();
 		const unsigned segN = poly->isClosed() ? n : ( n > 0 ? n - 1 : 0 );
 		for ( unsigned k = 0; k < segN; ++k )

@@ -570,6 +570,10 @@ void RezDock::buildPanel()
 	{
 		syncThicknessSlider();
 		applyClip();
+		if ( !isPlanView( m_activeView ) )
+		{
+			m_draw->updatePointRange( frameFor( m_activeView ) ); // změřené body v řezu podle tloušťky
+		}
 	} );
 	connect( m_depth, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]( double v )
 	{
@@ -692,6 +696,17 @@ void RezDock::buildPanel()
 		connect( b, &QToolButton::clicked, this, [this, depthApply]() { m_guideDepthM = distStep( m_guideDepthM, +1 ); depthApply(); } );
 	depthApply();
 	m_draw->setHiddenLayers( loadHiddenLayers() );
+	{
+		// výchozí: z hladiny PREKLADY (čáry Vp, překlady, odkaz trámu) vodicí čáry nevedou – jednou doplnit
+		QSettings st;
+		if ( st.value( QStringLiteral( "qRezy/guideOffVer" ), 0 ).toInt() < 1 )
+		{
+			std::set<int> off = loadIdSet( QStringLiteral( "qRezy/guideOffLayers" ) );
+			off.insert( Drawing::Lintels );
+			saveIdSet( QStringLiteral( "qRezy/guideOffLayers" ), off );
+			st.setValue( QStringLiteral( "qRezy/guideOffVer" ), 1 );
+		}
+	}
 	m_draw->setGuideLayersOff( loadIdSet( QStringLiteral( "qRezy/guideOffLayers" ) ) );
 	connect( m_zero, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]()
 	{
@@ -1002,7 +1017,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Modify, "modify", "Upravit prvek", "Klik u konce čáry, pak nové místo konce." },
 		{ DrawTool::Mode::Break, "break", "Rozdělit", "2 body na čáře, část mezi nimi se smaže; stejný bod 2× = jen rozdělit." },
 		{ DrawTool::Mode::BreakLine, "breakline", "Rozdělit čarou", "Řezná čára 2 body → všechny čáry, které protne, se v průsečíku rozdělí (nic se nemaže). Průsečíky se ukazují červeně." },
-		{ DrawTool::Mode::Dim, "dim", "Délková", "Délková kóta (hladina kót, písmo jako popisy): 1. bod, 2. bod, klik = poloha kótovací čáry → kóta v mm. Každý další klik = další úsek řetězu na stejné čáře, pravé = konec. Směr, zaokrouhlení a ruční text vedle." },
+		{ DrawTool::Mode::Dim, "dim", "Délková", "Délková kóta (klávesa J; další J = výšková; hladina kót, písmo jako popisy): 1. bod, 2. bod, klik = poloha kótovací čáry → kóta v mm. Každý další klik = další úsek řetězu na stejné čáře, pravé = konec. Směr, zaokrouhlení a ruční text vedle." },
 		{ DrawTool::Mode::Info, "info", "Informace", "Informace o prvku: klik na čáru, text nebo kótu → okno s hladinou (název, F-klávesa, DGN hladina, barva, tloušťka, styl), typem prvku, plná/zakrytá, délkou a souřadnicemi bodů, u textu obsah a výška písma. Okno zůstane otevřené a přepíše se při dalším kliknutí." },
 		{ DrawTool::Mode::Pin, "pin", "Špendlík", "Klik na místo ve výkresu → 3D náhled se na něj posune a přiblíží (natočení a nastavení zůstane) a ukáže špendlík. Totéž kdykoli prostředním kliknutím." },
 		{ DrawTool::Mode::Extend, "extend", "Prodloužit", "Klik u konce čáry, nový konec nebo celková délka." },
@@ -1017,7 +1032,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Door, "door", "Dveře", "Dveře v půdorysu: 1. klik = závěs (konec otvoru), 2. klik = druhý konec otvoru (kde dosedne oblouk), 3. klik = strana otevírání. Nakreslí křídlo a oblouk (DVERE) a kótu (POP_DVERE): čára středem otvoru, šířka otvoru v mm (na cm); pak vyskočí pomocný řez – změřte výšku otvoru a Enter, výška se zapíše pod šířku." },
 		{ DrawTool::Mode::Opening, "winopen", "Okno", "Okno v půdorysu: 1. a 2. klik = konce okenního otvoru, 3. klik = strana kóty (do místnosti). Nakreslí kótu (POP_DVERE): čára středem otvoru, délka otvoru v mm (na cm); pak vyskočí pomocný řez v režimu Okno – změřte okno a Enter, výška(parapet) se zapíše pod délku." },
 		{ DrawTool::Mode::RoomLabel, "roomlabel", "Popis místnosti", "Popis místnosti (klávesa H): klik doprostřed místnosti → výměra z nakreslených zdí; v pomocném řezu klikněte podlahu a strop, Enter → okno s číslem (další se počítá samo), podlahou Bpv, světlou výškou, výměrou a názvem → popis za myší, klik = umístit. Volba „mimo místnost“ v okně: kroužek, lom odkazové čáry, popis." },
-		{ DrawTool::Mode::Kota, "kota", "Kóta", "Výšková kóta (kačena) v řezu nebo pohledu: 1. klik = bod, odkud se bere výška, 2. klik = kam kótu umístit (jen vodorovně). Výška v Bpv, místní (k ±0,000) nebo obojí, na cm; písmo 0,18 m. Přesun a kopie jen vodorovně." },
+		{ DrawTool::Mode::Kota, "kota", "Výšková", "Výšková kóta (kačena, klávesa J dvakrát) v řezu nebo pohledu: 1. klik = bod, odkud se bere výška, 2. klik = kam kótu umístit (jen vodorovně). Výška v Bpv, místní (k ±0,000) nebo obojí, na cm; písmo 0,18 m. Přesun a kopie jen vodorovně." },
 		{ DrawTool::Mode::RefCopy, "copy", "Převzít z reference", "Převzít z reference pohledu: vyberte čáry reference jako ve Výběru (klik, Ctrl+klik, okno tažením zleva = uvnitř, zprava = křížem), Enter = zkopírovat do řezu / pohledu na stejné místo ve stejné hladině; pravé = zrušit výběr." },
 	};
 	for ( const ToolDef& t : tools )
@@ -1481,11 +1496,16 @@ void RezDock::buildToolbar()
 		b2.addSmall( ptHeights );
 		b2.widget( ptHFmt );
 		RibbonGroup dg = r->addGroup( pDraw, QStringLiteral( "Kóty" ) );
-		dg.addBig( T( DrawTool::Mode::Dim ) );
+		dg.addBig( T( DrawTool::Mode::Dim ), QStringLiteral( "J" ) );
 		RibbonColumn dc = dg.column();
 		dc.widget( dimOrient );
 		dc.widget( dimRound );
 		dc.addSmall( dimManual );
+		dg.addBig( T( DrawTool::Mode::Kota ), QStringLiteral( "J·J" ) );
+		RibbonColumn kc = dg.column();
+		kc.widget( kotaFmt );
+		kc.widget( kotaScale, QStringLiteral( "1 :" ) );
+		kc.addSmall( m_probeAct );
 	}
 	const int pSec = r->addPage( QStringLiteral( "Řezy a pohledy" ) );
 	{
@@ -1511,12 +1531,6 @@ void RezDock::buildToolbar()
 		} );
 		n.addBig( sev );
 		// výšková kóta (kačena) a výška bodu – patří k řezům a pohledům
-		RibbonGroup kg = r->addGroup( pSec, QStringLiteral( "Kóta" ) );
-		kg.addBig( T( DrawTool::Mode::Kota ) );
-		RibbonColumn kc = kg.column();
-		kc.widget( kotaFmt );
-		kc.widget( kotaScale, QStringLiteral( "1 :" ) );
-		kc.addSmall( m_probeAct );
 		RibbonGroup s = r->addGroup( pSec, QStringLiteral( "Poloha a tloušťka řezu" ) );
 		RibbonColumn s1 = s.column();
 		s1.addSmall( upA, QStringLiteral( "PgUp" ) );
@@ -5030,7 +5044,8 @@ DrawFrame RezDock::frameForSection( int viewId, const SectionInfo& si ) const
 	}
 	else
 	{
-		f.ptMin = s0 - 1.0 * sc;
+		// řez: za rovinou (ve směru šipek) jako mračno do tloušťky, aspoň 1 m; před rovinou 1 m
+		f.ptMin = s0 - std::max( 1.0, m_thickness->value() ) * sc;
 		f.ptMax = s0 + 1.0 * sc;
 	}
 	return f;
