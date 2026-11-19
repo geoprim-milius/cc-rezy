@@ -618,6 +618,17 @@ namespace Icons
 				p.drawLine( QPointF( 21, 20 ), QPointF( 29, 20 ) );
 				arrowHead( p, QPointF( 25, 6 ), QPointF( 25, 14 ), 6 );
 			}
+			else if ( n == "info" )
+			{
+				// kroužek s písmenem i
+				p.setPen( QPen( Blue, 2 ) );
+				p.drawEllipse( QPointF( 16, 16 ), 12, 12 );
+				p.setPen( Qt::NoPen );
+				p.setBrush( Blue );
+				p.drawEllipse( QPointF( 16, 9.5 ), 2, 2 );
+				p.drawRect( QRectF( 14.5, 13, 3, 11 ) );
+				p.setBrush( Qt::NoBrush );
+			}
 			else if ( n == "floor" )
 			{
 				p.drawLine( QPointF( 3, 24 ), QPointF( 29, 24 ) );

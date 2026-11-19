@@ -908,6 +908,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Modify, "modify", "Upravit prvek", "Klik u konce čáry, pak nové místo konce." },
 		{ DrawTool::Mode::Break, "break", "Rozdělit", "2 body na čáře, část mezi nimi se smaže; stejný bod 2× = jen rozdělit." },
 		{ DrawTool::Mode::BreakLine, "breakline", "Rozdělit čarou", "Řezná čára 2 body → všechny čáry, které protne, se v průsečíku rozdělí (nic se nemaže). Průsečíky se ukazují červeně." },
+		{ DrawTool::Mode::Info, "info", "Informace", "Informace o prvku: klik na čáru, text nebo kótu → okno s hladinou (název, F-klávesa, DGN hladina, barva, tloušťka, styl), typem prvku, plná/zakrytá, délkou a souřadnicemi bodů, u textu obsah a výška písma. Okno zůstane otevřené a přepíše se při dalším kliknutí." },
 		{ DrawTool::Mode::Pin, "pin", "Špendlík", "Klik na místo ve výkresu → 3D náhled se na něj posune a přiblíží (natočení a nastavení zůstane) a ukáže špendlík. Totéž kdykoli prostředním kliknutím." },
 		{ DrawTool::Mode::Extend, "extend", "Prodloužit", "Klik u konce čáry, nový konec nebo celková délka." },
 		{ DrawTool::Mode::Corner, "corner", "Roh", "Dvě čáry do průsečíku; klikejte na části, které zůstanou." },
@@ -1336,11 +1337,12 @@ void RezDock::buildToolbar()
 		RibbonColumn hc = h.column();
 		hc.widget( m_catCombo );
 		hc.addSmall( m_hiddenAct, QStringLiteral( "F6" ) );
-		hc.addSmall( symb );
 		QAction* lvlDisp = mkAct( "layers", QStringLiteral( "Zobrazení hladin…" ), QStringLiteral( "Zapnout / vypnout zobrazení hladin (jako Level Display v MicroStationu) – vypnutá hladina se nekreslí ve výkresech ani referencích, nevedou z ní vodicí čáry a nejde na ni uchopit; do DGN se ukládají všechny hladiny" ) );
 		connect( lvlDisp, &QAction::triggered, this, [this]() { showLayerDisplayMenu(); } );
 		RibbonColumn hc2 = h.column();
 		hc2.addSmall( lvlDisp );
+		hc2.addSmall( symb );
+		hc2.addSmall( T( DrawTool::Mode::Info ) );
 		RibbonGroup p = r->addGroup( pDraw, QStringLiteral( "Pomůcky" ) );
 		RibbonColumn pc = p.column();
 		pc.addSmall( m_orthoAct, QStringLiteral( "F8" ) );

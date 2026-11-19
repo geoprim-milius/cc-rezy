@@ -10,6 +10,8 @@
 #include "Drawing.h"
 
 #include <QObject>
+#include <QPointer>
+#include <QDialog>
 #include <QPoint>
 #include <QString>
 #include <QStringList>
@@ -96,7 +98,8 @@ public:
 		Door,         //!< dveře v půdorysu: závěs, druhý konec otvoru, strana → křídlo + oblouk + kóta šířky (výška z pomocného řezu)
 		Opening,      //!< okno v půdorysu: 2 body otvoru, strana kóty → kóta délky (výška(parapet) z pomocného řezu, funkce Okno)
 		RoomLabel,    //!< popis místnosti: klik do místnosti → pomocný řez (podlaha, strop) → okno s údaji → umístění (případně s odkazovou čárou)
-		RefCopy       //!< převzít z reference pohledu: obdélník 2 kliky → čáry reference uvnitř se zkopírují do výkresu
+		RefCopy,      //!< převzít z reference pohledu: obdélník 2 kliky → čáry reference uvnitř se zkopírují do výkresu
+		Info          //!< informace o prvku: klik → okno s hladinou, typem, délkou, body…
 	};
 
 	enum class SnapType
@@ -147,6 +150,8 @@ public:
 	int kotaScale() const { return m_kotaScale; }
 	void setKotaSymbology( int level, int color ) { m_kotaLevel = level; m_kotaColor = color; }
 	static bool isKota( const ccHObject* obj );
+	//! okno s informacemi o prvku (hladina, typ, styl, délka, body, text…)
+	void showInfo( ccPolyline* poly );
 	//! změřené body s výškou v dosahu dané roviny (lokální 3D poloha, číslo) – pro výstup
 	std::vector<std::pair<CCVector3d, QString>> pointsInFrame( const DrawFrame& f ) const;
 	//! přesune čáry z hladiny na jinou (smazání hladiny); vrací počet
@@ -318,6 +323,7 @@ private:
 		ccPolyline* poly;
 		bool ref = false; //!< čára referenčního výkresu (jen uchopení)
 		bool arc = false; //!< úsek oblouku
+		bool guide = false; //!< vodicí čára reference (bod na ní jde získat pro trasování)
 	};
 
 	struct Action
@@ -419,6 +425,8 @@ private:
 	// trasování (jako AutoCAD): získané body a pomocné čáry
 	TrackLines trackRays( const CCVector2d* from ) const;
 	bool trackingPoint( const CCVector2d& raw, const TrackLines& rays, CCVector2d& out, TrackLines* lines ) const;
+	//! bod leží na vodicí čáře reference (dir = její směr)
+	bool onGuide( const CCVector2d& P, CCVector2d* dir = nullptr ) const;
 	void onHoverTimeout();
 
 	void updateTip();
@@ -469,6 +477,8 @@ private:
 	double m_scale = 1.0;
 	double m_planFront = 0.0; //!< výška čar půdorysu (nad mračnem)
 	DrawFrame m_frame;
+	QPointer<QDialog> m_infoDlg;     //!< okno Informace o prvku (nemodální, znovu použité)
+	class QTextBrowser* m_infoText = nullptr;
 
 	int m_category = Drawing::Walls;
 	bool m_hidden = false;

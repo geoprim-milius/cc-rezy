@@ -23,6 +23,10 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QInputDialog>
+#include <QDialog>
+#include <QTextBrowser>
+#include <QMainWindow>
+#include <QVBoxLayout>
 #include <QMap>
 #include <QSettings>
 #include <QTextCodec>
@@ -828,7 +832,7 @@ std::vector<DrawTool::Segment> DrawTool::collectSegments() const
 		}
 		for ( const CCVector2d& g : m_viewRefGuideU )
 		{
-			segs.push_back( { g, CCVector2d( g.x, m_viewRefGuideTop ), nullptr, true, false } );
+			segs.push_back( { g, CCVector2d( g.x, m_viewRefGuideTop ), nullptr, true, false, true } );
 		}
 		for ( const ViewRef2Seg& s : m_viewRef2 )
 		{
@@ -836,7 +840,7 @@ std::vector<DrawTool::Segment> DrawTool::collectSegments() const
 		}
 		for ( const HGuide& h : m_viewRefHGuides )
 		{
-			segs.push_back( { CCVector2d( h.u0, h.v ), CCVector2d( h.u1, h.v ), nullptr, true, false } );
+			segs.push_back( { CCVector2d( h.u0, h.v ), CCVector2d( h.u1, h.v ), nullptr, true, false, true } );
 		}
 	}
 	return segs;
@@ -1545,6 +1549,32 @@ bool DrawTool::trackingPoint( const CCVector2d& raw, const TrackLines& rays, CCV
 	return true;
 }
 
+bool DrawTool::onGuide( const CCVector2d& P, CCVector2d* dir ) const
+{
+	if ( m_frame.plan || !m_refSnap )
+	{
+		return false;
+	}
+	const double tol = 0.5 * pixelSize() + 1e-6 * m_scale;
+	for ( const Segment& s : collectSegments() )
+	{
+		if ( s.guide && dist( closestOnSegment( s.a, s.b, P ), P ) < tol )
+		{
+			if ( dir )
+			{
+				CCVector2d d = s.b - s.a;
+				if ( d.norm() > 1e-12 )
+				{
+					d.normalize();
+				}
+				*dir = d;
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
 void DrawTool::onHoverTimeout()
 {
 	if ( !m_trackingOn || !m_hoverValid || !m_hasCursor || ( m_lastCand - m_hoverCand ).norm() > 1e-9 )
@@ -1583,6 +1613,11 @@ void DrawTool::onHoverTimeout()
 				dirs.push_back( d );
 			}
 		}
+	}
+	CCVector2d gd;
+	if ( onGuide( m_hoverCand, &gd ) )
+	{
+		dirs.push_back( gd ); // pomocná čára po vodicí čáře
 	}
 	m_acquired.push_back( m_hoverCand );
 	m_acqDirs.push_back( dirs );
@@ -3244,6 +3279,19 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			copyFromReference( m_refCopyA, P );
 			m_step = 0;
 		}
+		break;
+	}
+	case Mode::Info:
+	{
+		ccPolyline* p = pickLine( pos );
+		if ( !p )
+		{
+			m_flash = QStringLiteral( "Informace: klikněte na prvek" );
+			break;
+		}
+		select( p );
+		redraw2D();
+		showInfo( p );
 		break;
 	}
 	case Mode::Pin:
@@ -4995,6 +5043,9 @@ void DrawTool::updateStatus()
 		prompt = m_refSel.empty() ? QStringLiteral( "Převzít z reference: vyberte čáry reference – klik, Ctrl+klik, okno tažením (zleva = uvnitř, zprava = křížem)" )
 		                          : QStringLiteral( "Převzít z reference: vybráno %1 – Enter = zkopírovat do výkresu, Ctrl+klik = přidat/odebrat, pravé = zrušit" ).arg( m_refSel.size() );
 		break;
+	case Mode::Info:
+		prompt = QStringLiteral( "Informace: klikněte na prvek – údaje se ukážou v okně (hladina, typ, délka, body…)" );
+		break;
 	case Mode::Pin:
 		prompt = QStringLiteral( "Špendlík: klikněte na místo – ukáže se ve 3D náhledu (také prostřední klik kdekoli)" );
 		break;
@@ -5477,10 +5528,17 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			}
 		}
 		// kandidát na získání bodu (stojí-li kurzor na konci/středu/průsečíku)
-		const bool candOk = m_perpRefValid || st == SnapType::End || st == SnapType::Mid || st == SnapType::Intersection;
+		// … nebo kdekoli na vodicí čáře reference (malý pohyb po ní čekání nezruší)
+		const bool onG = ( st == SnapType::OnLine && onGuide( m_cursor ) );
+		const bool candOk = m_perpRefValid || st == SnapType::End || st == SnapType::Mid || st == SnapType::Intersection || onG;
 		m_lastCand = m_perpRefValid ? m_perpRef : m_cursor;
+		const double candTol = onG ? 3.0 * pixelSize() : 1e-9;
 		if ( m_trackingOn && candOk )
 		{
+			if ( m_hoverValid && onG && ( m_hoverCand - m_lastCand ).norm() <= candTol )
+			{
+				m_lastCand = m_hoverCand; // stále stejný kandidát
+			}
 			if ( !m_hoverValid || ( m_hoverCand - m_lastCand ).norm() > 1e-9 )
 			{
 				m_hoverCand = m_lastCand;
@@ -6488,6 +6546,162 @@ std::vector<std::pair<ccPolyline*, CCVector2d>> DrawTool::breakLineHits( const C
 
 // ---------------------------------------------------------------- výšková kóta („kačena“)
 
+void DrawTool::showInfo( ccPolyline* poly )
+{
+	if ( !poly )
+	{
+		return;
+	}
+	auto esc = []( const QString& t ) { return t.toHtmlEscaped(); };
+	auto n3 = []( double v ) { return QString::number( v, 'f', 3 ).replace( '.', ',' ); };
+	QStringList rows;
+	auto row = [&rows, &esc]( const QString& k, const QString& v, bool raw = false ) { rows << QStringLiteral( "<tr><td style='color:#888;padding-right:10px'>%1</td><td>%2</td></tr>" ).arg( esc( k ), raw ? v : esc( v ) ); };
+	auto swatch = []( const QColor& c ) { return QStringLiteral( "<span style='background:%1'>&nbsp;&nbsp;&nbsp;&nbsp;</span> " ).arg( c.name() ); };
+
+	const bool text = isText( poly );
+	const bool kota = isKota( poly );
+	const bool sec = poly->hasMetaData( "qRezy.secId" );
+	const bool north = poly->hasMetaData( "qRezy.north" ) || poly->hasMetaData( "qRezy.symLevel" );
+	const bool arc = isArc( poly );
+	const unsigned n = poly->size();
+	const bool hidden = poly->hasMetaData( Drawing::MetaHidden ) && poly->getMetaData( Drawing::MetaHidden ).toBool();
+
+	QString type;
+	if ( kota )
+		type = QStringLiteral( "Výšková kóta" );
+	else if ( text )
+		type = QStringLiteral( "Text" );
+	else if ( sec )
+		type = QStringLiteral( "Značka řezu / pohledu" );
+	else if ( north )
+		type = QStringLiteral( "Severka (symbol)" );
+	else if ( arc )
+		type = QStringLiteral( "Oblouk" );
+	else if ( n == 2 )
+		type = QStringLiteral( "Úsečka" );
+	else
+		type = QStringLiteral( "Lomená čára (%1 vrcholů)" ).arg( n );
+	if ( poly->hasMetaData( "qRezy.imported" ) )
+		type += QStringLiteral( " – převzato" );
+	row( QStringLiteral( "Typ" ), type );
+
+	// hladina a symbologie DGN
+	const Drawing::SymbologyTable table = Drawing::SymbologyTable::load();
+	if ( text && !kota )
+	{
+		const int lvl = poly->hasMetaData( "qRezy.textLevel" ) ? poly->getMetaData( "qRezy.textLevel" ).toInt() : -1;
+		const Drawing::Layer* L = nullptr;
+		for ( const Drawing::Layer& l : table.list )
+		{
+			if ( l.sym[0].level == lvl )
+			{
+				L = &l;
+				break;
+			}
+		}
+		if ( L )
+			row( QStringLiteral( "Hladina" ), swatch( L->color ) + esc( L->name ) + QStringLiteral( " (DGN hladina %1, barva %2)" ).arg( lvl ).arg( L->sym[0].color ), true );
+		else
+			row( QStringLiteral( "Hladina" ), lvl >= 0 ? QStringLiteral( "DGN hladina %1 (výchozí textová)" ).arg( lvl ) : QStringLiteral( "výchozí textová hladina" ) );
+	}
+	else if ( poly->hasMetaData( Drawing::MetaCategory ) )
+	{
+		const int cat = poly->getMetaData( Drawing::MetaCategory ).toInt();
+		const Drawing::Layer* L = Drawing::layerById( cat );
+		const int idx = Drawing::layerIndex( cat );
+		const DgnV7::Symbology& sy = table.get( cat, hidden );
+		QString v = ( L ? swatch( L->color ) + esc( L->name ) : esc( Drawing::categoryName( cat ) ) );
+		if ( idx >= 0 )
+			v += QStringLiteral( " &nbsp;(F%1)" ).arg( idx + 1 );
+		row( QStringLiteral( "Hladina" ), v, true );
+		int lvl = sy.level;
+		int col = sy.color;
+		if ( poly->hasMetaData( "qRezy.symLevel" ) )
+			lvl = poly->getMetaData( "qRezy.symLevel" ).toInt();
+		if ( poly->hasMetaData( "qRezy.symColor" ) )
+			col = poly->getMetaData( "qRezy.symColor" ).toInt();
+		QString st = sy.hasLineStyle ? QStringLiteral( "vlastní %1" ).arg( sy.lineStyleId ) : QString::number( sy.style );
+		row( QStringLiteral( "DGN" ), QStringLiteral( "hladina %1, barva %2, tloušťka %3, styl %4" ).arg( lvl ).arg( col ).arg( sy.weight ).arg( st ) );
+		if ( m_hiddenCats.count( cat ) )
+			row( QStringLiteral( "Zobrazení" ), QStringLiteral( "hladina je vypnutá" ) );
+	}
+	if ( !text )
+		row( QStringLiteral( "Čára" ), hidden ? QStringLiteral( "zakrytá (čárkovaná)" ) : QStringLiteral( "plná" ) );
+	const int view = poly->hasMetaData( Drawing::MetaView ) ? poly->getMetaData( Drawing::MetaView ).toInt() : 0;
+	row( QStringLiteral( "Výkres" ), view == 0 ? QStringLiteral( "půdorys" ) : QStringLiteral( "řez / pohled č. %1" ).arg( view ) );
+
+	if ( text )
+	{
+		row( QStringLiteral( "Text" ), poly->getMetaData( "qRezy.text" ).toString() );
+		if ( poly->hasMetaData( "qRezy.textH" ) )
+			row( QStringLiteral( "Výška písma" ), QStringLiteral( "%1 m" ).arg( n3( poly->getMetaData( "qRezy.textH" ).toDouble() ) ) );
+		if ( poly->hasMetaData( "qRezy.textAng" ) )
+			row( QStringLiteral( "Natočení" ), QStringLiteral( "%1°" ).arg( QString::number( poly->getMetaData( "qRezy.textAng" ).toDouble() * 57.29577951308232, 'f', 2 ).replace( '.', ',' ) ) );
+	}
+	if ( sec )
+	{
+		const QString nm = poly->getMetaData( "qRezy.secName" ).toString();
+		const int kind = poly->getMetaData( "qRezy.secKind" ).toInt();
+		row( QStringLiteral( "Řez / pohled" ), QStringLiteral( "%1 (%2)" ).arg( nm, kind == 1 ? QStringLiteral( "pohled" ) : QStringLiteral( "řez" ) ) );
+	}
+
+	// délka a body
+	if ( !text && n >= 2 )
+	{
+		double L = 0.0;
+		for ( unsigned k = 0; k + 1 < n; ++k )
+		{
+			const CCVector2d A = m_frame.toUV( CCVector3d::fromArray( poly->getPoint( k )->u ) );
+			const CCVector2d B = m_frame.toUV( CCVector3d::fromArray( poly->getPoint( k + 1 )->u ) );
+			L += ( B - A ).norm();
+		}
+		row( QStringLiteral( "Délka" ), QStringLiteral( "%1 m" ).arg( n3( L / m_scale ) ) );
+		if ( n == 2 && !arc )
+		{
+			const CCVector2d A = m_frame.toUV( CCVector3d::fromArray( poly->getPoint( 0 )->u ) );
+			const CCVector2d B = m_frame.toUV( CCVector3d::fromArray( poly->getPoint( 1 )->u ) );
+			const CCVector2d d = ( B - A ) / m_scale;
+			if ( m_frame.plan )
+				row( QStringLiteral( "ΔX, ΔY" ), QStringLiteral( "%1 m, %2 m" ).arg( n3( d.x ), n3( d.y ) ) );
+			else
+				row( QStringLiteral( "Vodorovně, výškově" ), QStringLiteral( "%1 m, %2 m" ).arg( n3( d.x ), n3( d.y ) ) );
+		}
+	}
+	if ( n >= 1 )
+	{
+		QString pts;
+		const unsigned shown = std::min( n, 12u );
+		for ( unsigned k = 0; k < shown; ++k )
+		{
+			const CCVector3d P = CCVector3d::fromArray( poly->getPoint( k )->u ) / m_scale - m_shift;
+			if ( m_frame.plan )
+				pts += QStringLiteral( "%1: &nbsp;%2 &nbsp;%3<br>" ).arg( k + 1 ).arg( n3( P.x ), n3( P.y ) );
+			else
+				pts += QStringLiteral( "%1: &nbsp;%2 &nbsp;%3 &nbsp;Z %4<br>" ).arg( k + 1 ).arg( n3( P.x ), n3( P.y ), n3( P.z ) );
+		}
+		if ( n > shown )
+			pts += QStringLiteral( "… (%1 dalších)" ).arg( n - shown );
+		row( text ? QStringLiteral( "Počátek (X Y)" ) : ( m_frame.plan ? QStringLiteral( "Body (X Y)" ) : QStringLiteral( "Body (X Y Z)" ) ), pts, true );
+	}
+
+	if ( !m_infoDlg )
+	{
+		QWidget* parent = m_app ? m_app->getMainWindow() : nullptr;
+		m_infoDlg = new QDialog( parent, Qt::Tool );
+		m_infoDlg->setWindowTitle( QStringLiteral( "Informace o prvku" ) );
+		m_infoDlg->setAttribute( Qt::WA_DeleteOnClose );
+		auto* lay = new QVBoxLayout( m_infoDlg );
+		lay->setContentsMargins( 6, 6, 6, 6 );
+		m_infoText = new QTextBrowser( m_infoDlg );
+		m_infoText->setOpenLinks( false );
+		lay->addWidget( m_infoText );
+		m_infoDlg->resize( 420, 360 );
+	}
+	m_infoText->setHtml( QStringLiteral( "<table cellspacing='2'>%1</table>" ).arg( rows.join( QString() ) ) );
+	m_infoDlg->show();
+	m_infoDlg->raise();
+}
+
 bool DrawTool::isKota( const ccHObject* obj )
 {
 	return obj && obj->hasMetaData( "qRezy.kota" );
@@ -6696,6 +6910,7 @@ void DrawTool::rebuildViewRef()
 		double u0, d0, u1, d1;
 		ccColor::Rgb c;
 		CCVector2d a, b; //!< půdorys (x, y)
+		bool wall = false; //!< plná čára hladiny ZDI (zakrývá pohled pro vodicí čáry „viditelné“)
 	};
 	std::vector<Raw> raw;
 	double dMax = -1e300;
@@ -6746,6 +6961,8 @@ void DrawTool::rebuildViewRef()
 			}
 		}
 		const ccColor::Rgb col = m_viewRefColor ? poly->getColor() : ccColor::Rgb( 140, 140, 140 );
+		const bool wall = ch->hasMetaData( Drawing::MetaCategory ) && ch->getMetaData( Drawing::MetaCategory ).toInt() == Drawing::Walls
+		                  && !( ch->hasMetaData( Drawing::MetaHidden ) && ch->getMetaData( Drawing::MetaHidden ).toBool() );
 		const unsigned n = poly->size();
 		const unsigned segN = poly->isClosed() ? n : ( n > 0 ? n - 1 : 0 );
 		for ( unsigned k = 0; k < segN; ++k )
@@ -6754,7 +6971,7 @@ void DrawTool::rebuildViewRef()
 			const CCVector3d B3 = CCVector3d::fromArray( poly->getPoint( ( k + 1 ) % n )->u );
 			const CCVector3d A = A3 - m_frame.O;
 			const CCVector3d B = B3 - m_frame.O;
-			Raw r{ A.dot( Uh ), A.dot( Nh ), B.dot( Uh ), B.dot( Nh ), col, CCVector2d( A3.x, A3.y ), CCVector2d( B3.x, B3.y ) };
+			Raw r{ A.dot( Uh ), A.dot( Nh ), B.dot( Uh ), B.dot( Nh ), col, CCVector2d( A3.x, A3.y ), CCVector2d( B3.x, B3.y ), wall };
 			dMax = std::max( { dMax, r.d0, r.d1 } );
 			raw.push_back( r );
 		}
@@ -6850,6 +7067,10 @@ void DrawTool::rebuildViewRef()
 				bool hidden = false;
 				for ( const Raw& r : raw )
 				{
+					if ( !r.wall )
+					{
+						continue; // zakrývají jen zdi – ostatní čáry (podlahy, nábytek…) jsou vidět, ale pohled nezastaví
+					}
 					const double uLo = std::min( r.u0, r.u1 );
 					const double uHi = std::max( r.u0, r.u1 );
 					if ( vt.first < uLo - 1e-9 || vt.first > uHi + 1e-9 )
@@ -6920,6 +7141,7 @@ void DrawTool::rebuildViewRef()
 		const DrawFrame& rf = m_ref2Frame;
 		const bool project = ( m_curKind == 0 && m_ref2Kind == 1 ); // řez ← pohled: promítnout v dosahu řezu
 		const ccColor::Rgb col( 120, 120, 200 );
+		const ccColor::Rgb colDim( 60, 60, 100 );
 		if ( project )
 		{
 			// skutečná poloha čar referenčního pohledu (rovina s posunem), promítnutí do roviny řezu;
@@ -6944,6 +7166,10 @@ void DrawTool::rebuildViewRef()
 				std::vector<double> hits;
 				for ( const Raw& r : raw )
 				{
+					if ( !r.wall )
+					{
+						continue; // zakrývají jen zdi
+					}
 					CCVector2d I;
 					if ( !lineIntersection( Q, Q1, r.a, r.b, I ) )
 					{
@@ -6980,11 +7206,9 @@ void DrawTool::rebuildViewRef()
 				{
 					const CCVector3d A = CCVector3d::fromArray( poly->getPoint( k )->u ) - rf.N * rf.back;
 					const CCVector3d B = CCVector3d::fromArray( poly->getPoint( k + 1 )->u ) - rf.N * rf.back;
-					if ( !visible( A ) || !visible( B ) )
-					{
-						continue;
-					}
-					m_viewRef2.push_back( { m_frame.toUV( A ), m_frame.toUV( B ), col, cat, hid, poly } );
+					// mimo dosah (před řezem nebo za zdí) se kreslí také, jen tlumeně – kvůli převzetí čar
+					const bool vis = visible( A ) && visible( B );
+					m_viewRef2.push_back( { m_frame.toUV( A ), m_frame.toUV( B ), vis ? col : colDim, cat, hid, poly } );
 				}
 			}
 		}
@@ -7481,16 +7705,34 @@ void DrawTool::refreshLayer()
 	// reference jiného pohledu / řezu a vodorovné vodicí čáry
 	if ( !m_frame.plan && !m_viewRef2.empty() )
 	{
-		RezLayer::Item r;
-		r.color = m_viewRef2.front().color;
-		r.lineWidth = 1.0f;
+		// po barvách (v dosahu / tlumeně mimo dosah)
+		std::vector<RezLayer::Item> byCol;
 		for ( const ViewRef2Seg& s : m_viewRef2 )
 		{
-			r.segs.push_back( m_frame.to3D( s.a ) );
-			r.segs.push_back( m_frame.to3D( s.b ) );
+			RezLayer::Item* it = nullptr;
+			for ( RezLayer::Item& x : byCol )
+			{
+				if ( x.color.r == s.color.r && x.color.g == s.color.g && x.color.b == s.color.b )
+				{
+					it = &x;
+					break;
+				}
+			}
+			if ( !it )
+			{
+				byCol.emplace_back();
+				it = &byCol.back();
+				it->color = s.color;
+				it->lineWidth = 1.0f;
+			}
+			it->segs.push_back( m_frame.to3D( s.a ) );
+			it->segs.push_back( m_frame.to3D( s.b ) );
 		}
-		r.P = r.segs.front();
-		m_layer->items.push_back( std::move( r ) );
+		for ( RezLayer::Item& r : byCol )
+		{
+			r.P = r.segs.front();
+			m_layer->items.push_back( std::move( r ) );
+		}
 		if ( !m_refSel.empty() )
 		{
 			RezLayer::Item h;
