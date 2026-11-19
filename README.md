@@ -16,7 +16,7 @@ Rozbalte zip do nové složky a spusťte `CloudCompare.exe`.
 - seznam **Pohled**: půdorysy pater / svislé řezy / pohledy (koš = smazat)
 - šipky a velký údaj: výška řezu nad ±0,000 (v řezu posun roviny)
 - posuvník polohy řezu přes celé mračno (po 1 cm)
-- **Tloušťka**: posuvník, − / +, předvolby 2 / 5 / 10 / 20 / 50 cm
+- **Tloušťka**: posuvník, − / +, předvolby 2 / 5 / 10 / 20 / 50 cm; v půdorysu napůl dolů a nahoru od výšky řezu, ve svislém řezu od roviny jen ve směru šipek (na straně pozorovatele 2 cm), takže silnější řez ukáže, co je za rovinou; čáry z mračna se dál hledají v plátu kolem roviny
 - **Hloubka** (jen u pohledu): jak daleko za rovinou je mračno vidět
 - ±0,000 = výška podlahy 1. patra (ikona = odhad z mračna)
 - **Podlaha patra** (jen vyšší patra): výšky v patře se počítají od ní, ve 3D na ní leží kresba

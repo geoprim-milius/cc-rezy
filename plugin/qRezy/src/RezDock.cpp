@@ -289,7 +289,7 @@ void RezDock::buildPanel()
 	auto* plus = iconButton( QStringLiteral( "plus" ), QStringLiteral( "Tlustší řez (Ctrl + kolečko)" ) );
 	m_thickSlider = new QSlider( Qt::Horizontal );
 	m_thickSlider->setRange( 0, 1000 );
-	m_thickSlider->setToolTip( QStringLiteral( "Tloušťka řezu (0,5 cm – 5 m)" ) );
+	m_thickSlider->setToolTip( QStringLiteral( "Tloušťka řezu (0,5 cm – 5 m) – v půdorysu napůl dolů a nahoru, ve svislém řezu od roviny ve směru šipek (za rovinu)" ) );
 	m_thickness = makeSpin( 0.005, 100.0, 0.10, 0.01, 3, QStringLiteral( " m" ) );
 	tl->addWidget( minus );
 	tl->addWidget( m_thickSlider, 1 );
@@ -2320,12 +2320,13 @@ void RezDock::applyClip()
 			const double d = f.O.dot( f.N ) - si.offset * sc;
 			if ( si.kind == 0 )
 			{
-				// řez: tenký plát
-				const double half = m_thickness->value() * sc / 2.0;
+				// řez: plát od roviny ve směru pohledu (kam ukazují šipky) do tloušťky, na straně pozorovatele jen 2 cm
+				const double thick = m_thickness->value() * sc;
+				const double nearRes = 0.02 * sc;
 				ccClipPlane p1;
-				p1.equation = Tuple4Tpl<double>( f.N.x, f.N.y, f.N.z, -( d - half ) );
+				p1.equation = Tuple4Tpl<double>( f.N.x, f.N.y, f.N.z, -( d - thick ) );
 				ccClipPlane p2;
-				p2.equation = Tuple4Tpl<double>( -f.N.x, -f.N.y, -f.N.z, d + half );
+				p2.equation = Tuple4Tpl<double>( -f.N.x, -f.N.y, -f.N.z, d + nearRes );
 				planes.push_back( p1.equation );
 				planes.push_back( p2.equation );
 			}
@@ -3880,9 +3881,10 @@ bool RezDock::writeCloudRaster( const QString& path, int viewId, double px, int 
 		const double d = f.O.dot( f.N ) - si.offset * sc;
 		if ( si.kind == 0 )
 		{
-			const double half = m_thickness->value() * sc / 2.0;
-			planes.push_back( { f.N.x, f.N.y, f.N.z, -( d - half ) } );
-			planes.push_back( { -f.N.x, -f.N.y, -f.N.z, d + half } );
+			// jako zobrazení: od roviny ve směru pohledu do tloušťky
+			const double thick = m_thickness->value() * sc;
+			planes.push_back( { f.N.x, f.N.y, f.N.z, -( d - thick ) } );
+			planes.push_back( { -f.N.x, -f.N.y, -f.N.z, d + 0.02 * sc } );
 		}
 		else
 		{
