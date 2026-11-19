@@ -3129,7 +3129,10 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			{
 				CCVector2d a;
 				CCVector2d b;
-				lineEnds( p, a, b );
+				if ( !dimEnds( p, a, b ) )
+				{
+					lineEnds( p, a, b );
+				}
 				m_selEnd = ( dist( click, a ) <= dist( click, b ) ) ? 0 : 1;
 				m_fixed = ( m_selEnd == 0 ) ? b : a;
 				select( p );
@@ -3144,7 +3147,17 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			if ( lineEnds( m_sel, a, b ) )
 			{
 				UndoItem u;
-				if ( isText( m_sel ) )
+				if ( isDim( m_sel ) )
+				{
+					ccPolyline* old = m_sel;
+					select( nullptr );
+					ccPolyline* nd = moveDimEnd( old, m_selEnd, P, &u ); // druhý konec i kótovací čára zůstávají, hodnota se přepočítá
+					if ( m_mode == Mode::Select )
+					{
+						setSelection( nd ? std::vector<ccPolyline*>{ nd } : std::vector<ccPolyline*>{} );
+					}
+				}
+				else if ( isText( m_sel ) )
 				{
 					setLine( m_sel, P, P, &u );
 				}
@@ -4105,6 +4118,9 @@ void DrawTool::updateTip()
 
 	KotaGeom dimPrev;        // náhled délkové kóty (text se přidá k popiskům)
 	bool dimPrevOn = false;
+	bool dimLabelOn = false; // popisek délky jako u Měřit (pevná velikost na obrazovce)
+	CCVector2d dimLabelP;
+	double dimLabelLen = 0.0;
 	auto segment = [&]( const CCVector2d& a, const CCVector2d& b, const ccColor::Rgb& col, float w )
 	{
 		CCVector2d A;
@@ -4169,10 +4185,43 @@ void DrawTool::updateTip()
 		{
 			segment( *from, m_cursor, col, m_mode == Mode::Line ? 1.0f : 2.0f );
 		}
-		// úprava prvku / úchop: čára od pevného konce ke kurzoru
+		// úprava prvku / úchop: čára od pevného konce ke kurzoru (u délkové kóty náhled kóty s novou délkou)
 		if ( ( m_mode == Mode::Modify || m_mode == Mode::Select ) && m_step == 1 )
 		{
-			segment( m_fixed, m_cursor, yellow, 2.0f );
+			CCVector2d da;
+			CCVector2d db;
+			if ( isDim( m_sel ) && m_hasCursor && dimEnds( m_sel, da, db ) )
+			{
+				auto uv = [this]( const CCVector3d& w ) { return CCVector2d( w.dot( m_frame.U ), w.dot( m_frame.V ) ); };
+				const CCVector2d L = da + uv( CCVector3d( m_sel->getMetaData( "qRezy.dlx" ).toDouble(), m_sel->getMetaData( "qRezy.dly" ).toDouble(), m_sel->getMetaData( "qRezy.dlz" ).toDouble() ) );
+				CCVector2d D = uv( CCVector3d( m_sel->getMetaData( "qRezy.ddx" ).toDouble(), m_sel->getMetaData( "qRezy.ddy" ).toDouble(), m_sel->getMetaData( "qRezy.ddz" ).toDouble() ) );
+				const CCVector2d ab = db - da;
+				const bool aligned = D.norm() > 1e-12 && ab.norm() > 1e-9 && std::abs( ab.x * D.y - ab.y * D.x ) / ( ab.norm() * D.norm() ) < 1e-6;
+				const CCVector2d na = m_selEnd == 0 ? m_cursor : da;
+				const CCVector2d nb = m_selEnd == 0 ? db : m_cursor;
+				if ( aligned && ( nb - na ).norm() > 1e-9 )
+				{
+					D = ( nb - na ) / ( nb - na ).norm();
+				}
+				if ( D.norm() > 1e-12 )
+				{
+					D.normalize();
+					auto v = [this]( const CCVector2d& w ) { return m_frame.U * w.x + m_frame.V * w.y; };
+					const CCVector3d A3 = m_frame.to3D( na, false );
+					const KotaGeom g = dimGeom( A3, A3 + v( nb - na ), A3 + v( L - na ), v( D ), m_frame.U, m_frame.V, std::numeric_limits<double>::quiet_NaN(), std::max( 1, m_sel->getMetaData( "qRezy.dimRound" ).toInt() ) );
+					for ( size_t k = 0; k + 1 < g.segs.size(); k += 2 )
+					{
+						segment( m_frame.toUV( g.segs[k] ), m_frame.toUV( g.segs[k + 1] ), yellow, 1.5f );
+					}
+					dimLabelOn = true;
+					dimLabelLen = std::abs( ( nb - na ).dot( D ) );
+					dimLabelP = ( na + nb ) * 0.5;
+				}
+			}
+			else
+			{
+				segment( m_fixed, m_cursor, yellow, 2.0f );
+			}
 		}
 		// vložit vrchol: obě části ke kurzoru
 		if ( m_mode == Mode::InsertVertex && m_step == 1 )
@@ -4282,11 +4331,17 @@ void DrawTool::updateTip()
 			if ( m_step == 1 )
 			{
 				segment( m_dimA, m_cursor, cyan, 1.0f );
+				dimLabelOn = true;
+				dimLabelLen = std::abs( ( m_cursor - m_dimA ).dot( dimDirFor( m_dimA, m_cursor ) ) );
+				dimLabelP = ( m_dimA + m_cursor ) * 0.5;
 			}
 			else if ( m_step == 2 )
 			{
 				dimPrev = drawDim( m_dimA, m_dimB, m_cursor, m_dimDir, std::numeric_limits<double>::quiet_NaN() );
 				dimPrevOn = true;
+				dimLabelOn = true;
+				dimLabelLen = std::abs( ( m_dimB - m_dimA ).dot( m_dimDir ) );
+				dimLabelP = ( m_dimA + m_dimB ) * 0.5;
 			}
 			else if ( m_step == 3 && m_dimWaitText )
 			{
@@ -4299,6 +4354,9 @@ void DrawTool::updateTip()
 			{
 				dimPrev = drawDim( m_dimA, m_cursor, m_dimL, m_dimDir, std::numeric_limits<double>::quiet_NaN() );
 				dimPrevOn = true;
+				dimLabelOn = true;
+				dimLabelLen = std::abs( ( m_cursor - m_dimA ).dot( m_dimDir ) );
+				dimLabelP = ( m_dimA + m_cursor ) * 0.5;
 			}
 		}
 		// přesun / kopie jednoho oblouku
@@ -4575,6 +4633,16 @@ void DrawTool::updateTip()
 	{
 		const double a = viewAngle();
 		upv = CCVector3d( -std::sin( a ), std::cos( a ), 0.0 );
+	}
+	if ( dimLabelOn && dimLabelLen > 1e-9 )
+	{
+		RezLayer::Item it;
+		it.P = m_frame.to3D( dimLabelP );
+		it.up = upv;
+		it.text = QString::number( dimLabelLen / m_scale, 'f', 3 ).replace( '.', ',' ) + QStringLiteral( " m" );
+		it.color = yellow;
+		it.background = true;
+		temp.push_back( it );
 	}
 	if ( dimPrevOn )
 	{
@@ -5403,7 +5471,10 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 					// úchop: konec vybrané čáry se přesune dalším klikem
 					CCVector2d a;
 					CCVector2d b;
-					lineEnds( hp, a, b );
+					if ( !dimEnds( hp, a, b ) )
+					{
+						lineEnds( hp, a, b );
+					}
 					m_selEnd = he;
 					m_fixed = ( he == 0 ) ? b : a;
 					select( hp );
@@ -6328,7 +6399,11 @@ bool DrawTool::pickHandle( const QPoint& pos, ccPolyline*& poly, int& end ) cons
 	{
 		CCVector2d a;
 		CCVector2d b;
-		if ( isArc( p ) || !lineEnds( p, a, b ) )
+		if ( isDim( p ) )
+		{
+			dimEnds( p, a, b );
+		}
+		else if ( isArc( p ) || !lineEnds( p, a, b ) )
 		{
 			continue;
 		}
@@ -7020,11 +7095,11 @@ DrawTool::KotaGeom DrawTool::dimGeom( const CCVector3d& A, const CCVector3d& B, 
 	}
 	g.segs.push_back( A1 );
 	g.segs.push_back( B1 );
-	// text čitelný zleva doprava, svislý shora dolů (jako ve vzoru); „nahoru“ = vlevo od směru textu
+	// text čitelný zleva doprava, svislý zdola nahoru (vlevo od čáry); „nahoru“ = vlevo od směru textu
 	CCVector3d Dt = d;
 	const double du = d.dot( U );
 	const double dv = d.dot( V );
-	if ( du < -1e-9 || ( std::abs( du ) <= 1e-9 && dv > 0 ) )
+	if ( du < -1e-9 || ( std::abs( du ) <= 1e-9 && dv < 0 ) )
 	{
 		Dt = -d;
 	}
@@ -7136,6 +7211,59 @@ ccPolyline* DrawTool::remakeDim( const ccPolyline* poly, const CCVector2d& shift
 	const CCVector3d A3 = m_frame.to3D( A );
 	const double t = poly->hasMetaData( "qRezy.dimT" ) ? poly->getMetaData( "qRezy.dimT" ).toDouble() : std::numeric_limits<double>::quiet_NaN();
 	return addDim( A3, A3 + v( dB ), A3 + v( dL ), v( D ), t, std::max( 1, poly->getMetaData( "qRezy.dimRound" ).toInt() ), undo, poly );
+}
+
+bool DrawTool::dimEnds( const ccPolyline* poly, CCVector2d& a, CCVector2d& b ) const
+{
+	if ( !isDim( poly ) || poly->size() == 0 )
+	{
+		return false;
+	}
+	const CCVector3d A = CCVector3d::fromArray( poly->getPoint( 0 )->u );
+	const CCVector3d dB( poly->getMetaData( "qRezy.dbx" ).toDouble(), poly->getMetaData( "qRezy.dby" ).toDouble(), poly->getMetaData( "qRezy.dbz" ).toDouble() );
+	a = m_frame.toUV( A );
+	b = m_frame.toUV( A + dB );
+	return true;
+}
+
+ccPolyline* DrawTool::moveDimEnd( ccPolyline* poly, int end, const CCVector2d& P, UndoItem* undo )
+{
+	CCVector2d a;
+	CCVector2d b;
+	if ( !lineExists( poly ) || !dimEnds( poly, a, b ) )
+	{
+		return nullptr;
+	}
+	auto uv = [this]( const CCVector3d& w ) { return CCVector2d( w.dot( m_frame.U ), w.dot( m_frame.V ) ); };
+	const CCVector2d L = a + uv( CCVector3d( poly->getMetaData( "qRezy.dlx" ).toDouble(), poly->getMetaData( "qRezy.dly" ).toDouble(), poly->getMetaData( "qRezy.dlz" ).toDouble() ) );
+	CCVector2d D = uv( CCVector3d( poly->getMetaData( "qRezy.ddx" ).toDouble(), poly->getMetaData( "qRezy.ddy" ).toDouble(), poly->getMetaData( "qRezy.ddz" ).toDouble() ) );
+	if ( D.norm() > 1e-12 )
+	{
+		D.normalize();
+	}
+	// zarovnaná kóta (směr podle bodů) se natočí podle nových bodů, vodorovná / svislá směr drží
+	CCVector2d ab = b - a;
+	const bool aligned = ab.norm() > 1e-9 && std::abs( ab.x * D.y - ab.y * D.x ) / ab.norm() < 1e-6;
+	const CCVector2d na = end == 0 ? P : a;
+	const CCVector2d nb = end == 0 ? b : P;
+	if ( ( nb - na ).norm() < 1e-6 * m_scale )
+	{
+		return nullptr;
+	}
+	if ( aligned )
+	{
+		D = ( nb - na ) / ( nb - na ).norm();
+	}
+	const double t = poly->hasMetaData( "qRezy.dimT" ) ? poly->getMetaData( "qRezy.dimT" ).toDouble() : std::numeric_limits<double>::quiet_NaN();
+	const int r = std::max( 1, poly->getMetaData( "qRezy.dimRound" ).toInt() );
+	auto v = [this]( const CCVector2d& w ) { return m_frame.U * w.x + m_frame.V * w.y; };
+	const CCVector3d A3 = m_frame.to3D( na );
+	ccPolyline* n = addDim( A3, A3 + v( nb - na ), A3 + v( L - na ), v( D ), t, r, undo, poly );
+	if ( n )
+	{
+		removeLine( poly, undo );
+	}
+	return n;
 }
 
 bool DrawTool::isKota( const ccHObject* obj )
@@ -7267,6 +7395,13 @@ bool DrawTool::layerHidden( const ccHObject* obj ) const
 		return m_hiddenLevels.count( obj->getMetaData( "qRezy.textLevel" ).toInt() ) > 0;
 	}
 	return false;
+}
+
+void DrawTool::setGuideRoomOnly( bool on )
+{
+	m_guideRoomOnly = on;
+	rebuildViewRef();
+	redraw3D();
 }
 
 void DrawTool::setGuideLayersOff( const std::set<int>& cats )
@@ -7509,7 +7644,7 @@ void DrawTool::rebuildViewRef()
 			std::vector<const Raw*> walls;
 			for ( const Raw& r : raw )
 			{
-				if ( r.wall )
+				if ( r.wall && m_guideRoomOnly ) // bez „jen místnost“ nic nezakrývá
 				{
 					walls.push_back( &r );
 				}

@@ -211,6 +211,8 @@ private:
 	QWidget* m_guideDepthRow = nullptr;       //!< hloubka viditelných vodicích čar (řez / pohled)
 	QLabel* m_guideDepthLabel = nullptr;
 	QSlider* m_guideDepth = nullptr;
+	double m_guideDepthM = 20.0; //!< hloubka vodicích čar (m) – posuvník do 20 m, tlačítky +/− dál
+	double m_ref2BandM = 2.0;    //!< pás vodorovných vodicích z ref. pohledu (m) – posuvník do 10 m, +/− dál
 	QLabel* m_guideDepthLbl = nullptr;
 	void showLayerDisplayMenu();
 	std::set<int> loadHiddenLayers() const;

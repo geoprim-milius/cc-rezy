@@ -151,6 +151,13 @@ namespace
 		QSettings().setValue( key, l.join( ',' ) );
 	}
 
+	//! krok tlačítek +/− u posuvníků vzdálenosti (m)
+	double distStep( double v, int dir )
+	{
+		const double st = ( dir > 0 ? v : v - 1e-9 ) < 1.0 ? 0.1 : ( ( dir > 0 ? v : v - 1e-9 ) < 20.0 ? 1.0 : 5.0 );
+		return std::max( 0.0, std::min( 500.0, std::round( ( v + dir * st ) / st ) * st ) );
+	}
+
 	QString sectionName( int kind, int no )
 	{
 		if ( kind == 1 )
@@ -429,10 +436,26 @@ void RezDock::buildPanel()
 		m_guideDepth = new QSlider( Qt::Horizontal );
 		m_guideDepth->setRange( 1, 200 ); // 0,1 – 20 m
 		m_guideDepth->setValue( static_cast<int>( std::lround( QSettings().value( QStringLiteral( "qRezy/guideDepth" ), 20.0 ).toDouble() * 10.0 ) ) );
-		m_guideDepth->setToolTip( QStringLiteral( "Vodicí čáry „viditelné“: jak daleko za rovinou řezu / pohledu brát rohy a ostění (0,1–20 m)" ) );
+		m_guideDepth->setToolTip( QStringLiteral( "Vodicí čáry „viditelné“: jak daleko za rovinou řezu / pohledu brát rohy a ostění (posuvník 0,1–20 m, tlačítky +/− až 500 m)" ) );
 		m_guideDepthLbl = new QLabel;
 		m_guideDepthLbl->setMinimumWidth( 48 );
+		m_guideDepthM = std::max( 0.1, QSettings().value( QStringLiteral( "qRezy/guideDepth" ), 20.0 ).toDouble() );
+		auto* gm = new QToolButton;
+		gm->setText( QStringLiteral( "−" ) );
+		gm->setObjectName( QStringLiteral( "guideDepthMinus" ) );
+		auto* gp = new QToolButton;
+		gp->setText( QStringLiteral( "+" ) );
+		gp->setObjectName( QStringLiteral( "guideDepthPlus" ) );
+		gp->setToolTip( QStringLiteral( "Hloubka vodicích čar + (i přes 20 m, až 500 m)" ) );
+		gm->setToolTip( QStringLiteral( "Hloubka vodicích čar −" ) );
+		auto* roomOnly = new QCheckBox( QStringLiteral( "jen místnost" ) );
+		roomOnly->setObjectName( QStringLiteral( "guideRoomOnly" ) );
+		roomOnly->setToolTip( QStringLiteral( "Vodicí čáry „viditelné“: zapnuto = pohled zastaví první zeď (ZDI) – jen místnost, kterou řez prochází; vypnuto = i z místností za zdí, omezí jen hloubka" ) );
+		roomOnly->setChecked( QSettings().value( QStringLiteral( "qRezy/guideRoomOnly" ), true ).toBool() );
+		dl->addWidget( roomOnly );
+		dl->addWidget( gm );
 		dl->addWidget( m_guideDepth, 1 );
+		dl->addWidget( gp );
 		dl->addWidget( m_guideDepthLbl );
 	}
 	m_guideDepthLabel = new QLabel( QStringLiteral( "Hloubka vodicích:" ) );
@@ -466,8 +489,19 @@ void RezDock::buildPanel()
 		m_ref2Band->setToolTip( QStringLiteral( "Odkud až se vodorovné čáry vedou: pás od společného kraje reference (0–10 m)" ) );
 		m_ref2BandLbl = new QLabel;
 		m_ref2BandLbl->setMinimumWidth( 44 );
+		m_ref2BandM = std::max( 0.0, st.value( QStringLiteral( "qRezy/ref2Band" ), 2.0 ).toDouble() );
+		auto* bm = new QToolButton;
+		bm->setText( QStringLiteral( "−" ) );
+		bm->setObjectName( QStringLiteral( "ref2BandMinus" ) );
+		auto* bp = new QToolButton;
+		bp->setText( QStringLiteral( "+" ) );
+		bp->setObjectName( QStringLiteral( "ref2BandPlus" ) );
+		bp->setToolTip( QStringLiteral( "Pás vodorovných vodicích čar + (i přes 10 m, až 500 m)" ) );
+		bm->setToolTip( QStringLiteral( "Pás vodorovných vodicích čar −" ) );
 		gl->addWidget( m_ref2Guides );
+		gl->addWidget( bm );
 		gl->addWidget( m_ref2Band, 1 );
+		gl->addWidget( bp );
 		gl->addWidget( m_ref2BandLbl );
 	}
 	m_ref2GuideLabel = new QLabel( QStringLiteral( "Vodicí z ref.:" ) );
@@ -603,9 +637,22 @@ void RezDock::buildPanel()
 	} );
 	connect( m_ref2Band, &QSlider::valueChanged, this, [this]( int v )
 	{
-		QSettings().setValue( QStringLiteral( "qRezy/ref2Band" ), v / 10.0 );
+		m_ref2BandM = v / 10.0;
+		QSettings().setValue( QStringLiteral( "qRezy/ref2Band" ), m_ref2BandM );
 		applyRef2();
 	} );
+	auto bandStep = [this]( int dir )
+	{
+		m_ref2BandM = distStep( m_ref2BandM, dir );
+		QSettings().setValue( QStringLiteral( "qRezy/ref2Band" ), m_ref2BandM );
+		const QSignalBlocker b( m_ref2Band );
+		m_ref2Band->setValue( static_cast<int>( std::lround( std::min( 10.0, m_ref2BandM ) * 10.0 ) ) );
+		applyRef2();
+	};
+	if ( auto* b = findChild<QToolButton*>( QStringLiteral( "ref2BandMinus" ) ) )
+		connect( b, &QToolButton::clicked, this, [bandStep]() { bandStep( -1 ); } );
+	if ( auto* b = findChild<QToolButton*>( QStringLiteral( "ref2BandPlus" ) ) )
+		connect( b, &QToolButton::clicked, this, [bandStep]() { bandStep( +1 ); } );
 	applyViewRefOptions();
 	connect( m_refSnap, &QCheckBox::toggled, this, refChanged );
 	connect( m_refColor, &QCheckBox::toggled, this, [this]( bool on )
@@ -615,15 +662,35 @@ void RezDock::buildPanel()
 		focusView();
 	} );
 	m_draw->setPlanRefColor( m_refColor->isChecked() );
-	auto depthChanged = [this]()
+	auto depthApply = [this]()
 	{
-		const double m = m_guideDepth->value() / 10.0;
+		const double m = m_guideDepthM;
 		QSettings().setValue( QStringLiteral( "qRezy/guideDepth" ), m );
 		m_guideDepthLbl->setText( QString::number( m, 'f', 1 ).replace( '.', ',' ) + QStringLiteral( " m" ) );
+		const QSignalBlocker b( m_guideDepth );
+		m_guideDepth->setValue( static_cast<int>( std::lround( std::min( 20.0, m ) * 10.0 ) ) );
 		m_draw->setGuideDepth( m );
 	};
-	connect( m_guideDepth, &QSlider::valueChanged, this, depthChanged );
-	depthChanged();
+	connect( m_guideDepth, &QSlider::valueChanged, this, [this, depthApply]( int v )
+	{
+		m_guideDepthM = v / 10.0;
+		depthApply();
+	if ( auto* ro = findChild<QCheckBox*>( QStringLiteral( "guideRoomOnly" ) ) )
+	{
+		m_draw->setGuideRoomOnly( ro->isChecked() );
+		connect( ro, &QCheckBox::toggled, this, [this]( bool on )
+		{
+			QSettings().setValue( QStringLiteral( "qRezy/guideRoomOnly" ), on );
+			m_draw->setGuideRoomOnly( on );
+			focusView();
+		} );
+	}
+	} );
+	if ( auto* b = findChild<QToolButton*>( QStringLiteral( "guideDepthMinus" ) ) )
+		connect( b, &QToolButton::clicked, this, [this, depthApply]() { m_guideDepthM = std::max( 0.1, distStep( m_guideDepthM, -1 ) ); depthApply(); } );
+	if ( auto* b = findChild<QToolButton*>( QStringLiteral( "guideDepthPlus" ) ) )
+		connect( b, &QToolButton::clicked, this, [this, depthApply]() { m_guideDepthM = distStep( m_guideDepthM, +1 ); depthApply(); } );
+	depthApply();
 	m_draw->setHiddenLayers( loadHiddenLayers() );
 	m_draw->setGuideLayersOff( loadIdSet( QStringLiteral( "qRezy/guideOffLayers" ) ) );
 	connect( m_zero, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]()
@@ -1373,10 +1440,20 @@ void RezDock::buildToolbar()
 			                                    { T( DrawTool::Mode::Trim ), "7·5" }, { T( DrawTool::Mode::BreakLine ), "7·6" }, { T( DrawTool::Mode::InsertVertex ), "7·7" }, { T( DrawTool::Mode::DeleteVertex ), "7·8" },
 			                                    { T( DrawTool::Mode::Delete ), "8" } } },
 		} );
+		m_cloudAct = mkAct( "cloud", QStringLiteral( "Zobrazit mračno" ), QStringLiteral( "Body mračna ukázat / skrýt – kresba zůstane vidět (funguje i u velkých mračen s plátkem)" ), true );
+		m_cloudAct->setChecked( true );
+		connect( m_cloudAct, &QAction::toggled, this, [this]( bool on )
+		{
+			m_cloudShown = on;
+			applyCloudShown();
+			m_draw->setProbe( m_probeAct && m_probeAct->isChecked() ); // smazat starý popisek výšky
+			focusView();
+		} );
 		RibbonGroup h = r->addGroup( pDraw, QStringLiteral( "Hladina" ) );
 		RibbonColumn hc = h.column();
 		hc.widget( m_catCombo );
 		hc.addSmall( m_hiddenAct, QStringLiteral( "F6" ) );
+		hc.addSmall( m_cloudAct );
 		QAction* lvlDisp = mkAct( "layers", QStringLiteral( "Zobrazení hladin…" ), QStringLiteral( "Zapnout / vypnout zobrazení hladin (jako Level Display v MicroStationu) – vypnutá hladina se nekreslí ve výkresech ani referencích, nevedou z ní vodicí čáry a nejde na ni uchopit; do DGN se ukládají všechny hladiny" ) );
 		connect( lvlDisp, &QAction::triggered, this, [this]() { showLayerDisplayMenu(); } );
 		RibbonColumn hc2 = h.column();
@@ -1467,16 +1544,6 @@ void RezDock::buildToolbar()
 			m_draw->refreshDisplay(); // 3D náhled se překreslí při další změně pohledu
 		} );
 		v1.widget( dash );
-		m_cloudAct = mkAct( "cloud", QStringLiteral( "Zobrazit mračno" ), QStringLiteral( "Body mračna ukázat / skrýt – kresba zůstane vidět (funguje i u velkých mračen s plátkem)" ), true );
-		m_cloudAct->setChecked( true );
-		connect( m_cloudAct, &QAction::toggled, this, [this]( bool on )
-		{
-			m_cloudShown = on;
-			applyCloudShown();
-			m_draw->setProbe( m_probeAct && m_probeAct->isChecked() ); // smazat starý popisek výšky
-			focusView();
-		} );
-		v1.addSmall( m_cloudAct );
 		RibbonColumn v2 = vg.column();
 		v2.addSmall( m_bgDarkAct );
 		v2.addSmall( m_bgLightAct );
@@ -1924,13 +1991,13 @@ void RezDock::applyRef2()
 	SectionInfo ref;
 	if ( id > 0 && !isPlanView( m_activeView ) && sectionById( m_activeView, cur ) && sectionById( id, ref ) )
 	{
-		m_draw->setViewReference2( id, frameFor( id ), ref.kind, cur.kind, m_ref2Shift->value(), m_ref2Guides->isChecked(), m_ref2Band->value() / 10.0 );
+		m_draw->setViewReference2( id, frameFor( id ), ref.kind, cur.kind, m_ref2Shift->value(), m_ref2Guides->isChecked(), m_ref2BandM );
 	}
 	else
 	{
 		m_draw->setViewReference2( -1, DrawFrame(), 0, 0, 0.0, false, 0.0 );
 	}
-	m_ref2BandLbl->setText( QString::number( m_ref2Band->value() / 10.0, 'f', 1 ).replace( '.', ',' ) + QStringLiteral( " m" ) );
+	m_ref2BandLbl->setText( QString::number( m_ref2BandM, 'f', 1 ).replace( '.', ',' ) + QStringLiteral( " m" ) );
 }
 
 // ================================================================ panel

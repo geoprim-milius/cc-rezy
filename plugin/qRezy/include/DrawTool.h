@@ -159,6 +159,8 @@ public:
 	//! hladiny, ze kterých nevedou vodicí čáry (z půdorysu ani vodorovné z Ref. pohledu)
 	void setGuideLayersOff( const std::set<int>& cats );
 	void benchFill();
+	//! vodicí čáry „viditelné“ jen z místnosti (zakrývání zdmi), jinak i za zdmi
+	void setGuideRoomOnly( bool on );
 	//! kóta výšková nebo délková (značka kreslená z metadat, ne text ani čára)
 	static bool isSymbol( const ccHObject* obj ) { return isKota( obj ) || isDim( obj ); }
 	int kotaScale() const { return m_kotaScale; }
@@ -489,6 +491,10 @@ private:
 	ccPolyline* remakeDim( const ccPolyline* poly, const CCVector2d& shift, const CCVector2d* rotC, double ang, UndoItem* undo );
 	//! směr kótovací čáry pro body A, B podle volby směru
 	CCVector2d dimDirFor( const CCVector2d& A, const CCVector2d& B ) const;
+	//! kótované body délkové kóty (u, v)
+	bool dimEnds( const ccPolyline* poly, CCVector2d& a, CCVector2d& b ) const;
+	//! přesun jednoho kótovaného bodu (end 0 = A, 1 = B); kótovací čára zůstává, vrátí novou kótu
+	ccPolyline* moveDimEnd( ccPolyline* poly, int end, const CCVector2d& P, UndoItem* undo );
 	double heightOf( const CCVector3d& local ) const;
 	//! průsečíky řezné čáry A–B s čarami pohledu (čára, bod)
 	std::vector<std::pair<ccPolyline*, CCVector2d>> breakLineHits( const CCVector2d& A, const CCVector2d& B ) const;
@@ -675,6 +681,7 @@ private:
 	CCVector2d m_kotaTip;
 	// délková kóta (rozpracovaná)
 	std::set<int> m_guideOff;
+	bool m_guideRoomOnly = true;
 	mutable std::vector<Segment> m_segCache; //!< collectSegments během jednoho pohybu myši
 	mutable bool m_segCacheOn = false;
 	mutable bool m_segCacheValid = false;
