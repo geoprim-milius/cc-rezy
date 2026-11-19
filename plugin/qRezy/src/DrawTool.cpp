@@ -6911,6 +6911,7 @@ void DrawTool::rebuildViewRef()
 		ccColor::Rgb c;
 		CCVector2d a, b; //!< půdorys (x, y)
 		bool wall = false; //!< plná čára hladiny ZDI (zakrývá pohled pro vodicí čáry „viditelné“)
+		bool arc = false;  //!< úsek oblouku (vodicí čáry z něj nevedou)
 	};
 	std::vector<Raw> raw;
 	double dMax = -1e300;
@@ -6963,6 +6964,7 @@ void DrawTool::rebuildViewRef()
 		const ccColor::Rgb col = m_viewRefColor ? poly->getColor() : ccColor::Rgb( 140, 140, 140 );
 		const bool wall = ch->hasMetaData( Drawing::MetaCategory ) && ch->getMetaData( Drawing::MetaCategory ).toInt() == Drawing::Walls
 		                  && !( ch->hasMetaData( Drawing::MetaHidden ) && ch->getMetaData( Drawing::MetaHidden ).toBool() );
+		const bool arcPoly = isArc( poly );
 		const unsigned n = poly->size();
 		const unsigned segN = poly->isClosed() ? n : ( n > 0 ? n - 1 : 0 );
 		for ( unsigned k = 0; k < segN; ++k )
@@ -6971,7 +6973,7 @@ void DrawTool::rebuildViewRef()
 			const CCVector3d B3 = CCVector3d::fromArray( poly->getPoint( ( k + 1 ) % n )->u );
 			const CCVector3d A = A3 - m_frame.O;
 			const CCVector3d B = B3 - m_frame.O;
-			Raw r{ A.dot( Uh ), A.dot( Nh ), B.dot( Uh ), B.dot( Nh ), col, CCVector2d( A3.x, A3.y ), CCVector2d( B3.x, B3.y ), wall };
+			Raw r{ A.dot( Uh ), A.dot( Nh ), B.dot( Uh ), B.dot( Nh ), col, CCVector2d( A3.x, A3.y ), CCVector2d( B3.x, B3.y ), wall, arcPoly };
 			dMax = std::max( { dMax, r.d0, r.d1 } );
 			raw.push_back( r );
 		}
@@ -7051,6 +7053,10 @@ void DrawTool::rebuildViewRef()
 			std::vector<Vt> verts;
 			for ( const Raw& r : raw )
 			{
+				if ( r.arc )
+				{
+					continue; // oblouky (dveře) – ze zalomení oblouku vodicí čáry ne
+				}
 				verts.push_back( { r.u0, r.d0, r.c } );
 				verts.push_back( { r.u1, r.d1, r.c } );
 			}
@@ -7105,6 +7111,10 @@ void DrawTool::rebuildViewRef()
 		{
 			for ( const Raw& r : raw )
 			{
+				if ( r.arc )
+				{
+					continue;
+				}
 				const double s0 = r.d0 - dPlane;
 				const double s1 = r.d1 - dPlane;
 				if ( ( s0 < 0 && s1 > 0 ) || ( s0 > 0 && s1 < 0 ) || s0 == 0.0 || s1 == 0.0 )
