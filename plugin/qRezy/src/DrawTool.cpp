@@ -24,6 +24,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QInputDialog>
+#include <QRegularExpression>
 #include <QDialog>
 #include <QTextBrowser>
 #include <QMainWindow>
@@ -165,6 +166,46 @@ namespace
 		const double de = ccw( std::atan2( E.y - C.y, E.x - C.x ) );
 		sweep = ( dm <= de ) ? de : de - TwoPi;
 		return true;
+	}
+
+	//! průsečíky přímky A–B (neomezené) s kružnicí
+	std::vector<CCVector2d> circleLineHits( const CCVector2d& c, double r, const CCVector2d& A, const CCVector2d& B )
+	{
+		std::vector<CCVector2d> out;
+		CCVector2d d = B - A;
+		const double L = d.norm();
+		if ( L < 1e-12 )
+			return out;
+		d = d / L;
+		const CCVector2d f = A - c;
+		const double b = f.dot( d );
+		const double cc = f.norm2() - r * r;
+		const double disc = b * b - cc;
+		if ( disc < 0 )
+			return out;
+		const double sq = std::sqrt( disc );
+		out.push_back( A + d * ( -b - sq ) );
+		if ( sq > 1e-12 )
+			out.push_back( A + d * ( -b + sq ) );
+		return out;
+	}
+
+	//! průsečíky dvou kružnic
+	std::vector<CCVector2d> circleCircleHits( const CCVector2d& c1, double r1, const CCVector2d& c2, double r2 )
+	{
+		std::vector<CCVector2d> out;
+		const CCVector2d d = c2 - c1;
+		const double D = d.norm();
+		if ( D < 1e-12 || D > r1 + r2 || D < std::abs( r1 - r2 ) )
+			return out;
+		const double a = ( r1 * r1 - r2 * r2 + D * D ) / ( 2 * D );
+		const double h = std::sqrt( std::max( 0.0, r1 * r1 - a * a ) );
+		const CCVector2d P = c1 + d * ( a / D );
+		const CCVector2d n( -d.y / D, d.x / D );
+		out.push_back( P + n * h );
+		if ( h > 1e-12 )
+			out.push_back( P - n * h );
+		return out;
 	}
 
 	ccColor::Rgb toRgb( const QColor& c )
@@ -834,6 +875,16 @@ std::vector<DrawTool::Segment> DrawTool::collectSegments() const
 			const CCVector3* A = poly->getPoint( k );
 			const CCVector3* B = poly->getPoint( k + 1 );
 			segs.push_back( { m_frame.toUV( CCVector3d::fromArray( A->u ) ), m_frame.toUV( CCVector3d::fromArray( B->u ) ), poly, ref, arc } );
+		}
+		// délková kóta: vynášecí a kótovací čára jen pro uchopení a trasování (zarážky ne) – navázat se stejným odsazením
+		if ( !ref && isDim( poly ) )
+		{
+			const KotaGeom g = dimGeom( poly );
+			const size_t nSeg = g.segs.size() / 2;
+			for ( size_t k = 0; k + 2 < nSeg; ++k ) // poslední 2 úseky = zarážky
+			{
+				segs.push_back( { m_frame.toUV( g.segs[2 * k] ), m_frame.toUV( g.segs[2 * k + 1] ), nullptr, true, false } );
+			}
 		}
 	}
 	// pohled: uchopení na promítnutý půdorys a vodicí čáry (jen uchopení, nejdou upravovat)
@@ -1775,7 +1826,7 @@ bool DrawTool::rejectArc( ccPolyline* poly )
 	{
 		return false;
 	}
-	m_flash = QStringLiteral( "Oblouk tímto nástrojem upravit nejde – lze ho vybrat, přesunout, kopírovat, smazat a změnit hladinu." );
+	m_flash = QStringLiteral( "Oblouk tímto nástrojem upravit nejde (roh, vložit / smazat vrchol) – rozdělit, prodloužit/zkrátit, oříznout, rovnoběžka a úprava konce fungují." );
 	Q_EMIT statusChanged( m_flash );
 	return true;
 }
@@ -2707,7 +2758,7 @@ bool DrawTool::previewGeometry( CCVector2d& a, CCVector2d& b ) const
 	}
 	CCVector2d sa;
 	CCVector2d sb;
-	if ( !m_hasCursor || !lineEnds( m_sel, sa, sb ) )
+	if ( !m_hasCursor || !lineEnds( m_sel, sa, sb ) || isArc( m_sel ) ) // oblouky mají vlastní náhled
 	{
 		return false;
 	}
@@ -3125,7 +3176,7 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			}
 			CCVector2d click;
 			ccPolyline* p = pickLine( pos, &click );
-			if ( p && !rejectArc( p ) )
+			if ( p )
 			{
 				CCVector2d a;
 				CCVector2d b;
@@ -3160,6 +3211,26 @@ void DrawTool::onDataPoint( const QPoint& pos )
 				else if ( isText( m_sel ) )
 				{
 					setLine( m_sel, P, P, &u );
+				}
+				else if ( isArc( m_sel ) )
+				{
+					// oblouk: konec po kružnici ke kurzoru
+					m_cursor = P;
+					ArcP g;
+					if ( arcEditGeom( g ) )
+					{
+						ccPolyline* old = m_sel;
+						select( nullptr );
+						ccPolyline* na = addArcLike( old, g.c, g.r, g.a0, g.sw, &u );
+						if ( na )
+						{
+							removeLine( old, &u );
+						}
+						if ( m_mode == Mode::Select )
+						{
+							setSelection( na ? std::vector<ccPolyline*>{ na } : std::vector<ccPolyline*>{} );
+						}
+					}
 				}
 				else
 				{
@@ -3288,11 +3359,53 @@ void DrawTool::onDataPoint( const QPoint& pos )
 				setLine( h.first, a, h.second, &u );
 				addLine( h.second, b, cat, hid, &u );
 			}
-			if ( !u.empty() )
+			// oblouky protnuté řeznou čarou
+			int arcsCut = 0;
 			{
-				pushUndo( std::move( u ) );
+				ccHObject* group = drawingGroup( false );
+				std::vector<ccPolyline*> arcs;
+				for ( unsigned i = 0; group && i < group->getChildrenNumber(); ++i )
+				{
+					ccHObject* ch = group->getChild( i );
+					const int view = ch->hasMetaData( Drawing::MetaView ) ? ch->getMetaData( Drawing::MetaView ).toInt() : 0;
+					if ( ch->isA( CC_TYPES::POLY_LINE ) && view == m_frame.viewId && isArc( ch ) && ch->isEnabled() )
+						arcs.push_back( static_cast<ccPolyline*>( ch ) );
+				}
+				for ( ccPolyline* arc : arcs )
+				{
+					ArcP g;
+					if ( !arcOf( arc, g ) )
+						continue;
+					const double total = std::abs( g.sw );
+					const double sgn = g.sw >= 0 ? 1.0 : -1.0;
+					const double minAng = 2.0 * pixelSize() / std::max( g.r, 1e-12 );
+					std::vector<double> ts;
+					for ( const CCVector2d& I : circleLineHits( g.c, g.r, m_base, P ) )
+					{
+						const double uu = paramOn( m_base, P, I );
+						const double t = arcFwd( g, I );
+						if ( uu >= 0.0 && uu <= 1.0 && t > minAng && t < total - minAng )
+							ts.push_back( t );
+					}
+					if ( ts.empty() )
+						continue;
+					std::sort( ts.begin(), ts.end() );
+					double prev = 0.0;
+					for ( double t : ts )
+					{
+						addArcLike( arc, g.c, g.r, g.a0 + sgn * prev, sgn * ( t - prev ), &u );
+						prev = t;
+					}
+					addArcLike( arc, g.c, g.r, g.a0 + sgn * prev, sgn * ( total - prev ), &u );
+					removeLine( arc, &u );
+					++arcsCut;
+				}
+				if ( !u.empty() )
+				{
+					pushUndo( std::move( u ) );
+				}
 			}
-			m_flash = QStringLiteral( "Rozděleno čar: %1" ).arg( hits.size() );
+			m_flash = QStringLiteral( "Rozděleno čar: %1" ).arg( hits.size() + arcsCut );
 			m_step = 0;
 		}
 		break;
@@ -3567,7 +3680,7 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		if ( m_step == 0 )
 		{
 			ccPolyline* p = pickLine( pos );
-			if ( p && !rejectArc( p ) )
+			if ( p && !isText( p ) )
 			{
 				select( p );
 				m_step = 1;
@@ -3578,7 +3691,21 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			m_cursor = cursorPoint( pos, st, nullptr );
 			CCVector2d a;
 			CCVector2d b;
-			if ( previewGeometry( a, b ) )
+			ArcP g;
+			if ( arcOf( m_sel, g ) )
+			{
+				// oblouk: soustředný oblouk, vzdálenost zadaná nebo ke kurzoru, strana podle kurzoru
+				const double dc = ( m_cursor - g.c ).norm();
+				const double d = m_offsetDist > 0.0 ? m_offsetDist * m_scale : std::abs( dc - g.r );
+				const double r2 = dc >= g.r ? g.r + d : g.r - d;
+				if ( r2 > 1e-6 * m_scale && d > 1e-9 )
+				{
+					UndoItem u;
+					addArcLike( m_sel, g.c, r2, g.a0, g.sw, &u );
+					pushUndo( std::move( u ) );
+				}
+			}
+			else if ( previewGeometry( a, b ) )
 			{
 				const int cat = m_sel->getMetaData( Drawing::MetaCategory ).toInt();
 				const bool hid = m_sel->getMetaData( Drawing::MetaHidden ).toBool();
@@ -3595,7 +3722,7 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		{
 			CCVector2d click;
 			ccPolyline* p = pickLine( pos, &click );
-			if ( p && !rejectArc( p ) )
+			if ( p && !isText( p ) )
 			{
 				CCVector2d a;
 				CCVector2d b;
@@ -3610,7 +3737,23 @@ void DrawTool::onDataPoint( const QPoint& pos )
 			m_cursor = cursorPoint( pos, st, nullptr );
 			CCVector2d a;
 			CCVector2d b;
-			if ( previewGeometry( a, b ) )
+			ArcP g;
+			if ( isArc( m_sel ) )
+			{
+				// oblouk: konec po kružnici ke kurzoru (prodloužit i zkrátit)
+				if ( arcEditGeom( g ) )
+				{
+					UndoItem u;
+					ccPolyline* old = m_sel;
+					select( nullptr );
+					if ( addArcLike( old, g.c, g.r, g.a0, g.sw, &u ) )
+					{
+						removeLine( old, &u );
+					}
+					pushUndo( std::move( u ) );
+				}
+			}
+			else if ( previewGeometry( a, b ) )
 			{
 				UndoItem u;
 				setLine( m_sel, a, b, &u );
@@ -3687,7 +3830,17 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		if ( m_step == 0 )
 		{
 			ccPolyline* p = pickLine( pos );
-			if ( p && !rejectArc( p ) )
+			ArcP g;
+			if ( p && arcOf( p, g ) )
+			{
+				// oblouk: bod na kružnici
+				const CCVector2d Q = cursorPoint( pos, st, nullptr );
+				const CCVector2d d = Q - g.c;
+				select( p );
+				m_base = d.norm() > 1e-12 ? g.c + d * ( g.r / d.norm() ) : Q;
+				m_step = 1;
+			}
+			else if ( p && !isText( p ) )
 			{
 				CCVector2d a;
 				CCVector2d b;
@@ -3696,6 +3849,48 @@ void DrawTool::onDataPoint( const QPoint& pos )
 				m_base = closestOnSegment( a, b, cursorPoint( pos, st, nullptr ) );
 				m_step = 1;
 			}
+		}
+		else if ( isArc( m_sel ) )
+		{
+			// oblouk: 2 body → část mezi nimi se smaže; stejný bod = jen rozdělit
+			ArcP g;
+			if ( arcOf( m_sel, g ) )
+			{
+				const CCVector2d P2 = cursorPoint( pos, st, nullptr );
+				const double total = std::abs( g.sw );
+				const double sgn = g.sw >= 0 ? 1.0 : -1.0;
+				double t1 = std::min( arcFwd( g, m_base ), total );
+				double t2 = std::min( arcFwd( g, P2 ), total );
+				const double minAng = 2.0 * pixelSize() / std::max( g.r, 1e-12 );
+				ccPolyline* arc = m_sel;
+				select( nullptr );
+				UndoItem u;
+				if ( std::abs( t2 - t1 ) < minAng )
+				{
+					if ( t1 > minAng && total - t1 > minAng )
+					{
+						addArcLike( arc, g.c, g.r, g.a0, sgn * t1, &u );
+						addArcLike( arc, g.c, g.r, g.a0 + sgn * t1, sgn * ( total - t1 ), &u );
+						removeLine( arc, &u );
+					}
+				}
+				else
+				{
+					if ( t1 > t2 )
+						std::swap( t1, t2 );
+					if ( t1 > minAng )
+						addArcLike( arc, g.c, g.r, g.a0, sgn * t1, &u );
+					if ( total - t2 > minAng )
+						addArcLike( arc, g.c, g.r, g.a0 + sgn * t2, sgn * ( total - t2 ), &u );
+					removeLine( arc, &u );
+				}
+				if ( !u.empty() )
+				{
+					pushUndo( std::move( u ) );
+				}
+			}
+			select( nullptr );
+			m_step = 0;
 		}
 		else
 		{
@@ -3762,14 +3957,140 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		// oříznout/prodloužit k prvku: 1. čára = hranice, pak libovolně čar k oříznutí
 		CCVector2d click;
 		ccPolyline* p = pickLine( pos, &click );
-		if ( !p || rejectArc( p ) )
+		if ( !p || isText( p ) )
 		{
 			return;
 		}
+		ArcP bArc;
+		ArcP tArc;
 		if ( m_step == 0 )
 		{
 			select( p );
 			m_step = 1;
+		}
+		else if ( p != m_sel && ( arcOf( p, tArc ) || arcOf( m_sel, bArc ) ) )
+		{
+			// oblouk jako hranice nebo jako ořezávaný prvek
+			const bool tIsArc = arcOf( p, tArc );
+			const bool bIsArc = arcOf( m_sel, bArc );
+			CCVector2d ba;
+			CCVector2d bb;
+			if ( !bIsArc && !lineEnds( m_sel, ba, bb ) )
+			{
+				return;
+			}
+			UndoItem u;
+			if ( tIsArc )
+			{
+				const std::vector<CCVector2d> hits = bIsArc ? circleCircleHits( tArc.c, tArc.r, bArc.c, bArc.r ) : circleLineHits( tArc.c, tArc.r, ba, bb );
+				const double total = std::abs( tArc.sw );
+				const double sgn = tArc.sw >= 0 ? 1.0 : -1.0;
+				const double eps = 1e-6;
+				const double tc = std::min( arcFwd( tArc, click ), total );
+				double bestIn = -1.0;
+				double bestExt = 1e9;
+				bool extEnd = true;
+				double extF = 0.0;
+				for ( const CCVector2d& I : hits )
+				{
+					const double f = arcFwd( tArc, I );
+					if ( f > eps && f < total - eps )
+					{
+						if ( bestIn < 0 || std::abs( f - tc ) < std::abs( bestIn - tc ) )
+							bestIn = f;
+					}
+					else
+					{
+						const double eEnd = f >= total ? f - total : 1e9;
+						const double eStart = TwoPi - f;
+						if ( eEnd < bestExt )
+						{
+							bestExt = eEnd;
+							extEnd = true;
+							extF = f;
+						}
+						if ( eStart < bestExt )
+						{
+							bestExt = eStart;
+							extEnd = false;
+							extF = f;
+						}
+					}
+				}
+				ccPolyline* na = nullptr;
+				if ( bestIn >= 0 )
+				{
+					// zůstane část, na kterou se kliklo
+					if ( tc < bestIn )
+						na = addArcLike( p, tArc.c, tArc.r, tArc.a0, sgn * bestIn, &u );
+					else
+						na = addArcLike( p, tArc.c, tArc.r, tArc.a0 + sgn * bestIn, sgn * ( total - bestIn ), &u );
+				}
+				else if ( bestExt < 1e8 )
+				{
+					if ( extEnd )
+						na = addArcLike( p, tArc.c, tArc.r, tArc.a0, sgn * extF, &u );
+					else
+						na = addArcLike( p, tArc.c, tArc.r, tArc.a0 - sgn * ( TwoPi - extF ), sgn * ( total + TwoPi - extF ), &u );
+				}
+				if ( na )
+				{
+					removeLine( p, &u );
+				}
+			}
+			else
+			{
+				// čára k oblouku (kružnici)
+				CCVector2d a;
+				CCVector2d b;
+				if ( lineEnds( p, a, b ) )
+				{
+					const double tc = paramOn( a, b, click );
+					bool found = false;
+					double bestT = 0.0;
+					double bestScore = 1e18;
+					for ( const CCVector2d& I : circleLineHits( bArc.c, bArc.r, a, b ) )
+					{
+						const double ti = paramOn( a, b, I );
+						const double score = ( ti > 0.0 && ti < 1.0 ) ? std::abs( ti - tc ) : 1e6 + std::min( std::abs( ti - 1.0 ), std::abs( ti ) );
+						if ( score < bestScore )
+						{
+							bestScore = score;
+							bestT = ti;
+							found = true;
+						}
+					}
+					if ( found )
+					{
+						const CCVector2d I = a + ( b - a ) * bestT;
+						CCVector2d na = a;
+						CCVector2d nb = b;
+						if ( bestT > 0.0 && bestT < 1.0 )
+						{
+							if ( tc < bestT )
+								nb = I;
+							else
+								na = I;
+						}
+						else if ( bestT >= 1.0 )
+						{
+							nb = I;
+						}
+						else
+						{
+							na = I;
+						}
+						if ( dist( na, nb ) > 1e-9 )
+						{
+							setLine( p, na, nb, &u );
+						}
+					}
+				}
+			}
+			if ( !u.empty() )
+			{
+				pushUndo( std::move( u ) );
+			}
 		}
 		else if ( p != m_sel )
 		{
@@ -3826,7 +4147,7 @@ void DrawTool::onTypedValue( double v )
 	}
 	const double L = v * m_scale;
 
-	if ( ( m_mode == Mode::Modify || m_mode == Mode::Select ) && m_step == 1 && m_hasCursor && lineExists( m_sel ) && !isText( m_sel ) )
+	if ( ( m_mode == Mode::Modify || m_mode == Mode::Select ) && m_step == 1 && m_hasCursor && lineExists( m_sel ) && !isText( m_sel ) && !isArc( m_sel ) )
 	{
 		// nová délka čáry od pevného konce ve směru kurzoru
 		CCVector2d dir = m_cursor - m_fixed;
@@ -3946,7 +4267,19 @@ void DrawTool::onTypedValue( double v )
 		m_offsetDist = v;
 		CCVector2d a;
 		CCVector2d b;
-		if ( previewGeometry( a, b ) )
+		ArcP g;
+		if ( m_hasCursor && arcOf( m_sel, g ) )
+		{
+			// oblouk: soustředný ve vzdálenosti v na stranu kurzoru
+			const double r2 = ( m_cursor - g.c ).norm() >= g.r ? g.r + L : g.r - L;
+			if ( r2 > 1e-6 * m_scale )
+			{
+				UndoItem u;
+				addArcLike( m_sel, g.c, r2, g.a0, g.sw, &u );
+				pushUndo( std::move( u ) );
+			}
+		}
+		else if ( previewGeometry( a, b ) )
 		{
 			UndoItem u;
 			addLine( a, b, m_sel->getMetaData( Drawing::MetaCategory ).toInt(), m_sel->getMetaData( Drawing::MetaHidden ).toBool(), &u );
@@ -3957,12 +4290,33 @@ void DrawTool::onTypedValue( double v )
 	}
 	case Mode::Extend:
 	{
-		// zadaná hodnota = nová celková délka čáry
+		// zadaná hodnota = nová celková délka čáry (u oblouku délka po oblouku, pevný druhý konec)
 		CCVector2d sa;
 		CCVector2d sb;
 		if ( m_step != 1 || !lineEnds( m_sel, sa, sb ) )
 		{
 			return;
+		}
+		ArcP g;
+		if ( arcOf( m_sel, g ) )
+		{
+			const double m = L / g.r;
+			if ( m <= 1e-9 || m >= TwoPi )
+			{
+				return;
+			}
+			const double sgn = g.sw >= 0 ? 1.0 : -1.0;
+			const double a0 = m_selEnd == 1 ? g.a0 : g.a0 + g.sw - sgn * m;
+			UndoItem und;
+			ccPolyline* old = m_sel;
+			select( nullptr );
+			if ( addArcLike( old, g.c, g.r, a0, sgn * m, &und ) )
+			{
+				removeLine( old, &und );
+			}
+			pushUndo( std::move( und ) );
+			m_step = 0;
+			break;
 		}
 		const CCVector2d fixed = ( m_selEnd == 0 ) ? sb : sa;
 		const CCVector2d moving = ( m_selEnd == 0 ) ? sa : sb;
@@ -4218,9 +4572,37 @@ void DrawTool::updateTip()
 					dimLabelP = ( na + nb ) * 0.5;
 				}
 			}
-			else
+			else if ( !isArc( m_sel ) )
 			{
 				segment( m_fixed, m_cursor, yellow, 2.0f );
+			}
+		}
+		// oblouk: náhled nového oblouku (Upravit prvek, úchop, Prodloužit/zkrátit) a soustředného (Rovnoběžka)
+		if ( ( ( m_mode == Mode::Modify || m_mode == Mode::Select || m_mode == Mode::Extend ) && m_step == 1 ) || ( m_mode == Mode::Offset && m_step == 1 ) )
+		{
+			ArcP g;
+			bool ok = false;
+			if ( m_mode == Mode::Offset )
+			{
+				if ( m_hasCursor && arcOf( m_sel, g ) )
+				{
+					const double dc = ( m_cursor - g.c ).norm();
+					const double d = m_offsetDist > 0.0 ? m_offsetDist * m_scale : std::abs( dc - g.r );
+					g.r = dc >= g.r ? g.r + d : g.r - d;
+					ok = g.r > 1e-6 * m_scale;
+				}
+			}
+			else
+			{
+				ok = isArc( m_sel ) && arcEditGeom( g );
+			}
+			if ( ok )
+			{
+				const std::vector<CCVector2d> ap = arcPoints( g.c, g.r, g.a0, g.sw );
+				for ( size_t k = 0; k + 1 < ap.size(); ++k )
+				{
+					segment( ap[k], ap[k + 1], yellow, 2.0f );
+				}
 			}
 		}
 		// vložit vrchol: obě části ke kurzoru
@@ -5772,6 +6154,10 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		{
 			from = &m_measA;
 		}
+		else if ( m_mode == Mode::Dim && ( m_step == 1 || ( m_step == 3 && !m_dimWaitText ) ) )
+		{
+			from = &m_dimA; // pomocné čáry (svisle / vodorovně) a Ortho od posledního bodu kóty
+		}
 		else if ( ( m_mode == Mode::Modify || m_mode == Mode::Select ) && m_step == 1 )
 		{
 			from = &m_fixed;
@@ -6409,7 +6795,7 @@ bool DrawTool::pickHandle( const QPoint& pos, ccPolyline*& poly, int& end ) cons
 		{
 			dimEnds( p, a, b );
 		}
-		else if ( isArc( p ) || !lineEnds( p, a, b ) )
+		else if ( !lineEnds( p, a, b ) )
 		{
 			continue;
 		}
@@ -7272,6 +7658,75 @@ ccPolyline* DrawTool::moveDimEnd( ccPolyline* poly, int end, const CCVector2d& P
 	return n;
 }
 
+// ---------------------------------------------------------------- úpravy oblouků
+
+
+bool DrawTool::arcOf( ccPolyline* poly, ArcP& o ) const
+{
+	if ( !isArc( poly ) || !lineExists( poly ) || poly->size() < 3 )
+	{
+		return false;
+	}
+	const unsigned n = poly->size();
+	const CCVector2d S = m_frame.toUV( CCVector3d::fromArray( poly->getPoint( 0 )->u ) );
+	const CCVector2d M = m_frame.toUV( CCVector3d::fromArray( poly->getPoint( n / 2 )->u ) );
+	const CCVector2d E = m_frame.toUV( CCVector3d::fromArray( poly->getPoint( n - 1 )->u ) );
+	return arcFrom3( S, M, E, o.c, o.r, o.a0, o.sw );
+}
+
+double DrawTool::arcFwd( const ArcP& a, const CCVector2d& P )
+{
+	const double ang = std::atan2( P.y - a.c.y, P.x - a.c.x );
+	double d = std::fmod( ( a.sw >= 0 ? 1.0 : -1.0 ) * ( ang - a.a0 ), TwoPi );
+	if ( d < 0 )
+		d += TwoPi;
+	return d;
+}
+
+ccPolyline* DrawTool::addArcLike( ccPolyline* like, const CCVector2d& c, double r, double a0, double sw, UndoItem* undo )
+{
+	if ( std::abs( sw ) * r < 1e-6 * m_scale )
+	{
+		return nullptr;
+	}
+	const int cat = like->getMetaData( Drawing::MetaCategory ).toInt();
+	const bool hid = like->getMetaData( Drawing::MetaHidden ).toBool();
+	return addPolyline( arcPoints( c, r, a0, sw ), cat, hid, true, undo );
+}
+
+bool DrawTool::arcEditGeom( ArcP& out ) const
+{
+	ArcP a;
+	if ( !m_hasCursor || !arcOf( m_sel, a ) || ( m_cursor - a.c ).norm() < 1e-9 )
+	{
+		return false;
+	}
+	const double sgn = a.sw >= 0 ? 1.0 : -1.0;
+	const double f = arcFwd( a, m_cursor );
+	out = a;
+	if ( m_selEnd == 1 )
+	{
+		// konec po kružnici ke kurzoru, začátek zůstává
+		if ( f * a.r < 1e-6 * m_scale )
+			return false;
+		out.sw = sgn * f;
+	}
+	else
+	{
+		// začátek ke kurzoru, konec zůstává
+		const double aEnd = a.a0 + a.sw;
+		const double ang = std::atan2( m_cursor.y - a.c.y, m_cursor.x - a.c.x );
+		double m = std::fmod( sgn * ( aEnd - ang ), TwoPi );
+		if ( m < 0 )
+			m += TwoPi;
+		if ( m * a.r < 1e-6 * m_scale )
+			return false;
+		out.a0 = ang;
+		out.sw = sgn * m;
+	}
+	return true;
+}
+
 bool DrawTool::isKota( const ccHObject* obj )
 {
 	return obj && obj->hasMetaData( "qRezy.kota" );
@@ -7891,7 +8346,23 @@ void DrawTool::rebuildViewRef()
 			}
 		}
 	}
+	// podlahy a stropy místností z popisů (čárkovaně; převzít jdou do aktuální hladiny)
+	for ( const RoomLevel& r : m_roomLevels )
+	{
+		m_viewRef2.push_back( { CCVector2d( r.u0, r.vFloor ), CCVector2d( r.u1, r.vFloor ), ccColor::Rgb( 0, 190, 90 ), -1, false, r.src, true } );
+		if ( r.hasCeil )
+		{
+			m_viewRef2.push_back( { CCVector2d( r.u0, r.vCeil ), CCVector2d( r.u1, r.vCeil ), ccColor::Rgb( 230, 130, 0 ), -1, false, r.src, true } );
+		}
+	}
 	refreshLayer();
+}
+
+void DrawTool::setRoomLevels( const std::vector<RoomLevel>& levels )
+{
+	m_roomLevels = levels;
+	rebuildViewRef();
+	redraw3D();
 }
 
 void DrawTool::setViewReference2( int viewId, const DrawFrame& refFrame, int refKind, int curKind, double sideShiftM, bool hGuides, double bandM )
@@ -8018,8 +8489,8 @@ void DrawTool::copyRefSelection()
 			{
 				continue;
 			}
-			cat = s.cat;
-			hid = s.hidden;
+			cat = s.cat < 0 ? m_category : s.cat; // podlaha / strop místnosti → aktuální hladina
+			hid = s.cat < 0 ? m_hidden : s.hidden;
 			if ( pts.empty() || dist( pts.back(), s.a ) > 1e-9 )
 			{
 				if ( pts.size() >= 2 )
@@ -8066,7 +8537,7 @@ void DrawTool::copyFromReference( const CCVector2d& c0, const CCVector2d& c1 )
 	{
 		if ( in( s.a ) && in( s.b ) && dist( s.a, s.b ) > 1e-9 )
 		{
-			if ( addPolyline( { s.a, s.b }, s.cat, s.hidden, false, &undo ) )
+			if ( addPolyline( { s.a, s.b }, s.cat < 0 ? m_category : s.cat, s.cat < 0 ? m_hidden : s.hidden, false, &undo ) )
 			{
 				++n;
 			}
@@ -8329,12 +8800,39 @@ void DrawTool::refreshLayer()
 				it->color = s.color;
 				it->lineWidth = 1.0f;
 			}
+			if ( s.dash )
+			{
+				// čárkovaně: 0,15 m čára, 0,08 m mezera
+				const double L = dist( s.a, s.b );
+				const CCVector2d d = L > 1e-12 ? ( s.b - s.a ) / L : CCVector2d( 1, 0 );
+				for ( double t = 0.0; t < L; t += 0.23 * m_scale )
+				{
+					it->segs.push_back( m_frame.to3D( s.a + d * t ) );
+					it->segs.push_back( m_frame.to3D( s.a + d * std::min( L, t + 0.15 * m_scale ) ) );
+				}
+				continue;
+			}
 			it->segs.push_back( m_frame.to3D( s.a ) );
 			it->segs.push_back( m_frame.to3D( s.b ) );
 		}
+		// popisky podlah a stropů (číslo místnosti)
+		for ( const RoomLevel& r : m_roomLevels )
+		{
+			RezLayer::Item ti;
+			ti.P = m_frame.to3D( CCVector2d( std::min( r.u0, r.u1 ) + 0.1 * m_scale, r.vFloor + 0.05 * m_scale ) );
+			ti.up = m_frame.V;
+			ti.dir = m_frame.U;
+			ti.height = 0.1 * m_scale;
+			ti.text = r.label;
+			ti.color = ccColor::Rgb( 0, 190, 90 );
+			byCol.push_back( ti );
+		}
 		for ( RezLayer::Item& r : byCol )
 		{
-			r.P = r.segs.front();
+			if ( !r.segs.empty() )
+			{
+				r.P = r.segs.front();
+			}
 			m_layer->items.push_back( std::move( r ) );
 		}
 		if ( !m_refSel.empty() )
@@ -9240,6 +9738,7 @@ void DrawTool::startRoomPlace( const RoomLabelData& d )
 	m_roomLab = d;
 	m_roomPlacing = true;
 	m_doorPend = false;
+	m_roomPolyLab = m_roomPolyDone ? m_roomPoly : std::vector<CCVector2d>(); // obrys pro podlahu / strop v řezech
 	m_roomPoly.clear();
 	m_roomPolyDone = false;
 	if ( m_mode != Mode::RoomLabel )
@@ -9262,7 +9761,33 @@ void DrawTool::buildRoomLabel( const CCVector2d& cursor )
 	const double ang = std::atan2( g.R.y, g.R.x );
 	UndoItem undo;
 	// rámeček: obvod jako uzavřená lomená čára, dělicí čára zvlášť
-	addPolyline( { g.lines[0].first, g.lines[0].second, g.lines[1].second, g.lines[2].second, g.lines[0].first }, popRoom, false, false, &undo );
+	ccPolyline* frame = addPolyline( { g.lines[0].first, g.lines[0].second, g.lines[1].second, g.lines[2].second, g.lines[0].first }, popRoom, false, false, &undo );
+	if ( frame && m_roomPolyLab.size() >= 3 )
+	{
+		// údaje pro podlahu a strop místnosti v řezech: obrys (lokálně x, y), podlaha Bpv, světlá výška
+		auto num = []( QString t, bool& ok )
+		{
+			t = t.trimmed().replace( ',', '.' );
+			t.remove( QRegularExpression( QStringLiteral( "[^0-9.+\\-]" ) ) );
+			return t.toDouble( &ok );
+		};
+		bool okF = false;
+		bool okH = false;
+		const double fl = num( m_roomLab.floor, okF );
+		const double hh = num( m_roomLab.height, okH );
+		QStringList pl;
+		for ( const CCVector2d& q : m_roomPolyLab )
+		{
+			const CCVector3d Q = m_frame.to3D( q, false );
+			pl << QStringLiteral( "%1 %2" ).arg( Q.x, 0, 'f', 4 ).arg( Q.y, 0, 'f', 4 );
+		}
+		frame->setMetaData( "qRezy.roomPoly", pl.join( ';' ) );
+		frame->setMetaData( "qRezy.roomNo", m_roomLab.number );
+		if ( okF )
+			frame->setMetaData( "qRezy.roomFloor", fl );
+		if ( okH && hh > 0.0 )
+			frame->setMetaData( "qRezy.roomHeight", hh );
+	}
 	addLine( g.lines[4].first, g.lines[4].second, popRoom, false, &undo );
 	for ( const RoomGeom::Txt& t : g.texts )
 	{

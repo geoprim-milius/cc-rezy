@@ -210,13 +210,17 @@ private:
 	QCheckBox* m_refColor = nullptr;          //!< reference patra v půdorysu barevně
 	QWidget* m_guideDepthRow = nullptr;       //!< hloubka viditelných vodicích čar (řez / pohled)
 	QLabel* m_guideDepthLabel = nullptr;
+	QCheckBox* m_roomLevelsChk = nullptr;     //!< podlahy a stropy místností v řezu
+	QLabel* m_roomLevelsLabel = nullptr;
 	QSlider* m_guideDepth = nullptr;
+	QToolButton* m_planeBtn = nullptr; //!< řez / pohled zpět do roviny (posun 0)
 	double m_guideDepthM = 20.0; //!< hloubka vodicích čar (m) – posuvník do 20 m, tlačítky +/− dál
 	double m_ref2BandM = 2.0;    //!< pás vodorovných vodicích z ref. pohledu (m) – posuvník do 10 m, +/− dál
 	QLabel* m_guideDepthLbl = nullptr;
 	void showLayerDisplayMenu();
 	std::set<int> loadHiddenLayers() const;
 	void showGuideLayersMenu();
+	void applyRoomLevels();
 	QWidget* m_refRow = nullptr;
 	std::map<int, int> m_refFor; //!< zvolená reference pro každý výkres (půdorys / pohled)
 	QWidget* m_viewRefRow = nullptr;

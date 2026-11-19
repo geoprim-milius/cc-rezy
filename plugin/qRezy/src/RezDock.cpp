@@ -277,8 +277,27 @@ void RezDock::buildPanel()
 	auto* moveRow = new QHBoxLayout;
 	m_downBtn = iconButton( QStringLiteral( "down" ), QStringLiteral( "Dolů / blíž (PgDn)" ) );
 	m_upBtn = iconButton( QStringLiteral( "up" ), QStringLiteral( "Nahoru / dál (PgUp)" ) );
+	m_planeBtn = new QToolButton;
+	m_planeBtn->setText( QStringLiteral( "do roviny" ) );
+	m_planeBtn->setToolTip( QStringLiteral( "Vrátit řez / pohled do jeho roviny (posun ±0,000 = čára nakreslená v půdorysu)" ) );
+	connect( m_planeBtn, &QToolButton::clicked, this, [this]()
+	{
+		SectionInfo si;
+		if ( !isPlanView( m_activeView ) && sectionById( m_activeView, si ) )
+		{
+			si.offset = 0.0;
+			saveSection( si );
+			applyClip();
+			m_draw->updatePointRange( frameFor( m_activeView ) );
+			applyRoomLevels();
+			syncPosSlider();
+			updateLabels();
+			focusView();
+		}
+	} );
 	moveRow->addWidget( m_downBtn );
 	moveRow->addWidget( m_relLabel, 1 );
+	moveRow->addWidget( m_planeBtn );
 	moveRow->addWidget( m_upBtn );
 	lay->addLayout( moveRow );
 
@@ -460,6 +479,11 @@ void RezDock::buildPanel()
 	}
 	m_guideDepthLabel = new QLabel( QStringLiteral( "Hloubka vodicích:" ) );
 	form->addRow( m_guideDepthLabel, m_guideDepthRow );
+	m_roomLevelsChk = new QCheckBox( QStringLiteral( "podlahy a stropy z popisů místností" ) );
+	m_roomLevelsChk->setToolTip( QStringLiteral( "V řezu / pohledu čárkovaně podlaha (zeleně) a strop (oranžově) místností, které řez protíná – ze všech pater, z popisů místností (jen nové popisy s uloženým obrysem). Převzít jdou přes Převzít z reference." ) );
+	m_roomLevelsChk->setChecked( QSettings().value( QStringLiteral( "qRezy/roomLevels" ), false ).toBool() );
+	m_roomLevelsLabel = new QLabel( QStringLiteral( "Místnosti:" ) );
+	form->addRow( m_roomLevelsLabel, m_roomLevelsChk );
 	// reference jiného pohledu / řezu
 	m_ref2Row = new QWidget;
 	{
@@ -679,6 +703,12 @@ void RezDock::buildPanel()
 	{
 		m_guideDepthM = v / 10.0;
 		depthApply();
+	connect( m_roomLevelsChk, &QCheckBox::toggled, this, [this]( bool on )
+	{
+		QSettings().setValue( QStringLiteral( "qRezy/roomLevels" ), on );
+		applyRoomLevels();
+		focusView();
+	} );
 	if ( auto* ro = findChild<QCheckBox*>( QStringLiteral( "guideRoomOnly" ) ) )
 	{
 		m_draw->setGuideRoomOnly( ro->isChecked() );
@@ -2012,6 +2042,75 @@ void RezDock::applyRef2()
 		m_draw->setViewReference2( -1, DrawFrame(), 0, 0, 0.0, false, 0.0 );
 	}
 	m_ref2BandLbl->setText( QString::number( m_ref2BandM, 'f', 1 ).replace( '.', ',' ) + QStringLiteral( " m" ) );
+	applyRoomLevels();
+}
+
+void RezDock::applyRoomLevels()
+{
+	std::vector<DrawTool::RoomLevel> out;
+	SectionInfo si;
+	ccGenericPointCloud* c = cloud();
+	ccHObject* group = m_draw->drawingGroup( false );
+	if ( m_roomLevelsChk && m_roomLevelsChk->isChecked() && c && group && !isPlanView( m_activeView ) && sectionById( m_activeView, si ) )
+	{
+		const DrawFrame f = frameForSection( m_activeView, si );
+		const double sc = c->getGlobalScale();
+		const double dPlane = f.O.dot( f.N ) - si.offset * sc; // rovina řezu (lokálně)
+		const CCVector3d Nh( f.N.x, f.N.y, 0.0 );
+		for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
+		{
+			ccHObject* ch = group->getChild( i );
+			if ( !ch->hasMetaData( "qRezy.roomPoly" ) || !ch->hasMetaData( "qRezy.roomFloor" ) )
+			{
+				continue;
+			}
+			std::vector<CCVector3d> poly;
+			for ( const QString& t : ch->getMetaData( "qRezy.roomPoly" ).toString().split( ';', Qt::SkipEmptyParts ) )
+			{
+				const QStringList xy = t.split( ' ', Qt::SkipEmptyParts );
+				if ( xy.size() == 2 )
+				{
+					poly.emplace_back( xy[0].toDouble(), xy[1].toDouble(), 0.0 );
+				}
+			}
+			if ( poly.size() < 3 )
+			{
+				continue;
+			}
+			// průsečíky obrysu s rovinou řezu → úseky (sudo-liché)
+			std::vector<double> us;
+			for ( size_t k = 0; k < poly.size(); ++k )
+			{
+				const CCVector3d& A = poly[k];
+				const CCVector3d& B = poly[( k + 1 ) % poly.size()];
+				const double sa = A.dot( Nh ) - ( dPlane - f.O.z * f.N.z );
+				const double sb = B.dot( Nh ) - ( dPlane - f.O.z * f.N.z );
+				if ( ( sa < 0 ) == ( sb < 0 ) )
+				{
+					continue;
+				}
+				const CCVector3d P = A + ( B - A ) * ( sa / ( sa - sb ) );
+				us.push_back( ( P - f.O ).dot( f.U ) );
+			}
+			std::sort( us.begin(), us.end() );
+			const double zF = c->toLocal3d( CCVector3d( 0, 0, ch->getMetaData( "qRezy.roomFloor" ).toDouble() ) ).z;
+			const bool hasH = ch->hasMetaData( "qRezy.roomHeight" );
+			const double zC = hasH ? c->toLocal3d( CCVector3d( 0, 0, ch->getMetaData( "qRezy.roomFloor" ).toDouble() + ch->getMetaData( "qRezy.roomHeight" ).toDouble() ) ).z : zF;
+			for ( size_t k = 0; k + 1 < us.size(); k += 2 )
+			{
+				DrawTool::RoomLevel r;
+				r.u0 = us[k];
+				r.u1 = us[k + 1];
+				r.vFloor = zF - f.O.z;
+				r.vCeil = zC - f.O.z;
+				r.hasCeil = hasH;
+				r.label = ch->getMetaData( "qRezy.roomNo" ).toString();
+				r.src = static_cast<ccPolyline*>( ch );
+				out.push_back( r );
+			}
+		}
+	}
+	m_draw->setRoomLevels( out );
 }
 
 // ================================================================ panel
@@ -2391,6 +2490,7 @@ void RezDock::onPosSlider( int cm )
 		saveSection( si );
 		applyClip();
 		m_draw->updatePointRange( frameFor( m_activeView ) ); // změřené body podle nové polohy roviny
+		applyRoomLevels();
 	}
 }
 
@@ -2796,12 +2896,14 @@ void RezDock::updateLabels()
 	if ( sec )
 	{
 		m_relLabel->setText( QStringLiteral( "posun %1" ).arg( fmt( si.offset ) ) );
+		m_planeBtn->setVisible( true );
 		m_upBtn->setToolTip( QStringLiteral( "Dál ve směru pohledu (PgUp)" ) );
 		m_downBtn->setToolTip( QStringLiteral( "Blíž (PgDn)" ) );
 	}
 	else
 	{
 		m_relLabel->setText( fmt( m_height->value() - currentLevel() ) );
+		m_planeBtn->setVisible( false );
 		m_upBtn->setToolTip( QStringLiteral( "Nahoru (PgUp)" ) );
 		m_downBtn->setToolTip( QStringLiteral( "Dolů (PgDn)" ) );
 	}
@@ -2820,6 +2922,8 @@ void RezDock::updateLabels()
 		m_ref2GuideLabel->setVisible( !isPlanView( m_activeView ) );
 		m_guideDepthRow->setVisible( !isPlanView( m_activeView ) );
 		m_guideDepthLabel->setVisible( !isPlanView( m_activeView ) );
+		m_roomLevelsChk->setVisible( !isPlanView( m_activeView ) );
+		m_roomLevelsLabel->setVisible( !isPlanView( m_activeView ) );
 	}
 	syncPosSlider();
 	m_thickness->setEnabled( !sec || si.kind == 0 );

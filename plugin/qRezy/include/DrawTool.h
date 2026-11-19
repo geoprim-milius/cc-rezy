@@ -161,6 +161,27 @@ public:
 	void benchFill();
 	//! vodicí čáry „viditelné“ jen z místnosti (zakrývání zdmi), jinak i za zdmi
 	void setGuideRoomOnly( bool on );
+	//! podlaha a strop místnosti v řezu / pohledu (z popisu místnosti): úsek u0…u1, výšky v (souřadnice výkresu)
+	struct RoomLevel
+	{
+		double u0 = 0.0, u1 = 0.0;
+		double vFloor = 0.0, vCeil = 0.0;
+		bool hasCeil = false;
+		QString label;
+		ccPolyline* src = nullptr; //!< rámeček popisu (pro Převzít z reference)
+	};
+	void setRoomLevels( const std::vector<RoomLevel>& levels );
+	//! oblouk: střed, poloměr, počáteční úhel, rozsah (+ = proti směru hodinových ručiček)
+	struct ArcP
+	{
+		CCVector2d c;
+		double r = 0.0, a0 = 0.0, sw = 0.0;
+	};
+	bool arcOf( ccPolyline* poly, ArcP& o ) const;
+	//! úhlová vzdálenost bodu od začátku oblouku ve směru oblouku [0, 2π)
+	static double arcFwd( const ArcP& a, const CCVector2d& P );
+	//! Prodloužit/zkrátit nebo Upravit prvek u oblouku: nový oblouk pro kurzor (konec m_selEnd po kružnici)
+	bool arcEditGeom( ArcP& out ) const;
 	//! kóta výšková nebo délková (značka kreslená z metadat, ne text ani čára)
 	static bool isSymbol( const ccHObject* obj ) { return isKota( obj ) || isDim( obj ); }
 	int kotaScale() const { return m_kotaScale; }
@@ -484,6 +505,8 @@ private:
 	KotaGeom dimGeom( const ccPolyline* poly ) const;
 	//! geometrie značky (výšková nebo délková kóta)
 	KotaGeom symGeom( const ccPolyline* poly ) const;
+	//! nový oblouk se stejnou hladinou a zakrytím jako like
+	ccPolyline* addArcLike( ccPolyline* like, const CCVector2d& c, double r, double a0, double sw, UndoItem* undo );
 	ccPolyline* addDim( const CCVector3d& A, const CCVector3d& B, const CCVector3d& L, const CCVector3d& D, double textT, int roundMm, UndoItem* undo, const ccPolyline* like = nullptr );
 	//! délková kóta z bodů ve výkresu (u, v)
 	ccPolyline* addDimUV( const CCVector2d& A, const CCVector2d& B, const CCVector2d& L, const CCVector2d& D, double textT, UndoItem* undo );
@@ -606,8 +629,11 @@ private:
 		int cat;
 		bool hidden;
 		ccPolyline* src;
+		bool dash = false; //!< kreslit čárkovaně (podlahy / stropy místností)
 	};
 	std::vector<ViewRef2Seg> m_viewRef2;
+	std::vector<RoomLevel> m_roomLevels;
+	std::vector<CCVector2d> m_roomPolyLab; //!< obrys místnosti právě umisťovaného popisu
 	std::vector<ccPolyline*> m_refSel;      //!< Převzít z reference: vybrané čáry reference
 	ccPolyline* refPick( const QPoint& pos ) const;
 	void refWindow( const QPoint& a, const QPoint& b, bool ctrl );
