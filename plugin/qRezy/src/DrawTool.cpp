@@ -1,4 +1,5 @@
 #include "DrawTool.h"
+#include "Perf.h"
 #include "NorthData.h"
 #include "CloudLinesV15.h"
 #include "RezLine.h"
@@ -342,6 +343,9 @@ DrawTool::DrawTool( ccMainAppInterface* app, QObject* parent )
 	m_clSquare = st.value( QStringLiteral( "qRezy/clSquare" ), true ).toBool();
 	m_kotaFmt = std::max( 0, std::min( 2, st.value( QStringLiteral( "qRezy/kotaFormat" ), 0 ).toInt() ) );
 	m_kotaScale = std::max( 1, st.value( QStringLiteral( "qRezy/kotaScale" ), 70 ).toInt() );
+	m_dimOrient = std::max( 0, std::min( 2, st.value( QStringLiteral( "qRezy/dimOrient" ), 0 ).toInt() ) );
+	m_dimRound = std::max( 1, st.value( QStringLiteral( "qRezy/dimRound" ), 10 ).toInt() );
+	m_dimTextManual = st.value( QStringLiteral( "qRezy/dimTextManual" ), false ).toBool();
 	m_showHeights = st.value( QStringLiteral( "qRezy/ptHeights" ), true ).toBool();
 	m_heightFmt = st.value( QStringLiteral( "qRezy/ptHeightFmt" ), 0 ).toInt();
 	m_category = Drawing::layerIdAt( 0 );
@@ -474,6 +478,7 @@ void DrawTool::setPlanHeight( double zLocal )
 
 void DrawTool::updateLineVisibility()
 {
+	PerfScope perf_( "updateLineVisibility" );
 	ccHObject* group = drawingGroup( false );
 	if ( !group )
 	{
@@ -695,6 +700,8 @@ void DrawTool::resetTool()
 	m_typed.clear();
 	m_step = 0;
 	m_measDone = false;
+	m_dimChain = false;
+	m_dimWaitText = false;
 	m_acquired.clear();
 	m_acqDirs.clear();
 	select( nullptr );
@@ -794,6 +801,12 @@ ccHObject* DrawTool::drawingGroup( bool create )
 
 std::vector<DrawTool::Segment> DrawTool::collectSegments() const
 {
+	// během jednoho pohybu myši se výkres nemění → seznam jen jednou (uchopení, trasování, vodicí čáry)
+	if ( m_segCacheOn && m_segCacheValid )
+	{
+		return m_segCache;
+	}
+	PerfScope perf_( "collectSegments" );
 	std::vector<Segment> segs;
 	ccHObject* group = const_cast<DrawTool*>( this )->drawingGroup( false );
 	if ( !group )
@@ -842,6 +855,11 @@ std::vector<DrawTool::Segment> DrawTool::collectSegments() const
 		{
 			segs.push_back( { CCVector2d( h.u0, h.v ), CCVector2d( h.u1, h.v ), nullptr, true, false, true } );
 		}
+	}
+	if ( m_segCacheOn )
+	{
+		m_segCache = segs;
+		m_segCacheValid = true;
 	}
 	return segs;
 }
@@ -938,7 +956,7 @@ ccPolyline* DrawTool::pickLine( const QPoint& pos, CCVector2d* clicked ) const
 			bestD = d;
 			best = s.poly;
 		}
-		if ( s.poly && isText( s.poly ) && !isKota( s.poly ) && s.poly != best )
+		if ( s.poly && isText( s.poly ) && !isSymbol( s.poly ) && s.poly != best )
 		{
 			// text: klik kamkoli na písmena (obdélník od počátku doprava a nahoru)
 			// výška na obrazovce: skutečná, ale aspoň 11 px (jako RezLayer)
@@ -966,10 +984,10 @@ ccPolyline* DrawTool::pickLine( const QPoint& pos, CCVector2d* clicked ) const
 				best = s.poly;
 			}
 		}
-		if ( isKota( s.poly ) && s.poly != best )
+		if ( isSymbol( s.poly ) && s.poly != best )
 		{
 			// kóta: klik na kteroukoli čáru značky
-			const KotaGeom g = kotaGeom( s.poly );
+			const KotaGeom g = symGeom( s.poly );
 			for ( size_t k = 0; k + 1 < g.segs.size(); k += 2 )
 			{
 				const double dk = dist( closestOnSegment( m_frame.toUV( g.segs[k] ), m_frame.toUV( g.segs[k + 1] ), P ), P );
@@ -1012,9 +1030,9 @@ std::vector<ccPolyline*> DrawTool::pickAll( const QPoint& pos ) const
 		{
 			continue;
 		}
-		if ( isKota( s.poly ) )
+		if ( isSymbol( s.poly ) )
 		{
-			const KotaGeom g = kotaGeom( s.poly );
+			const KotaGeom g = symGeom( s.poly );
 			for ( size_t k = 0; k + 1 < g.segs.size(); k += 2 )
 			{
 				const double dk = dist( closestOnSegment( m_frame.toUV( g.segs[k] ), m_frame.toUV( g.segs[k + 1] ), P ), P );
@@ -1712,6 +1730,11 @@ void DrawTool::translateItem( ccPolyline* poly, const CCVector2d& d, bool copy, 
 		{
 			setLine( poly, pts.front(), pts.back(), undo );
 		}
+		return;
+	}
+	if ( isDim( poly ) )
+	{
+		remakeDim( poly, dd, nullptr, 0.0, undo );
 		return;
 	}
 	if ( isKota( poly ) )
@@ -3324,6 +3347,74 @@ void DrawTool::onDataPoint( const QPoint& pos )
 		}
 		break;
 	}
+	case Mode::Dim:
+	{
+		// délková kóta: 1. bod, 2. bod, poloha kótovací čáry; další body = řetěz na stejné čáře
+		if ( m_dimWaitText )
+		{
+			// ruční text: klik = střed textu podél kótovací čáry, teprve teď se kóta vytvoří
+			CCVector2d P;
+			if ( screenToLocal( pos, P ) )
+			{
+				const CCVector2d perp( -m_dimDir.y, m_dimDir.x );
+				const CCVector2d A1 = m_dimPrevA + perp * ( m_dimL - m_dimPrevA ).dot( perp );
+				UndoItem u;
+				addDimUV( m_dimPrevA, m_dimPrevB, m_dimL, m_dimDir, ( P - A1 ).dot( m_dimDir ), &u );
+				pushUndo( std::move( u ) );
+				refreshLayer();
+			}
+			m_dimWaitText = false;
+			break;
+		}
+		const CCVector2d P = cursorPoint( pos, st, ( m_step == 1 || m_step == 3 ) ? &m_dimA : nullptr );
+		if ( m_step == 0 )
+		{
+			m_dimA = P;
+			m_step = 1;
+		}
+		else if ( m_step == 1 )
+		{
+			if ( ( P - m_dimA ).norm() < 1e-6 * m_scale )
+			{
+				break;
+			}
+			m_dimB = P;
+			m_dimDir = dimDirFor( m_dimA, m_dimB );
+			m_step = 2;
+		}
+		else
+		{
+			if ( m_step == 2 )
+			{
+				m_dimL = P; // poloha kótovací čáry
+			}
+			else
+			{
+				m_dimB = P; // řetěz: další bod
+				if ( std::abs( ( m_dimB - m_dimA ).dot( m_dimDir ) ) < 1e-6 * m_scale )
+				{
+					break;
+				}
+			}
+			m_dimPrevA = m_dimA;
+			m_dimPrevB = m_dimB;
+			if ( m_dimTextManual )
+			{
+				m_dimWaitText = true; // kóta vznikne až po umístění textu
+			}
+			else
+			{
+				UndoItem u;
+				addDimUV( m_dimA, m_dimB, m_dimL, m_dimDir, std::numeric_limits<double>::quiet_NaN(), &u );
+				pushUndo( std::move( u ) );
+				refreshLayer();
+			}
+			m_dimChain = true;
+			m_dimA = m_dimB;
+			m_step = 3;
+		}
+		break;
+	}
 	case Mode::Text:
 	{
 		const CCVector2d P = cursorPoint( pos, st, nullptr );
@@ -3426,7 +3517,7 @@ void DrawTool::onDataPoint( const QPoint& pos )
 	case Mode::EditText:
 	{
 		ccPolyline* p = pickLine( pos );
-		if ( !p || !isText( p ) || isKota( p ) )
+		if ( !p || !isText( p ) || isSymbol( p ) )
 		{
 			m_flash = QStringLiteral( "Klikněte na text" );
 			break;
@@ -4001,6 +4092,7 @@ void DrawTool::addArrow( std::vector<Overlay>& ovs, const CCVector2d& from, cons
 
 void DrawTool::updateTip()
 {
+	PerfScope perf_( "updateTip" );
 	if ( !m_win )
 	{
 		return;
@@ -4011,6 +4103,8 @@ void DrawTool::updateTip()
 	const ccColor::Rgb cyan( 0, 230, 230 );
 	const ccColor::Rgb track( 120, 255, 120 );
 
+	KotaGeom dimPrev;        // náhled délkové kóty (text se přidá k popiskům)
+	bool dimPrevOn = false;
 	auto segment = [&]( const CCVector2d& a, const CCVector2d& b, const ccColor::Rgb& col, float w )
 	{
 		CCVector2d A;
@@ -4169,6 +4263,42 @@ void DrawTool::updateTip()
 			for ( size_t k = 0; k + 1 < g.segs.size(); k += 2 )
 			{
 				segment( m_frame.toUV( g.segs[k] ), m_frame.toUV( g.segs[k + 1] ), cyan, 1.5f );
+			}
+		}
+		// délková kóta: náhled
+		if ( m_mode == Mode::Dim && m_hasCursor )
+		{
+			auto v = [this]( const CCVector2d& w ) { return m_frame.U * w.x + m_frame.V * w.y; };
+			auto drawDim = [&]( const CCVector2d& A, const CCVector2d& B, const CCVector2d& L, const CCVector2d& D, double t )
+			{
+				const CCVector3d A3 = m_frame.to3D( A, false );
+				const KotaGeom g = dimGeom( A3, A3 + v( B - A ), A3 + v( L - A ), v( D ), m_frame.U, m_frame.V, t, m_dimRound );
+				for ( size_t k = 0; k + 1 < g.segs.size(); k += 2 )
+				{
+					segment( m_frame.toUV( g.segs[k] ), m_frame.toUV( g.segs[k + 1] ), cyan, 1.0f );
+				}
+				return g;
+			};
+			if ( m_step == 1 )
+			{
+				segment( m_dimA, m_cursor, cyan, 1.0f );
+			}
+			else if ( m_step == 2 )
+			{
+				dimPrev = drawDim( m_dimA, m_dimB, m_cursor, m_dimDir, std::numeric_limits<double>::quiet_NaN() );
+				dimPrevOn = true;
+			}
+			else if ( m_step == 3 && m_dimWaitText )
+			{
+				const CCVector2d perp( -m_dimDir.y, m_dimDir.x );
+				const CCVector2d A1 = m_dimPrevA + perp * ( m_dimL - m_dimPrevA ).dot( perp );
+				dimPrev = drawDim( m_dimPrevA, m_dimPrevB, m_dimL, m_dimDir, ( m_cursor - A1 ).dot( m_dimDir ) );
+				dimPrevOn = true;
+			}
+			else if ( m_step == 3 && !m_dimWaitText )
+			{
+				dimPrev = drawDim( m_dimA, m_cursor, m_dimL, m_dimDir, std::numeric_limits<double>::quiet_NaN() );
+				dimPrevOn = true;
 			}
 		}
 		// přesun / kopie jednoho oblouku
@@ -4446,6 +4576,20 @@ void DrawTool::updateTip()
 		const double a = viewAngle();
 		upv = CCVector3d( -std::sin( a ), std::cos( a ), 0.0 );
 	}
+	if ( dimPrevOn )
+	{
+		for ( int k = 0; k < dimPrev.texts.size(); ++k )
+		{
+			RezLayer::Item ti;
+			ti.P = dimPrev.textPos[static_cast<size_t>( k )];
+			ti.up = upv;
+			ti.dir = dimPrev.textDir;
+			ti.height = dimPrev.textH;
+			ti.text = dimPrev.texts[k];
+			ti.color = ccColor::Rgb( 0, 230, 230 );
+			temp.push_back( ti );
+		}
+	}
 
 	// měření (D): kóta s patkami a vzdáleností – během měření i výsledek
 	if ( m_mode == Mode::Measure && ( m_measDone || ( m_step == 1 && m_hasCursor ) ) )
@@ -4515,7 +4659,7 @@ void DrawTool::updateTip()
 				{
 					continue;
 				}
-				if ( isText( poly ) && !isKota( poly ) )
+				if ( isText( poly ) && !isSymbol( poly ) )
 				{
 					const CCVector2d P = m_frame.toUV( CCVector3d::fromArray( poly->getPoint( 0 )->u ) );
 					const double a = ( poly->hasMetaData( "qRezy.textAng" ) ? poly->getMetaData( "qRezy.textAng" ).toDouble() : 0.0 ) + ang;
@@ -4620,9 +4764,9 @@ void DrawTool::updateTip()
 			{
 				continue;
 			}
-			if ( isKota( poly ) )
+			if ( isSymbol( poly ) )
 			{
-				const KotaGeom g = kotaGeom( poly );
+				const KotaGeom g = symGeom( poly );
 				RezLayer::Item li;
 				for ( const CCVector3d& Q : g.segs )
 				{
@@ -4635,6 +4779,7 @@ void DrawTool::updateTip()
 					RezLayer::Item ti;
 					ti.P = g.textPos[static_cast<size_t>( k )] + shift;
 					ti.up = upv;
+					ti.dir = g.textDir;
 					ti.height = g.textH;
 					ti.text = g.texts[k];
 					ti.color = yellow;
@@ -4727,6 +4872,7 @@ void DrawTool::updateTip()
 
 void DrawTool::redraw2D()
 {
+	PerfScope perf_( "redraw2D" );
 	if ( m_win )
 	{
 		refreshLayer();
@@ -4736,6 +4882,7 @@ void DrawTool::redraw2D()
 
 void DrawTool::redraw3D()
 {
+	PerfScope perf_( "redraw3D" );
 	if ( m_win )
 	{
 		refreshLayer();
@@ -5043,6 +5190,22 @@ void DrawTool::updateStatus()
 		prompt = m_refSel.empty() ? QStringLiteral( "Převzít z reference: vyberte čáry reference – klik, Ctrl+klik, okno tažením (zleva = uvnitř, zprava = křížem)" )
 		                          : QStringLiteral( "Převzít z reference: vybráno %1 – Enter = zkopírovat do výkresu, Ctrl+klik = přidat/odebrat, pravé = zrušit" ).arg( m_refSel.size() );
 		break;
+	case Mode::Dim:
+	{
+		static const char* orient[] = { "zarovnaná", "vodorovně", "svisle" };
+		const QString o = QString::fromUtf8( orient[m_dimOrient] );
+		if ( m_dimWaitText )
+			prompt = QStringLiteral( "Kóta: klikněte, kam dát text (podél kótovací čáry)" );
+		else if ( m_step == 0 )
+			prompt = QStringLiteral( "Kóta délková (%1, po %2 mm): první bod" ).arg( o ).arg( m_dimRound );
+		else if ( m_step == 1 )
+			prompt = QStringLiteral( "Kóta délková (%1): druhý bod" ).arg( o );
+		else if ( m_step == 2 )
+			prompt = QStringLiteral( "Kóta délková: poloha kótovací čáry" );
+		else
+			prompt = QStringLiteral( "Kóta délková: další bod řetězu (pravé = konec)" );
+		break;
+	}
 	case Mode::Info:
 		prompt = QStringLiteral( "Informace: klikněte na prvek – údaje se ukážou v okně (hladina, typ, délka, body…)" );
 		break;
@@ -5185,6 +5348,31 @@ void DrawTool::updateStatus()
 
 // ---------------------------------------------------------------- události
 
+void DrawTool::benchFill()
+{
+	// ladění výkonu: QREZY_BENCH=N → N náhodných čar do aktuálního výkresu (prostřední klik)
+	const int n = std::max( 1, qEnvironmentVariableIntValue( "QREZY_BENCH" ) );
+	CCVector2d c;
+	screenToLocal( m_mousePos, c );
+	const double R = 15.0 * m_scale;
+	UndoItem u;
+	unsigned seed = 12345;
+	auto rnd = [&seed]() { seed = seed * 1103515245u + 12345u; return ( ( seed >> 8 ) & 0xFFFF ) / 65535.0; };
+	{
+		PerfScope p2( "bench add lines" );
+		for ( int i = 0; i < n; ++i )
+		{
+			const CCVector2d a = c + CCVector2d( ( rnd() - 0.5 ) * 2 * R, ( rnd() - 0.5 ) * 2 * R );
+			const CCVector2d b = a + CCVector2d( ( rnd() - 0.5 ) * 2.0 * m_scale, ( rnd() - 0.5 ) * 2.0 * m_scale );
+			addLine( a, b, Drawing::layerIdAt( i % 5 ), false, &u );
+		}
+	}
+	pushUndo( std::move( u ) );
+	refreshLayer();
+	updateLineVisibility();
+	redraw2D();
+}
+
 bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 {
 	if ( obj != m_winObject || !m_win )
@@ -5197,6 +5385,7 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 	case QEvent::MouseButtonPress:
 	case QEvent::MouseButtonDblClick: // rychlé druhé kliknutí = další bod, ne dvojklik
 	{
+		PerfScope perf_( "mousePress" );
 		auto* e = static_cast<QMouseEvent*>( event );
 		m_mousePos = e->pos();
 		if ( m_panning )
@@ -5259,6 +5448,7 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 	}
 	case QEvent::MouseButtonRelease:
 	{
+		PerfScope perf_( "mouseRelease" );
 		auto* e = static_cast<QMouseEvent*>( event );
 		m_mousePos = e->pos();
 		if ( m_panning && e->button() == m_panButton )
@@ -5266,7 +5456,11 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 			m_panning = false;
 			if ( !m_panMoved )
 			{
-				if ( m_panButton == Qt::MiddleButton )
+				if ( m_panButton == Qt::MiddleButton && qEnvironmentVariableIsSet( "QREZY_BENCH" ) )
+				{
+					benchFill();
+				}
+				else if ( m_panButton == Qt::MiddleButton )
 				{
 					// prostřední kliknutí = ukázat místo ve 3D
 					CCVector2d P;
@@ -5386,6 +5580,15 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 				return true;
 			}
 			m_cycle.clear();
+			// délková kóta s ručním textem: pravé při čekání na text = text automaticky
+			if ( m_mode == Mode::Dim && m_dimWaitText )
+			{
+				UndoItem u;
+				addDimUV( m_dimPrevA, m_dimPrevB, m_dimL, m_dimDir, std::numeric_limits<double>::quiet_NaN(), &u );
+				pushUndo( std::move( u ) );
+				m_dimWaitText = false;
+				refreshLayer();
+			}
 			// převzít z reference: pravé = zrušit výběr
 			if ( m_mode == Mode::RefCopy && !m_refSel.empty() )
 			{
@@ -5450,6 +5653,13 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 	}
 	case QEvent::MouseMove:
 	{
+		PerfScope perf_( "mouseMove" );
+		struct SegCacheScope
+		{
+			const DrawTool* t;
+			explicit SegCacheScope( const DrawTool* d ) : t( d ) { t->m_segCacheOn = true; t->m_segCacheValid = false; }
+			~SegCacheScope() { t->m_segCacheOn = false; t->m_segCacheValid = false; t->m_segCache.clear(); }
+		} segScope( this );
 		auto* e = static_cast<QMouseEvent*>( event );
 		m_mousePos = e->pos();
 		if ( m_probeOn )
@@ -5603,6 +5813,7 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 	{
 		auto* e = static_cast<QKeyEvent*>( event );
 		const int k = e->key();
+
 		const bool ctrl = ( e->modifiers() & Qt::ControlModifier );
 		// horní řada bez Shiftu = menu nástrojů (jako MicroStation), čísla z numerické klávesnice nebo se Shiftem
 		const int rowDigit = topRowDigit( e );
@@ -6056,9 +6267,9 @@ void DrawTool::selectWindow( const QPoint& p0, const QPoint& p1, bool add )
 		}
 		// text / kóta: celý obrys písmen / značky (ne jen počátek), aby šly vybrat oknem jako čáry
 		std::vector<std::pair<CCVector2d, CCVector2d>> parts;
-		if ( s.poly && isKota( s.poly ) )
+		if ( s.poly && isSymbol( s.poly ) )
 		{
-			const KotaGeom g = kotaGeom( s.poly );
+			const KotaGeom g = symGeom( s.poly );
 			for ( size_t k = 0; k + 1 < g.segs.size(); k += 2 )
 			{
 				parts.emplace_back( m_frame.toUV( g.segs[k] ), m_frame.toUV( g.segs[k + 1] ) );
@@ -6241,6 +6452,14 @@ void DrawTool::rotateItem( ccPolyline* poly, const CCVector2d& C, double ang, Un
 		if ( isKota( poly ) )
 		{
 			translateItem( poly, rot( P ) - P, false, undo ); // kóta zůstává svislá, jen se posune hrot
+			return;
+		}
+		if ( isDim( poly ) )
+		{
+			if ( remakeDim( poly, CCVector2d( 0, 0 ), &C, ang, undo ) )
+			{
+				removeLine( poly, undo );
+			}
 			return;
 		}
 		// text: nová poloha a natočení (přidá se k dosavadnímu)
@@ -6558,7 +6777,8 @@ void DrawTool::showInfo( ccPolyline* poly )
 	auto row = [&rows, &esc]( const QString& k, const QString& v, bool raw = false ) { rows << QStringLiteral( "<tr><td style='color:#888;padding-right:10px'>%1</td><td>%2</td></tr>" ).arg( esc( k ), raw ? v : esc( v ) ); };
 	auto swatch = []( const QColor& c ) { return QStringLiteral( "<span style='background:%1'>&nbsp;&nbsp;&nbsp;&nbsp;</span> " ).arg( c.name() ); };
 
-	const bool text = isText( poly );
+	const bool dim = isDim( poly );
+	const bool text = isText( poly ) && !dim;
 	const bool kota = isKota( poly );
 	const bool sec = poly->hasMetaData( "qRezy.secId" );
 	const bool north = poly->hasMetaData( "qRezy.north" ) || poly->hasMetaData( "qRezy.symLevel" );
@@ -6567,7 +6787,9 @@ void DrawTool::showInfo( ccPolyline* poly )
 	const bool hidden = poly->hasMetaData( Drawing::MetaHidden ) && poly->getMetaData( Drawing::MetaHidden ).toBool();
 
 	QString type;
-	if ( kota )
+	if ( dim )
+		type = QStringLiteral( "Délková kóta" );
+	else if ( kota )
 		type = QStringLiteral( "Výšková kóta" );
 	else if ( text )
 		type = QStringLiteral( "Text" );
@@ -6625,7 +6847,7 @@ void DrawTool::showInfo( ccPolyline* poly )
 		if ( m_hiddenCats.count( cat ) )
 			row( QStringLiteral( "Zobrazení" ), QStringLiteral( "hladina je vypnutá" ) );
 	}
-	if ( !text )
+	if ( !text && !kota && !dim )
 		row( QStringLiteral( "Čára" ), hidden ? QStringLiteral( "zakrytá (čárkovaná)" ) : QStringLiteral( "plná" ) );
 	const int view = poly->hasMetaData( Drawing::MetaView ) ? poly->getMetaData( Drawing::MetaView ).toInt() : 0;
 	row( QStringLiteral( "Výkres" ), view == 0 ? QStringLiteral( "půdorys" ) : QStringLiteral( "řez / pohled č. %1" ).arg( view ) );
@@ -6638,6 +6860,17 @@ void DrawTool::showInfo( ccPolyline* poly )
 		if ( poly->hasMetaData( "qRezy.textAng" ) )
 			row( QStringLiteral( "Natočení" ), QStringLiteral( "%1°" ).arg( QString::number( poly->getMetaData( "qRezy.textAng" ).toDouble() * 57.29577951308232, 'f', 2 ).replace( '.', ',' ) ) );
 	}
+	if ( kota || dim )
+	{
+		const KotaGeom g = symGeom( poly );
+		row( QStringLiteral( "Hladina" ), QStringLiteral( "kóty (DGN hladina %1, barva %2)" ).arg( m_kotaLevel ).arg( m_kotaColor ) );
+		row( QStringLiteral( "Hodnota" ), g.texts.join( QStringLiteral( " / " ) ) );
+		if ( dim )
+		{
+			row( QStringLiteral( "Zaokrouhlení" ), QStringLiteral( "po %1 mm" ).arg( std::max( 1, poly->getMetaData( "qRezy.dimRound" ).toInt() ) ) );
+			row( QStringLiteral( "Text" ), poly->hasMetaData( "qRezy.dimT" ) ? QStringLiteral( "umístěn ručně" ) : QStringLiteral( "automaticky" ) );
+		}
+	}
 	if ( sec )
 	{
 		const QString nm = poly->getMetaData( "qRezy.secName" ).toString();
@@ -6646,7 +6879,7 @@ void DrawTool::showInfo( ccPolyline* poly )
 	}
 
 	// délka a body
-	if ( !text && n >= 2 )
+	if ( !text && !kota && !dim && n >= 2 )
 	{
 		double L = 0.0;
 		for ( unsigned k = 0; k + 1 < n; ++k )
@@ -6670,7 +6903,7 @@ void DrawTool::showInfo( ccPolyline* poly )
 	if ( n >= 1 )
 	{
 		QString pts;
-		const unsigned shown = std::min( n, 12u );
+		const unsigned shown = ( text || kota || dim ) ? 1u : std::min( n, 12u );
 		for ( unsigned k = 0; k < shown; ++k )
 		{
 			const CCVector3d P = CCVector3d::fromArray( poly->getPoint( k )->u ) / m_scale - m_shift;
@@ -6679,7 +6912,7 @@ void DrawTool::showInfo( ccPolyline* poly )
 			else
 				pts += QStringLiteral( "%1: &nbsp;%2 &nbsp;%3 &nbsp;Z %4<br>" ).arg( k + 1 ).arg( n3( P.x ), n3( P.y ), n3( P.z ) );
 		}
-		if ( n > shown )
+		if ( n > shown && !( text || kota || dim ) )
 			pts += QStringLiteral( "… (%1 dalších)" ).arg( n - shown );
 		row( text ? QStringLiteral( "Počátek (X Y)" ) : ( m_frame.plan ? QStringLiteral( "Body (X Y)" ) : QStringLiteral( "Body (X Y Z)" ) ), pts, true );
 	}
@@ -6700,6 +6933,209 @@ void DrawTool::showInfo( ccPolyline* poly )
 	m_infoText->setHtml( QStringLiteral( "<table cellspacing='2'>%1</table>" ).arg( rows.join( QString() ) ) );
 	m_infoDlg->show();
 	m_infoDlg->raise();
+}
+
+// ---------------------------------------------------------------- délková kóta
+
+bool DrawTool::isDim( const ccHObject* obj )
+{
+	return obj && obj->hasMetaData( "qRezy.dim" );
+}
+
+DrawTool::KotaGeom DrawTool::symGeom( const ccPolyline* poly ) const
+{
+	return isDim( poly ) ? dimGeom( poly ) : kotaGeom( poly );
+}
+
+void DrawTool::setDimOrient( int o )
+{
+	m_dimOrient = std::max( 0, std::min( 2, o ) );
+	QSettings().setValue( QStringLiteral( "qRezy/dimOrient" ), m_dimOrient );
+	updateTip();
+}
+
+void DrawTool::setDimRound( int mm )
+{
+	m_dimRound = std::max( 1, mm );
+	QSettings().setValue( QStringLiteral( "qRezy/dimRound" ), m_dimRound );
+	updateTip();
+}
+
+void DrawTool::setDimTextManual( bool on )
+{
+	m_dimTextManual = on;
+	QSettings().setValue( QStringLiteral( "qRezy/dimTextManual" ), on );
+}
+
+CCVector2d DrawTool::dimDirFor( const CCVector2d& A, const CCVector2d& B ) const
+{
+	const double ang = viewAngle();
+	const CCVector2d d0( std::cos( ang ), std::sin( ang ) ); // vodorovně na obrazovce
+	const CCVector2d d1( -d0.y, d0.x );                      // svisle na obrazovce
+	if ( m_dimOrient == 1 )
+	{
+		return d0;
+	}
+	if ( m_dimOrient == 2 )
+	{
+		return d1;
+	}
+	CCVector2d d = B - A;
+	if ( d.norm() < 1e-12 )
+	{
+		return d0;
+	}
+	d.normalize();
+	return d;
+}
+
+DrawTool::KotaGeom DrawTool::dimGeom( const CCVector3d& A, const CCVector3d& B, const CCVector3d& L, const CCVector3d& D, const CCVector3d& U, const CCVector3d& V, double textT, int roundMm ) const
+{
+	KotaGeom g;
+	CCVector3d d = D;
+	if ( d.norm() < 1e-12 )
+	{
+		d = U;
+	}
+	d.normalize();
+	const CCVector3d n = U.cross( V );         // normála roviny výkresu
+	CCVector3d perp = n.cross( d );            // v rovině kolmo ke kótovací čáře
+	perp.normalize();
+	const double th = QSettings().value( QStringLiteral( "qRezy/userTextHeight" ), 0.125 ).toDouble() * m_scale; // jako popisy překladů a otvorů
+	const double hA = ( L - A ).dot( perp );
+	const double len = ( B - A ).dot( d );
+	const CCVector3d A1 = A + perp * hA;       // pata na kótovací čáře
+	const CCVector3d B1 = A1 + d * len;
+	const double hB = ( B1 - B ).dot( perp );
+	const double ext = 0.4 * th;               // přesah vynášecí čáry za kótovací (~5 cm)
+	if ( std::abs( hA ) > 1e-9 )
+	{
+		g.segs.push_back( A );
+		g.segs.push_back( A1 + perp * ( hA > 0 ? ext : -ext ) );
+	}
+	if ( std::abs( hB ) > 1e-9 )
+	{
+		g.segs.push_back( B );
+		g.segs.push_back( B1 + perp * ( hB > 0 ? ext : -ext ) );
+	}
+	g.segs.push_back( A1 );
+	g.segs.push_back( B1 );
+	// text čitelný zleva doprava, svislý shora dolů (jako ve vzoru); „nahoru“ = vlevo od směru textu
+	CCVector3d Dt = d;
+	const double du = d.dot( U );
+	const double dv = d.dot( V );
+	if ( du < -1e-9 || ( std::abs( du ) <= 1e-9 && dv > 0 ) )
+	{
+		Dt = -d;
+	}
+	const CCVector3d Up = n.cross( Dt );
+	// zarážky: šikmé čárky 45° přes průsečík, délka ≈ výška písma
+	CCVector3d td = Dt + Up;
+	td.normalize();
+	for ( const CCVector3d& P : { A1, B1 } )
+	{
+		g.segs.push_back( P - td * ( 0.5 * th ) );
+		g.segs.push_back( P + td * ( 0.5 * th ) );
+	}
+	// hodnota v mm, zaokrouhlená (výchozí na cm)
+	const double r = std::max( 1, roundMm );
+	const double mm = std::abs( len ) / m_scale * 1000.0;
+	const QString txt = QString::number( static_cast<long long>( std::llround( mm / r ) * static_cast<long long>( r ) ) );
+	const double w = romansAdvance( txt, th );
+	const double gap = 0.5 * th;
+	CCVector3d C = ( A1 + B1 ) * 0.5;
+	if ( !std::isnan( textT ) )
+	{
+		C = A1 + d * textT; // ručně umístěný text (střed)
+	}
+	else if ( w + 1.2 * th > std::abs( len ) )
+	{
+		// nevejde se mezi zarážky → za konec na straně čtení
+		const CCVector3d E = ( ( B1 - A1 ).dot( Dt ) >= 0 ) ? B1 : A1;
+		C = E + Dt * ( 0.5 * th + 0.5 * w );
+	}
+	g.texts << txt;
+	g.textPos.push_back( C - Dt * ( 0.5 * w ) + Up * gap );
+	g.textH = th;
+	g.textDir = Dt;
+	g.textUp = Up;
+	return g;
+}
+
+DrawTool::KotaGeom DrawTool::dimGeom( const ccPolyline* poly ) const
+{
+	auto v3 = [poly]( const char* x, const char* y, const char* z ) { return CCVector3d( poly->getMetaData( x ).toDouble(), poly->getMetaData( y ).toDouble(), poly->getMetaData( z ).toDouble() ); };
+	const CCVector3d A = CCVector3d::fromArray( poly->getPoint( 0 )->u );
+	const double t = poly->hasMetaData( "qRezy.dimT" ) ? poly->getMetaData( "qRezy.dimT" ).toDouble() : std::numeric_limits<double>::quiet_NaN();
+	return dimGeom( A, A + v3( "qRezy.dbx", "qRezy.dby", "qRezy.dbz" ), A + v3( "qRezy.dlx", "qRezy.dly", "qRezy.dlz" ), v3( "qRezy.ddx", "qRezy.ddy", "qRezy.ddz" ),
+	                v3( "qRezy.kux", "qRezy.kuy", "qRezy.kuz" ), v3( "qRezy.kvx", "qRezy.kvy", "qRezy.kvz" ), t, std::max( 1, poly->getMetaData( "qRezy.dimRound" ).toInt() ) );
+}
+
+ccPolyline* DrawTool::addDim( const CCVector3d& A, const CCVector3d& B, const CCVector3d& L, const CCVector3d& D, double textT, int roundMm, UndoItem* undo, const ccPolyline* like )
+{
+	ccPolyline* poly = addText( m_frame.toUV( A ), QString(), undo );
+	if ( !poly )
+	{
+		return nullptr;
+	}
+	(void)like;
+	poly->setName( QStringLiteral( "Kóta délková" ) );
+	poly->setMetaData( "qRezy.dim", true );
+	const CCVector3d dB = B - A;
+	const CCVector3d dL = L - A;
+	poly->setMetaData( "qRezy.dbx", dB.x );
+	poly->setMetaData( "qRezy.dby", dB.y );
+	poly->setMetaData( "qRezy.dbz", dB.z );
+	poly->setMetaData( "qRezy.dlx", dL.x );
+	poly->setMetaData( "qRezy.dly", dL.y );
+	poly->setMetaData( "qRezy.dlz", dL.z );
+	poly->setMetaData( "qRezy.ddx", D.x );
+	poly->setMetaData( "qRezy.ddy", D.y );
+	poly->setMetaData( "qRezy.ddz", D.z );
+	poly->setMetaData( "qRezy.kux", m_frame.U.x );
+	poly->setMetaData( "qRezy.kuy", m_frame.U.y );
+	poly->setMetaData( "qRezy.kuz", m_frame.U.z );
+	poly->setMetaData( "qRezy.kvx", m_frame.V.x );
+	poly->setMetaData( "qRezy.kvy", m_frame.V.y );
+	poly->setMetaData( "qRezy.kvz", m_frame.V.z );
+	poly->setMetaData( "qRezy.dimRound", roundMm );
+	if ( !std::isnan( textT ) )
+	{
+		poly->setMetaData( "qRezy.dimT", textT );
+	}
+	return poly;
+}
+
+ccPolyline* DrawTool::addDimUV( const CCVector2d& A, const CCVector2d& B, const CCVector2d& L, const CCVector2d& D, double textT, UndoItem* undo )
+{
+	auto v = [this]( const CCVector2d& w ) { return m_frame.U * w.x + m_frame.V * w.y; };
+	const CCVector3d A3 = m_frame.to3D( A );
+	return addDim( A3, A3 + v( B - A ), A3 + v( L - A ), v( D ), textT, m_dimRound, undo );
+}
+
+ccPolyline* DrawTool::remakeDim( const ccPolyline* poly, const CCVector2d& shift, const CCVector2d* rotC, double ang, UndoItem* undo )
+{
+	auto uv = [this]( const CCVector3d& w ) { return CCVector2d( w.dot( m_frame.U ), w.dot( m_frame.V ) ); };
+	auto v3 = [poly]( const char* x, const char* y, const char* z ) { return CCVector3d( poly->getMetaData( x ).toDouble(), poly->getMetaData( y ).toDouble(), poly->getMetaData( z ).toDouble() ); };
+	CCVector2d A = m_frame.toUV( CCVector3d::fromArray( poly->getPoint( 0 )->u ) );
+	CCVector2d dB = uv( v3( "qRezy.dbx", "qRezy.dby", "qRezy.dbz" ) );
+	CCVector2d dL = uv( v3( "qRezy.dlx", "qRezy.dly", "qRezy.dlz" ) );
+	CCVector2d D = uv( v3( "qRezy.ddx", "qRezy.ddy", "qRezy.ddz" ) );
+	if ( rotC )
+	{
+		const double ca = std::cos( ang );
+		const double sa = std::sin( ang );
+		auto rv = [&]( const CCVector2d& w ) { return CCVector2d( w.x * ca - w.y * sa, w.x * sa + w.y * ca ); };
+		A = *rotC + rv( A - *rotC );
+		dB = rv( dB );
+		dL = rv( dL );
+		D = rv( D );
+	}
+	A += shift;
+	auto v = [this]( const CCVector2d& w ) { return m_frame.U * w.x + m_frame.V * w.y; };
+	const CCVector3d A3 = m_frame.to3D( A );
+	const double t = poly->hasMetaData( "qRezy.dimT" ) ? poly->getMetaData( "qRezy.dimT" ).toDouble() : std::numeric_limits<double>::quiet_NaN();
+	return addDim( A3, A3 + v( dB ), A3 + v( dL ), v( D ), t, std::max( 1, poly->getMetaData( "qRezy.dimRound" ).toInt() ), undo, poly );
 }
 
 bool DrawTool::isKota( const ccHObject* obj )
@@ -6826,11 +7262,18 @@ bool DrawTool::layerHidden( const ccHObject* obj ) const
 	{
 		return true;
 	}
-	if ( isText( obj ) && !isKota( obj ) && obj->hasMetaData( "qRezy.textLevel" ) )
+	if ( isText( obj ) && !isSymbol( obj ) && obj->hasMetaData( "qRezy.textLevel" ) )
 	{
 		return m_hiddenLevels.count( obj->getMetaData( "qRezy.textLevel" ).toInt() ) > 0;
 	}
 	return false;
+}
+
+void DrawTool::setGuideLayersOff( const std::set<int>& cats )
+{
+	m_guideOff = cats;
+	rebuildViewRef();
+	redraw3D();
 }
 
 void DrawTool::setHiddenLayers( const std::set<int>& cats )
@@ -6890,6 +7333,7 @@ void DrawTool::setViewRefOptions( double shiftM, bool color, int guideMode )
 
 void DrawTool::rebuildViewRef()
 {
+	PerfScope perf_( "rebuildViewRef" );
 	m_viewRef.clear();
 	m_viewRefGuideU.clear();
 	m_viewRef2.clear();
@@ -6912,6 +7356,7 @@ void DrawTool::rebuildViewRef()
 		CCVector2d a, b; //!< půdorys (x, y)
 		bool wall = false; //!< plná čára hladiny ZDI (zakrývá pohled pro vodicí čáry „viditelné“)
 		bool arc = false;  //!< úsek oblouku (vodicí čáry z něj nevedou)
+		bool noGuide = false; //!< hladina vypnutá pro vodicí čáry
 	};
 	std::vector<Raw> raw;
 	double dMax = -1e300;
@@ -6965,6 +7410,7 @@ void DrawTool::rebuildViewRef()
 		const bool wall = ch->hasMetaData( Drawing::MetaCategory ) && ch->getMetaData( Drawing::MetaCategory ).toInt() == Drawing::Walls
 		                  && !( ch->hasMetaData( Drawing::MetaHidden ) && ch->getMetaData( Drawing::MetaHidden ).toBool() );
 		const bool arcPoly = isArc( poly );
+		const bool noGuide = ch->hasMetaData( Drawing::MetaCategory ) && m_guideOff.count( ch->getMetaData( Drawing::MetaCategory ).toInt() ) > 0;
 		const unsigned n = poly->size();
 		const unsigned segN = poly->isClosed() ? n : ( n > 0 ? n - 1 : 0 );
 		for ( unsigned k = 0; k < segN; ++k )
@@ -6973,7 +7419,7 @@ void DrawTool::rebuildViewRef()
 			const CCVector3d B3 = CCVector3d::fromArray( poly->getPoint( ( k + 1 ) % n )->u );
 			const CCVector3d A = A3 - m_frame.O;
 			const CCVector3d B = B3 - m_frame.O;
-			Raw r{ A.dot( Uh ), A.dot( Nh ), B.dot( Uh ), B.dot( Nh ), col, CCVector2d( A3.x, A3.y ), CCVector2d( B3.x, B3.y ), wall, arcPoly };
+			Raw r{ A.dot( Uh ), A.dot( Nh ), B.dot( Uh ), B.dot( Nh ), col, CCVector2d( A3.x, A3.y ), CCVector2d( B3.x, B3.y ), wall, arcPoly, noGuide };
 			dMax = std::max( { dMax, r.d0, r.d1 } );
 			raw.push_back( r );
 		}
@@ -7053,12 +7499,20 @@ void DrawTool::rebuildViewRef()
 			std::vector<Vt> verts;
 			for ( const Raw& r : raw )
 			{
-				if ( r.arc )
+				if ( r.arc || r.noGuide )
 				{
 					continue; // oblouky (dveře) – ze zalomení oblouku vodicí čáry ne
 				}
 				verts.push_back( { r.u0, r.d0, r.c } );
 				verts.push_back( { r.u1, r.d1, r.c } );
+			}
+			std::vector<const Raw*> walls;
+			for ( const Raw& r : raw )
+			{
+				if ( r.wall )
+				{
+					walls.push_back( &r );
+				}
 			}
 			std::sort( verts.begin(), verts.end(), []( const Vt& a, const Vt& b ) { return a.first < b.first || ( a.first == b.first && a.second < b.second ); } );
 			verts.erase( std::unique( verts.begin(), verts.end(), [&]( const Vt& a, const Vt& b )
@@ -7071,12 +7525,9 @@ void DrawTool::rebuildViewRef()
 					continue; // před rovinou (odříznuté) nebo dál, než je nastavená hloubka
 				}
 				bool hidden = false;
-				for ( const Raw& r : raw )
+				for ( const Raw* rp : walls ) // zakrývají jen zdi – ostatní čáry (podlahy, nábytek…) jsou vidět, ale pohled nezastaví
 				{
-					if ( !r.wall )
-					{
-						continue; // zakrývají jen zdi – ostatní čáry (podlahy, nábytek…) jsou vidět, ale pohled nezastaví
-					}
+					const Raw& r = *rp;
 					const double uLo = std::min( r.u0, r.u1 );
 					const double uHi = std::max( r.u0, r.u1 );
 					if ( vt.first < uLo - 1e-9 || vt.first > uHi + 1e-9 )
@@ -7111,7 +7562,7 @@ void DrawTool::rebuildViewRef()
 		{
 			for ( const Raw& r : raw )
 			{
-				if ( r.arc )
+				if ( r.arc || r.noGuide )
 				{
 					continue;
 				}
@@ -7267,7 +7718,7 @@ void DrawTool::rebuildViewRef()
 					CCVector2d b = rf.toUV( CCVector3d::fromArray( poly->getPoint( k + 1 )->u ) );
 					for ( const CCVector2d& P : { a, b } )
 					{
-						if ( std::abs( P.x - edge ) <= band )
+						if ( std::abs( P.x - edge ) <= band && !m_guideOff.count( cat ) )
 						{
 							vs.emplace_back( P.y, P.x + du );
 						}
@@ -7652,6 +8103,7 @@ std::vector<DrawTool::VisPoint> DrawTool::framePoints( const DrawFrame& frame, s
 
 void DrawTool::refreshLayer()
 {
+	PerfScope perf_( "refreshLayer" );
 	if ( !m_layer )
 	{
 		return;
@@ -7873,9 +8325,9 @@ void DrawTool::refreshLayer()
 			{
 				continue;
 			}
-			if ( isKota( poly ) )
+			if ( isSymbol( poly ) )
 			{
-				const KotaGeom g = kotaGeom( poly );
+				const KotaGeom g = symGeom( poly );
 				const ccColor::Rgb kc = ( ch == m_sel || isSelected( poly ) ) ? ccColor::Rgb( 255, 220, 0 ) : ccColor::Rgb( 0, 200, 200 );
 				RezLayer::Item li;
 				li.segs = g.segs;
@@ -7886,6 +8338,7 @@ void DrawTool::refreshLayer()
 					RezLayer::Item ti;
 					ti.P = g.textPos[static_cast<size_t>( k )]; // levý dolní roh (RezLayer posune o výšku písma)
 					ti.up = up;
+					ti.dir = g.textDir;
 					ti.height = g.textH;
 					ti.text = g.texts[k];
 					ti.color = kc;
@@ -8098,6 +8551,46 @@ std::vector<DgnV7::Element> DrawTool::exportElements( const Drawing::SymbologyTa
 			continue; // jen doplněné prvky
 		}
 		const int view = poly->hasMetaData( Drawing::MetaView ) ? poly->getMetaData( Drawing::MetaView ).toInt() : 0;
+		if ( view >= 0 && isDim( poly ) && poly->size() > 0 )
+		{
+			// délková kóta: čáry (vynášecí, kótovací, zarážky) a text v hladině kót
+			const KotaGeom g = dimGeom( poly );
+			DgnV7::Symbology ks;
+			ks.level = m_kotaLevel;
+			ks.color = m_kotaColor;
+			for ( size_t k = 0; k + 1 < g.segs.size(); k += 2 )
+			{
+				DgnV7::Element e;
+				e.sym = ks;
+				DgnV7::Point2 a;
+				DgnV7::Point2 b;
+				if ( map( view, g.segs[k], a ) && map( view, g.segs[k + 1], b ) )
+				{
+					e.pts = { a, b };
+					out.push_back( e );
+				}
+			}
+			for ( int k = 0; k < g.texts.size(); ++k )
+			{
+				const CCVector3d& P = g.textPos[static_cast<size_t>( k )];
+				DgnV7::Point2 TP;
+				DgnV7::Point2 TD;
+				if ( !map( view, P, TP ) || !map( view, P + g.textDir * g.textH, TD ) )
+				{
+					continue;
+				}
+				DgnV7::Element t;
+				t.isText = true;
+				t.sym = ks;
+				t.textHeight = std::hypot( TD.x - TP.x, TD.y - TP.y ); // výška písma v jednotkách výkresu (mapování je bez zkreslení)
+				t.textAngleDeg = std::atan2( TD.y - TP.y, TD.x - TP.x ) * 57.29577951308232;
+				t.pts.push_back( TP );
+				const QByteArray bytes = codec ? codec->fromUnicode( g.texts[k] ) : g.texts[k].toLatin1();
+				t.text = std::string( bytes.constData(), static_cast<size_t>( bytes.size() ) );
+				out.push_back( t );
+			}
+			continue;
+		}
 		if ( view >= 0 && isKota( poly ) && poly->size() > 0 )
 		{
 			const KotaGeom g = kotaGeom( poly );

@@ -99,7 +99,8 @@ public:
 		Opening,      //!< okno v půdorysu: 2 body otvoru, strana kóty → kóta délky (výška(parapet) z pomocného řezu, funkce Okno)
 		RoomLabel,    //!< popis místnosti: klik do místnosti → pomocný řez (podlaha, strop) → okno s údaji → umístění (případně s odkazovou čárou)
 		RefCopy,      //!< převzít z reference pohledu: obdélník 2 kliky → čáry reference uvnitř se zkopírují do výkresu
-		Info          //!< informace o prvku: klik → okno s hladinou, typem, délkou, body…
+		Info,         //!< informace o prvku: klik → okno s hladinou, typem, délkou, body…
+		Dim           //!< délková kóta: 2 body, poloha kótovací čáry, další body = řetěz; pravé = konec
 	};
 
 	enum class SnapType
@@ -147,6 +148,19 @@ public:
 	void setKotaFormat( int f );
 	int kotaFormat() const { return m_kotaFmt; }
 	void setKotaScale( int n );
+	//! délkové kóty: směr (0 zarovnaná, 1 vodorovně, 2 svisle – podle os obrazovky), zaokrouhlení v mm, text ručně
+	void setDimOrient( int o );
+	int dimOrient() const { return m_dimOrient; }
+	void setDimRound( int mm );
+	int dimRound() const { return m_dimRound; }
+	void setDimTextManual( bool on );
+	bool dimTextManual() const { return m_dimTextManual; }
+	static bool isDim( const ccHObject* obj );
+	//! hladiny, ze kterých nevedou vodicí čáry (z půdorysu ani vodorovné z Ref. pohledu)
+	void setGuideLayersOff( const std::set<int>& cats );
+	void benchFill();
+	//! kóta výšková nebo délková (značka kreslená z metadat, ne text ani čára)
+	static bool isSymbol( const ccHObject* obj ) { return isKota( obj ) || isDim( obj ); }
 	int kotaScale() const { return m_kotaScale; }
 	void setKotaSymbology( int level, int color ) { m_kotaLevel = level; m_kotaColor = color; }
 	static bool isKota( const ccHObject* obj );
@@ -458,9 +472,23 @@ private:
 		std::vector<CCVector3d> textPos;
 		QStringList texts;
 		double textH = 0.0; //!< lokální jednotky
+		CCVector3d textDir = CCVector3d( 0, 0, 0 ); //!< směr textu (nula = osa U výkresu)
+		CCVector3d textUp = CCVector3d( 0, 0, 0 );  //!< směr „nahoru“ textu (nula = osa V)
 	};
 	KotaGeom kotaGeom( const CCVector3d& tip, const CCVector3d& U, const CCVector3d& V, int side, int fmt, int scale ) const;
 	KotaGeom kotaGeom( const ccPolyline* poly ) const;
+	//! délková kóta: A, B = kótované body, L = bod na kótovací čáře, D = směr kótovací čáry (3D lokální)
+	KotaGeom dimGeom( const CCVector3d& A, const CCVector3d& B, const CCVector3d& L, const CCVector3d& D, const CCVector3d& U, const CCVector3d& V, double textT, int roundMm ) const;
+	KotaGeom dimGeom( const ccPolyline* poly ) const;
+	//! geometrie značky (výšková nebo délková kóta)
+	KotaGeom symGeom( const ccPolyline* poly ) const;
+	ccPolyline* addDim( const CCVector3d& A, const CCVector3d& B, const CCVector3d& L, const CCVector3d& D, double textT, int roundMm, UndoItem* undo, const ccPolyline* like = nullptr );
+	//! délková kóta z bodů ve výkresu (u, v)
+	ccPolyline* addDimUV( const CCVector2d& A, const CCVector2d& B, const CCVector2d& L, const CCVector2d& D, double textT, UndoItem* undo );
+	//! kopie / posun / otočení délkové kóty: nové body a směr (u, v)
+	ccPolyline* remakeDim( const ccPolyline* poly, const CCVector2d& shift, const CCVector2d* rotC, double ang, UndoItem* undo );
+	//! směr kótovací čáry pro body A, B podle volby směru
+	CCVector2d dimDirFor( const CCVector2d& A, const CCVector2d& B ) const;
 	double heightOf( const CCVector3d& local ) const;
 	//! průsečíky řezné čáry A–B s čarami pohledu (čára, bod)
 	std::vector<std::pair<ccPolyline*, CCVector2d>> breakLineHits( const CCVector2d& A, const CCVector2d& B ) const;
@@ -645,6 +673,22 @@ private:
 	bool m_hasPin = false;
 	int m_kotaColor = 135;
 	CCVector2d m_kotaTip;
+	// délková kóta (rozpracovaná)
+	std::set<int> m_guideOff;
+	mutable std::vector<Segment> m_segCache; //!< collectSegments během jednoho pohybu myši
+	mutable bool m_segCacheOn = false;
+	mutable bool m_segCacheValid = false;
+	int m_dimOrient = 0;
+	int m_dimRound = 10;
+	bool m_dimTextManual = false;
+	CCVector2d m_dimA;          //!< 1. bod (u řetězu předchozí bod)
+	CCVector2d m_dimB;          //!< 2. bod (čeká se na polohu čáry nebo na text)
+	CCVector2d m_dimDir;        //!< směr kótovací čáry řetězu
+	CCVector2d m_dimL;          //!< bod na kótovací čáře řetězu
+	bool m_dimChain = false;    //!< kótovací čára už je dána (další body = řetěz)
+	bool m_dimWaitText = false; //!< ruční text: čeká se na klik polohy textu
+	CCVector2d m_dimPrevA;      //!< poslední vytvořená kóta (pro ruční text)
+	CCVector2d m_dimPrevB;
 	double m_clGap = 0.10;
 	double m_clTol = 0.02;
 	// dveře: kóta čeká na výšku (3D lokálně: střed kóty, směr textu, „nahoru“ textu)

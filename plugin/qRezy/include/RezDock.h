@@ -167,6 +167,8 @@ private:
 	void createSection( int kind, double ax, double ay, double bx, double by, double cx, double cy );
 	void deleteActiveSection();
 	DrawFrame frameFor( int viewId ) const;
+	//! rámec řezu / pohledu ze známého SectionInfo (bez hledání ve výkresu); si.id ≠ viewId = půdorys
+	DrawFrame frameForSection( int viewId, const SectionInfo& si ) const;
 	void activateView( int viewId );
 	void refreshViewCombo();
 	void sectionCamera( const SectionInfo& s );
@@ -212,6 +214,7 @@ private:
 	QLabel* m_guideDepthLbl = nullptr;
 	void showLayerDisplayMenu();
 	std::set<int> loadHiddenLayers() const;
+	void showGuideLayersMenu();
 	QWidget* m_refRow = nullptr;
 	std::map<int, int> m_refFor; //!< zvolená reference pro každý výkres (půdorys / pohled)
 	QWidget* m_viewRefRow = nullptr;

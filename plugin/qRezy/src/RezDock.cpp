@@ -1,4 +1,5 @@
 #include "RezDock.h"
+#include "Perf.h"
 #include "Extract.h"
 #include "DgnV7.h"
 #include "DrawTool.h"
@@ -129,6 +130,26 @@ namespace
 	}
 
 	const char* KSecId = "qRezy.secId";
+
+	std::set<int> loadIdSet( const QString& key )
+	{
+		std::set<int> out;
+		for ( const QString& t : QSettings().value( key ).toString().split( ',', Qt::SkipEmptyParts ) )
+		{
+			out.insert( t.toInt() );
+		}
+		return out;
+	}
+
+	void saveIdSet( const QString& key, const std::set<int>& ids )
+	{
+		QStringList l;
+		for ( int id : ids )
+		{
+			l << QString::number( id );
+		}
+		QSettings().setValue( key, l.join( ',' ) );
+	}
 
 	QString sectionName( int kind, int no )
 	{
@@ -389,9 +410,14 @@ void RezDock::buildPanel()
 			const int def = st.value( QStringLiteral( "qRezy/viewRefGuides" ), true ).toBool() ? 1 : 0;
 			m_viewRefGuides->setCurrentIndex( std::max( 0, std::min( 3, st.value( QStringLiteral( "qRezy/viewRefGuideMode" ), def ).toInt() ) ) );
 		}
+		auto* guideLayers = new QToolButton;
+		guideLayers->setText( QStringLiteral( "Hladiny…" ) );
+		guideLayers->setToolTip( QStringLiteral( "Ze kterých hladin vedou vodicí čáry (z půdorysu i vodorovné z Ref. pohledu). Odškrtnutá hladina se dál kreslí, jen z ní nevedou vodicí čáry – např. KOMUNIKACE (schody)." ) );
+		connect( guideLayers, &QToolButton::clicked, this, [this]() { showGuideLayersMenu(); } );
 		vl->addWidget( m_viewRefShift, 1 );
 		vl->addWidget( m_viewRefColor );
 		vl->addWidget( m_viewRefGuides );
+		vl->addWidget( guideLayers );
 	}
 	m_viewRefLabel = new QLabel( QStringLiteral( "Půdorys v pohledu:" ) );
 	form->addRow( m_viewRefLabel, m_viewRefRow );
@@ -599,6 +625,7 @@ void RezDock::buildPanel()
 	connect( m_guideDepth, &QSlider::valueChanged, this, depthChanged );
 	depthChanged();
 	m_draw->setHiddenLayers( loadHiddenLayers() );
+	m_draw->setGuideLayersOff( loadIdSet( QStringLiteral( "qRezy/guideOffLayers" ) ) );
 	connect( m_zero, qOverload<double>( &QDoubleSpinBox::valueChanged ), this, [this]()
 	{
 		updateLabels();
@@ -908,6 +935,7 @@ void RezDock::buildToolbar()
 		{ DrawTool::Mode::Modify, "modify", "Upravit prvek", "Klik u konce čáry, pak nové místo konce." },
 		{ DrawTool::Mode::Break, "break", "Rozdělit", "2 body na čáře, část mezi nimi se smaže; stejný bod 2× = jen rozdělit." },
 		{ DrawTool::Mode::BreakLine, "breakline", "Rozdělit čarou", "Řezná čára 2 body → všechny čáry, které protne, se v průsečíku rozdělí (nic se nemaže). Průsečíky se ukazují červeně." },
+		{ DrawTool::Mode::Dim, "dim", "Délková", "Délková kóta (hladina kót, písmo jako popisy): 1. bod, 2. bod, klik = poloha kótovací čáry → kóta v mm. Každý další klik = další úsek řetězu na stejné čáře, pravé = konec. Směr, zaokrouhlení a ruční text vedle." },
 		{ DrawTool::Mode::Info, "info", "Informace", "Informace o prvku: klik na čáru, text nebo kótu → okno s hladinou (název, F-klávesa, DGN hladina, barva, tloušťka, styl), typem prvku, plná/zakrytá, délkou a souřadnicemi bodů, u textu obsah a výška písma. Okno zůstane otevřené a přepíše se při dalším kliknutí." },
 		{ DrawTool::Mode::Pin, "pin", "Špendlík", "Klik na místo ve výkresu → 3D náhled se na něj posune a přiblíží (natočení a nastavení zůstane) a ukáže špendlík. Totéž kdykoli prostředním kliknutím." },
 		{ DrawTool::Mode::Extend, "extend", "Prodloužit", "Klik u konce čáry, nový konec nebo celková délka." },
@@ -970,6 +998,24 @@ void RezDock::buildToolbar()
 	kotaFmt->setToolTip( QStringLiteral( "Zápis výšky u nové kóty" ) );
 	kotaFmt->setCurrentIndex( m_draw->kotaFormat() );
 	connect( kotaFmt, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this]( int i ) { m_draw->setKotaFormat( i ); if ( m_draw->isActive() ) m_draw->setMode( DrawTool::Mode::Kota ); focusView(); } );
+	// délková kóta: směr, zaokrouhlení, ruční text
+	auto* dimOrient = new QComboBox;
+	dimOrient->addItem( QStringLiteral( "zarovnaná" ) );
+	dimOrient->addItem( QStringLiteral( "vodorovně" ) );
+	dimOrient->addItem( QStringLiteral( "svisle" ) );
+	dimOrient->setToolTip( QStringLiteral( "Směr kótovací čáry: podle dvou kótovaných bodů, nebo vodorovně / svisle na obrazovce" ) );
+	dimOrient->setCurrentIndex( m_draw->dimOrient() );
+	connect( dimOrient, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this]( int i ) { m_draw->setDimOrient( i ); if ( m_draw->isActive() ) m_draw->setMode( DrawTool::Mode::Dim ); focusView(); } );
+	auto* dimRound = new QComboBox;
+	dimRound->addItem( QStringLiteral( "po 1 mm" ), 1 );
+	dimRound->addItem( QStringLiteral( "po 5 mm" ), 5 );
+	dimRound->addItem( QStringLiteral( "po 1 cm" ), 10 );
+	dimRound->setToolTip( QStringLiteral( "Zaokrouhlení nové kóty (výpis vždy v mm)" ) );
+	dimRound->setCurrentIndex( std::max( 0, dimRound->findData( m_draw->dimRound() ) ) );
+	connect( dimRound, qOverload<int>( &QComboBox::currentIndexChanged ), this, [this, dimRound]( int i ) { m_draw->setDimRound( dimRound->itemData( i ).toInt() ); focusView(); } );
+	QAction* dimManual = mkAct( "text", QStringLiteral( "Text ručně" ), QStringLiteral( "Zapnuto: po každém bodu kóty se klikem umístí text podél kótovací čáry (pravé = automaticky). Vypnuto: text na střed nad čáru, když se nevejde, za zarážku." ), true );
+	dimManual->setChecked( m_draw->dimTextManual() );
+	connect( dimManual, &QAction::toggled, this, [this]( bool on ) { m_draw->setDimTextManual( on ); focusView(); } );
 	auto* kotaScale = new QSpinBox;
 	kotaScale->setRange( 1, 10000 );
 	kotaScale->setValue( m_draw->kotaScale() );
@@ -1310,12 +1356,6 @@ void RezDock::buildToolbar()
 			focusView();
 		} );
 		m_draw->setProbe( m_probeAct->isChecked() );
-		RibbonGroup kg = r->addGroup( pDraw, QStringLiteral( "Kóta" ) );
-		kg.addBig( T( DrawTool::Mode::Kota ) );
-		RibbonColumn kc = kg.column();
-		kc.widget( kotaFmt );
-		kc.widget( kotaScale, QStringLiteral( "1 :" ) );
-		kc.addSmall( m_probeAct );
 		RibbonGroup cg = r->addGroup( pDraw, QStringLiteral( "Z mračna" ) );
 		cg.addBigWith( T( DrawTool::Mode::CloudLine ), QStringLiteral( "V" ), clReach, QStringLiteral( "roh do" ) );
 		RibbonColumn cc = cg.column();
@@ -1363,6 +1403,12 @@ void RezDock::buildToolbar()
 		RibbonColumn b2 = bg.column();
 		b2.addSmall( ptHeights );
 		b2.widget( ptHFmt );
+		RibbonGroup dg = r->addGroup( pDraw, QStringLiteral( "Kóty" ) );
+		dg.addBig( T( DrawTool::Mode::Dim ) );
+		RibbonColumn dc = dg.column();
+		dc.widget( dimOrient );
+		dc.widget( dimRound );
+		dc.addSmall( dimManual );
 	}
 	const int pSec = r->addPage( QStringLiteral( "Řezy a pohledy" ) );
 	{
@@ -1387,6 +1433,13 @@ void RezDock::buildToolbar()
 			focusView();
 		} );
 		n.addBig( sev );
+		// výšková kóta (kačena) a výška bodu – patří k řezům a pohledům
+		RibbonGroup kg = r->addGroup( pSec, QStringLiteral( "Kóta" ) );
+		kg.addBig( T( DrawTool::Mode::Kota ) );
+		RibbonColumn kc = kg.column();
+		kc.widget( kotaFmt );
+		kc.widget( kotaScale, QStringLiteral( "1 :" ) );
+		kc.addSmall( m_probeAct );
 		RibbonGroup s = r->addGroup( pSec, QStringLiteral( "Poloha a tloušťka řezu" ) );
 		RibbonColumn s1 = s.column();
 		s1.addSmall( upA, QStringLiteral( "PgUp" ) );
@@ -1748,63 +1801,86 @@ namespace
 	};
 }
 
+namespace
+{
+	//! zaškrtávací seznam hladin, který se po kliknutí nezavře; off = odškrtnuté hladiny
+	void layerChecklist( QWidget* parent, std::set<int> off, const std::function<void( const std::set<int>& )>& apply, bool withAllOff )
+	{
+		StayMenu menu( parent );
+		auto setAll = [&]( bool on )
+		{
+			off.clear();
+			for ( QAction* a : menu.actions() )
+			{
+				if ( a->isCheckable() )
+				{
+					const QSignalBlocker b( a );
+					a->setChecked( on );
+					a->setText( QString( QChar( on ? 0x2611 : 0x2610 ) ) + a->text().mid( 1 ) );
+					if ( !on )
+					{
+						off.insert( a->data().toInt() );
+					}
+				}
+			}
+			apply( off );
+		};
+		QAction* all = menu.addAction( QStringLiteral( "Zapnout všechny" ) );
+		QObject::connect( all, &QAction::triggered, parent, [&]() { setAll( true ); } );
+		if ( withAllOff )
+		{
+			QAction* none = menu.addAction( QStringLiteral( "Vypnout všechny" ) );
+			QObject::connect( none, &QAction::triggered, parent, [&]() { setAll( false ); } );
+		}
+		menu.addSeparator();
+		for ( const Drawing::Layer& L : Drawing::layers() )
+		{
+			QPixmap pm( 12, 12 );
+			pm.fill( L.color );
+			const QString name = QStringLiteral( "%1 (DGN %2)" ).arg( L.name ).arg( L.sym[0].level );
+			QAction* a = menu.addAction( QIcon( pm ), QString() );
+			a->setCheckable( true );
+			a->setData( L.id );
+			a->setChecked( !off.count( L.id ) );
+			// stav i v textu (u ikon barvy styl nemusí ukázat zaškrtnutí)
+			const QString onTxt = QString( QChar( 0x2611 ) ) + QStringLiteral( "  " ) + name;
+			const QString offTxt = QString( QChar( 0x2610 ) ) + QStringLiteral( "  " ) + name;
+			auto label = [onTxt, offTxt]( bool on ) { return on ? onTxt : offTxt; };
+			a->setText( label( a->isChecked() ) );
+			const int id = L.id;
+			QObject::connect( a, &QAction::toggled, parent, [&, id, a, label]( bool on )
+			{
+				a->setText( label( on ) );
+				if ( on )
+					off.erase( id );
+				else
+					off.insert( id );
+				apply( off );
+			} );
+		}
+		menu.exec( QCursor::pos() );
+	}
+}
+
 void RezDock::showLayerDisplayMenu()
 {
-	StayMenu menu( this );
-	std::set<int> hidden = loadHiddenLayers();
-	auto apply = [this]( const std::set<int>& h )
+	layerChecklist( this, loadHiddenLayers(), [this]( const std::set<int>& h )
 	{
-		QStringList ids;
-		for ( int id : h )
-		{
-			ids << QString::number( id );
-		}
-		QSettings().setValue( QStringLiteral( "qRezy/hiddenLayers" ), ids.join( ',' ) );
+		saveIdSet( QStringLiteral( "qRezy/hiddenLayers" ), h );
 		m_draw->setHiddenLayers( h );
 		refresh3DLines();
 		m_app->refreshAll();
-	};
-	QAction* all = menu.addAction( QStringLiteral( "Zapnout všechny" ) );
-	connect( all, &QAction::triggered, this, [&]()
+	}, false );
+}
+
+void RezDock::showGuideLayersMenu()
+{
+	layerChecklist( this, loadIdSet( QStringLiteral( "qRezy/guideOffLayers" ) ), [this]( const std::set<int>& off )
 	{
-		hidden.clear();
-		for ( QAction* a : menu.actions() )
-		{
-			if ( a->isCheckable() )
-			{
-				const QSignalBlocker b( a );
-				a->setChecked( true );
-				a->setText( QString( QChar( 0x2611 ) ) + a->text().mid( 1 ) );
-			}
-		}
-		apply( hidden );
-	} );
-	menu.addSeparator();
-	for ( const Drawing::Layer& L : Drawing::layers() )
-	{
-		QPixmap pm( 12, 12 );
-		pm.fill( L.color );
-		const QString name = QStringLiteral( "%1 (DGN %2)" ).arg( L.name ).arg( L.sym[0].level );
-		QAction* a = menu.addAction( QIcon( pm ), QString() );
-		a->setCheckable( true );
-		a->setChecked( !hidden.count( L.id ) );
-		// stav i v textu (u ikon barvy styl nemusí ukázat zaškrtnutí)
-		const QString onTxt = QString( QChar( 0x2611 ) ) + QStringLiteral( "  " ) + name;
-		const QString offTxt = QString( QChar( 0x2610 ) ) + QStringLiteral( "  " ) + name;
-		auto label = [onTxt, offTxt]( bool on ) { return on ? onTxt : offTxt; };
-		a->setText( label( a->isChecked() ) );
-		const int id = L.id;
-		connect( a, &QAction::toggled, this, [&, id, a, label]( bool on )
-		{
-			a->setText( label( on ) );
-			if ( on )
-				hidden.erase( id );
-			else
-				hidden.insert( id );
-			apply( hidden );
-		} );
-	}
-	menu.exec( QCursor::pos() );
+		saveIdSet( QStringLiteral( "qRezy/guideOffLayers" ), off );
+		m_draw->setGuideLayersOff( off );
+		m_app->refreshAll();
+	}, true );
 }
 
 void RezDock::refreshRef2Combo()
@@ -2298,6 +2374,7 @@ void RezDock::syncThicknessSlider()
 
 void RezDock::applyClip()
 {
+	PerfScope perf_( "applyClip" );
 	ccGenericPointCloud* c = cloud();
 	updateLabels();
 	if ( !c )
@@ -2824,6 +2901,7 @@ bool RezDock::ensure3D( bool aux )
 		v->resize( 760, 600 );
 		v->setProbe( m_probeAct && m_probeAct->isChecked() );
 		pushFloorMarks( v );
+		connect( v, &View3D::linesNeeded, this, [this]() { refresh3DLines(); } );
 		if ( !aux )
 		{
 			connect( v, &View3D::pinPicked, this, [this]( double x, double y, double z )
@@ -2899,6 +2977,7 @@ void RezDock::pushFloorMarks( View3D* v ) const
 
 void RezDock::refresh3DLines()
 {
+	PerfScope perf_( "refresh3DLines" );
 	const bool v3 = m_view3D && m_view3D->isVisible();
 	const bool va = m_viewAux && m_viewAux->isVisible();
 	pushFloorMarks( m_view3D );
@@ -2907,11 +2986,36 @@ void RezDock::refresh3DLines()
 	{
 		return;
 	}
+	// čáry ve 3D vypnuté (a pomocný řez zavřený) → nepočítat; přepočítá se po zapnutí „čáry“
+	const bool linesWanted = va || ( v3 && m_view3D->linesShown() );
+	if ( !linesWanted )
+	{
+		m_view3D->setLinesStale();
+	}
 	std::vector<View3D::Line> lines;
 	ccGenericPointCloud* c = cloud();
 	const double sc = c ? c->getGlobalScale() : 1.0;
 	ccHObject* group = m_draw->drawingGroup( false );
-	if ( group )
+	// patra a řezy jen jednou (dřív se hledaly ve výkresu u každé čáry → pomalé u velkých výkresů)
+	std::map<int, FloorInfo> floorMap;
+	struct SecFrame
+	{
+		SectionInfo si;
+		DrawFrame f;
+	};
+	std::map<int, SecFrame> secMap;
+	if ( group && linesWanted )
+	{
+		for ( const FloorInfo& fi : loadFloors() )
+		{
+			floorMap[fi.id] = fi;
+		}
+		for ( const SectionInfo& si : loadSections() )
+		{
+			secMap[si.id] = { si, frameForSection( si.id, si ) };
+		}
+	}
+	if ( group && linesWanted )
 	{
 		for ( unsigned i = 0; i < group->getChildrenNumber(); ++i )
 		{
@@ -2931,11 +3035,12 @@ void RezDock::refresh3DLines()
 			if ( isPlanView( view ) )
 			{
 				// celé patro v jedné rovině: na podlaze patra (posuvníkem nahoru/dolů)
-				FloorInfo fi;
-				if ( !floorById( view, fi ) )
+				const auto fit = floorMap.find( view );
+				if ( fit == floorMap.end() )
 				{
 					continue;
 				}
+				const FloorInfo& fi = fit->second;
 				const double zl = c ? c->toLocal3d( CCVector3d( 0, 0, fi.level ) ).z : fi.level;
 				for ( unsigned k = 0; k < poly->size(); ++k )
 				{
@@ -2947,12 +3052,13 @@ void RezDock::refresh3DLines()
 			else
 			{
 				// řez / pohled: v rovině řezu, u pohledu na líci objektu (posuvníkem do hloubky)
-				SectionInfo si;
-				if ( !sectionById( view, si ) )
+				const auto sit = secMap.find( view );
+				if ( sit == secMap.end() )
 				{
 					continue;
 				}
-				const DrawFrame f = frameFor( view );
+				const SectionInfo& si = sit->second.si;
+				const DrawFrame& f = sit->second.f;
 				const double sN = ( si.kind == 1 && si.face >= 0.0 ) ? -si.face * sc : -si.offset * sc;
 				for ( unsigned k = 0; k < poly->size(); ++k )
 				{
@@ -2991,7 +3097,10 @@ void RezDock::refresh3DLines()
 			m.pts = { CCVector3d( m_auxPA.x, m_auxPA.y, zp ), CCVector3d( m_auxPB.x, m_auxPB.y, zp ) };
 			lines3.push_back( m );
 		}
-		m_view3D->setLines( lines3 );
+		if ( linesWanted )
+		{
+			m_view3D->setLines( lines3 );
+		}
 		// změřené body ze souboru (bez výšky na podlaze patra)
 		std::vector<View3D::SurveyPt> sps;
 		const double floorL = c ? c->toLocal3d( CCVector3d( 0, 0, m_floorLevel->value() ) ).z : m_floorLevel->value();
@@ -3620,6 +3729,7 @@ void RezDock::exportV7( const std::vector<int>& floorIds, bool withSections )
 	for ( const Target& t : targets )
 	{
 		std::vector<int> usedViews;
+		std::map<int, DrawFrame> frameCache; // rámce řezů jen jednou (ne u každého bodu)
 		auto map = [&]( int view, const CCVector3d& P, DgnV7::Point2& o ) -> bool
 		{
 			if ( std::find( t.views.begin(), t.views.end(), view ) == t.views.end() )
@@ -3636,7 +3746,12 @@ void RezDock::exportV7( const std::vector<int>& floorIds, bool withSections )
 			{
 				if ( si.id == view )
 				{
-					const DrawFrame f = frameFor( view );
+					auto fc = frameCache.find( view );
+					if ( fc == frameCache.end() )
+					{
+						fc = frameCache.emplace( view, frameForSection( view, si ) ).first;
+					}
+					const DrawFrame& f = fc->second;
 					const CCVector2d uv = f.toUV( P );
 					o.x = si.insX + uv.x / sc;
 					o.y = absH ? ( uv.y / sc + zeroG ) : ( si.insY + uv.y / sc );
@@ -4546,6 +4661,7 @@ void RezDock::importDgn()
 
 std::vector<RezDock::SectionInfo> RezDock::loadSections() const
 {
+	PerfScope perf_( "loadSections" );
 	std::vector<SectionInfo> out;
 	ccHObject* group = m_draw ? m_draw->drawingGroup( false ) : nullptr;
 	if ( !group )
@@ -4803,10 +4919,19 @@ void RezDock::deleteActiveSection()
 
 DrawFrame RezDock::frameFor( int viewId ) const
 {
-	DrawFrame f;
 	SectionInfo si;
+	if ( isPlanView( viewId ) || !sectionById( viewId, si ) )
+	{
+		si.id = -1;
+	}
+	return frameForSection( viewId, si );
+}
+
+DrawFrame RezDock::frameForSection( int viewId, const SectionInfo& si ) const
+{
+	DrawFrame f;
 	ccGenericPointCloud* c = cloud();
-	if ( isPlanView( viewId ) || !c || !sectionById( viewId, si ) )
+	if ( isPlanView( viewId ) || !c || si.id != viewId )
 	{
 		// půdorys (patro) ve výšce řezu
 		f.viewId = isPlanView( viewId ) ? viewId : 0;

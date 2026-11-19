@@ -618,6 +618,23 @@ namespace Icons
 				p.drawLine( QPointF( 21, 20 ), QPointF( 29, 20 ) );
 				arrowHead( p, QPointF( 25, 6 ), QPointF( 25, 14 ), 6 );
 			}
+			else if ( n == "dim" )
+			{
+				// délková kóta: vynášecí čáry, kótovací čára se zarážkami, číslo
+				p.setPen( QPen( Ink, 1.4 ) );
+				p.drawLine( QPointF( 5, 28 ), QPointF( 5, 12 ) );
+				p.drawLine( QPointF( 27, 28 ), QPointF( 27, 12 ) );
+				p.setPen( QPen( Accent, 1.8 ) );
+				p.drawLine( QPointF( 3, 16 ), QPointF( 29, 16 ) );
+				p.drawLine( QPointF( 2, 19 ), QPointF( 8, 13 ) );
+				p.drawLine( QPointF( 24, 19 ), QPointF( 30, 13 ) );
+				QFont f = p.font();
+				f.setPixelSize( 9 );
+				f.setBold( true );
+				p.setFont( f );
+				p.setPen( Ink );
+				p.drawText( QRectF( 5, 2, 22, 12 ), Qt::AlignCenter, QStringLiteral( "250" ) );
+			}
 			else if ( n == "info" )
 			{
 				// kroužek s písmenem i

@@ -70,6 +70,10 @@ public:
 
 	//! nakreslené čáry (kopie pro toto okno)
 	void setLines( const std::vector<Line>& lines );
+	//! zaškrtnuté „čáry“
+	bool linesShown() const;
+	//! čáry se nepřepočítaly (byly vypnuté) – po zapnutí se vyžádají signálem linesNeeded
+	void setLinesStale() { m_linesStale = true; }
 
 	//! pomocný řez: pravoúhlý pohled na rovinu A–B (lokálně), N = k pozorovateli; jen pro měření
 	void auxSection( const CCVector3d& A, const CCVector3d& B, const CCVector3d& N, double planZ, double zeroGlobal, double thickness );
@@ -94,6 +98,8 @@ public:
 	void setFloorMarks( const std::vector<FloorMark>& marks );
 
 Q_SIGNALS:
+	//! zapnuté „čáry“ po změnách výkresu, kdy byly vypnuté → přepočítat
+	void linesNeeded();
 	//! prostřední klik do mračna ve 3D náhledu → místo (lokální souřadnice) pro špendlík ve výkresu
 	void pinPicked( double x, double y, double z );
 	//! pomocný řez: změřeny 2 body (lokální 3D) → kóta v 3D náhledu
@@ -222,4 +228,5 @@ private:
 	double m_floorZ = 0.0;
 	ccHObject* m_floorGroup = nullptr;
 	CCVector3d m_mCursor;
+	bool m_linesStale = false;
 };

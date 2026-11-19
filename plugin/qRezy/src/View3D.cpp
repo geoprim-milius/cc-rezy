@@ -592,6 +592,12 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 	} );
 	connect( m_showLines, &QCheckBox::toggled, this, [this]( bool on )
 	{
+		if ( on && m_linesStale )
+		{
+			m_linesStale = false;
+			Q_EMIT linesNeeded(); // setLines → buildLines
+			return;
+		}
 		if ( m_linesGroup )
 		{
 			m_linesGroup->setEnabled( on );
@@ -858,8 +864,14 @@ void View3D::extractRegion()
 	applyClip(); // výřez už pokrývá → jen ořez a překreslení
 }
 
+bool View3D::linesShown() const
+{
+	return m_showLines && m_showLines->isChecked();
+}
+
 void View3D::setLines( const std::vector<Line>& lines )
 {
+	m_linesStale = false;
 	m_lines = lines;
 	buildLines();
 }
