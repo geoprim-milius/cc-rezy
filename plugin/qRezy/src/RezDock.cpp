@@ -5557,11 +5557,16 @@ void RezDock::roomLabelDialog()
 	d.leader = lead->isChecked();
 	st.setValue( QStringLiteral( "qRezy/roomLeader" ), d.leader );
 	st.setValue( QStringLiteral( "qRezy/roomFloorLocal" ), floMode->currentIndex() == 1 );
-	bool ok = false;
-	const int n = d.number.toInt( &ok );
-	if ( ok )
 	{
-		st.setValue( QStringLiteral( "qRezy/roomNext" ), QString::number( n + 1 ) );
+		// další číslo: navýšit poslední skupinu číslic, šířku i úvodní nuly a předponu ponechat (001 → 002, S09 → S10, 1.05 → 1.06)
+		const QRegularExpressionMatch m = QRegularExpression( QStringLiteral( "^(.*?)(\\d+)(\\D*)$" ) ).match( d.number );
+		if ( m.hasMatch() )
+		{
+			const QString digits = m.captured( 2 );
+			const qulonglong n = digits.toULongLong() + 1;
+			const QString next = m.captured( 1 ) + QStringLiteral( "%1" ).arg( n, digits.length(), 10, QChar( '0' ) ) + m.captured( 3 );
+			st.setValue( QStringLiteral( "qRezy/roomNext" ), next );
+		}
 	}
 	m_draw->startRoomPlace( d );
 }

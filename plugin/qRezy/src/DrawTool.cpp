@@ -8000,7 +8000,7 @@ void DrawTool::rebuildViewRef()
 			}
 			continue;
 		}
-		if ( layerHidden( ch ) )
+		if ( layerHidden( ch ) || ch->hasMetaData( "qRezy.north" ) || isSymbol( ch ) ) // severka a kóty do reference nepatří
 		{
 			continue;
 		}
