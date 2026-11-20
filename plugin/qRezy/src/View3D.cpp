@@ -1,4 +1,5 @@
 #include "View3D.h"
+#include "Perf.h"
 #include "RezLine.h"
 #include "RezLayer.h"
 #include "DrawTool.h"
@@ -537,7 +538,7 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		}
 		if ( m_win )
 		{
-			m_win->redraw();
+			winRedraw();
 		}
 	} );
 	if ( m_widget )
@@ -575,7 +576,7 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		}
 		if ( m_win )
 		{
-			m_win->redraw();
+			winRedraw();
 		}
 	} );
 	connect( m_showPoints, &QCheckBox::toggled, this, [this]( bool on )
@@ -587,7 +588,7 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		}
 		if ( m_win )
 		{
-			m_win->redraw();
+			winRedraw();
 		}
 	} );
 	connect( m_showLines, &QCheckBox::toggled, this, [this]( bool on )
@@ -604,7 +605,7 @@ View3D::View3D( ccMainAppInterface* app, QWidget* parent, bool auxOnly )
 		}
 		if ( m_win )
 		{
-			m_win->redraw();
+			winRedraw();
 		}
 	} );
 }
@@ -871,6 +872,7 @@ bool View3D::linesShown() const
 
 void View3D::setLines( const std::vector<Line>& lines )
 {
+	PerfScope perf_( "3D setLines" );
 	m_linesStale = false;
 	m_lines = lines;
 	buildLines();
@@ -878,6 +880,7 @@ void View3D::setLines( const std::vector<Line>& lines )
 
 void View3D::buildLines()
 {
+	PerfScope perf_( "3D buildLines" );
 	if ( !m_win )
 	{
 		return;
@@ -912,7 +915,7 @@ void View3D::buildLines()
 	m_linesGroup->setEnabled( m_showLines->isChecked() );
 	m_win->addToOwnDB( m_linesGroup );
 	applyClip();
-	m_win->redraw();
+	winRedraw();
 }
 
 void View3D::applyClip()
@@ -1002,7 +1005,7 @@ void View3D::focusOn( const CCVector3d& P, double viewAngle )
 	m_win->setBaseViewMat( view );
 	m_win->updateConstellationCenterAndZoom( &box );
 	m_win->setPivotPoint( CCVector3d( P.x, P.y, P.z ), false, false );
-	m_win->redraw();
+	winRedraw();
 	if ( !isVisible() )
 	{
 		show();
@@ -1011,8 +1014,31 @@ void View3D::focusOn( const CCVector3d& P, double viewAngle )
 
 // ---------------------------------------------------------------- změřené body
 
+void View3D::winRedraw( bool only2D, bool resetLOD )
+{
+	PerfScope perf_( only2D ? "3D redraw (2D)" : "3D redraw" );
+	if ( m_win )
+	{
+		m_win->redraw( only2D, resetLOD );
+	}
+}
+
 void View3D::setSurveyPoints( const std::vector<SurveyPt>& pts, const ccColor::Rgb& marker, const ccColor::Rgb& name )
 {
+	// beze změny nepřekreslovat (volá se po každé změně kresby – překreslení celého mračna je drahé)
+	if ( m_surveyLayer && pts.size() == m_survey.size() && marker.r == m_surveyMarker.r && marker.g == m_surveyMarker.g && marker.b == m_surveyMarker.b
+	     && name.r == m_surveyName.r && name.g == m_surveyName.g && name.b == m_surveyName.b )
+	{
+		bool same = true;
+		for ( size_t i = 0; i < pts.size() && same; ++i )
+		{
+			same = ( pts[i].P - m_survey[i].P ).norm2() < 1e-18 && pts[i].name == m_survey[i].name;
+		}
+		if ( same )
+		{
+			return;
+		}
+	}
 	m_survey = pts;
 	m_surveyMarker = marker;
 	m_surveyName = name;
@@ -1021,6 +1047,7 @@ void View3D::setSurveyPoints( const std::vector<SurveyPt>& pts, const ccColor::R
 
 void View3D::rebuildSurvey()
 {
+	PerfScope perf_( "3D rebuildSurvey" );
 	if ( !m_win )
 	{
 		return;
@@ -1063,7 +1090,7 @@ void View3D::rebuildSurvey()
 			m_surveyLayer->items.push_back( it );
 		}
 	}
-	m_win->redraw();
+	winRedraw();
 }
 
 // ---------------------------------------------------------------- špendlík
@@ -1162,7 +1189,7 @@ void View3D::pinAt( const CCVector3d& P, double viewAngle, bool plan )
 		// první ukázání: výchozí šikmý pohled
 		focusOn( P, viewAngle );
 		buildPin();
-		m_win->redraw();
+		winRedraw();
 		return;
 	}
 	// natočení, perspektivu, směr ořezu i šířky posuvníků nechat – jen přesunout ořez a kameru
@@ -1183,7 +1210,7 @@ void View3D::pinAt( const CCVector3d& P, double viewAngle, bool plan )
 	m_win->setPivotPoint( CCVector3d( P.x, P.y, P.z ), false, false );
 	m_win->setCameraPos( eye );
 	buildPin();
-	m_win->redraw();
+	winRedraw();
 	if ( !isVisible() )
 	{
 		show();
@@ -1200,7 +1227,7 @@ void View3D::auxPin( const CCVector3d& P, bool plan )
 	m_pinPlan = plan;
 	m_hasPin = true;
 	buildPin();
-	m_win->redraw();
+	winRedraw();
 }
 
 // ---------------------------------------------------------------- pomocný řez
@@ -1280,7 +1307,7 @@ void View3D::auxSection( const CCVector3d& A, const CCVector3d& B, const CCVecto
 	setWindowTitle( QStringLiteral( "Řezy – pomocný řez (měření)" ) );
 	m_info->setText( QStringLiteral( "<b>Pomocný řez</b> – klikněte 2 body = vzdálenost a převýšení; u kurzoru výška nad ±0,000 a v Bpv. "
 	                                 "Pravé tažení = posun, pravý klik = zrušit měření, kolečko = zoom." ) );
-	m_win->redraw();
+	winRedraw();
 	if ( !isVisible() )
 	{
 		show();
@@ -1473,7 +1500,7 @@ void View3D::setProbe( bool on )
 		m_probeLayer->items.clear();
 		if ( m_win )
 		{
-			m_win->redraw( true, false );
+			winRedraw( true, false );
 		}
 	}
 }
@@ -1503,7 +1530,7 @@ void View3D::probeNow()
 		it.background = true;
 		m_probeLayer->items.push_back( it );
 	}
-	m_win->redraw( true, false );
+	winRedraw( true, false );
 }
 
 QString View3D::floorText( const CCVector3d& P ) const
@@ -1567,7 +1594,7 @@ void View3D::updateFloor()
 	}
 	if ( !m_hasFloor || !m_aux )
 	{
-		m_win->redraw();
+		winRedraw();
 		return;
 	}
 	// zelená vodorovná čára podlahy přes celý řez (před mračnem)
@@ -1589,7 +1616,7 @@ void View3D::updateFloor()
 	m_floorGroup->addChild( line );
 	m_floorGroup->setDisplay_recursive( m_win );
 	m_win->addToOwnDB( m_floorGroup );
-	m_win->redraw();
+	winRedraw();
 }
 
 void View3D::updateMeasure( bool live )
@@ -1646,7 +1673,7 @@ void View3D::updateMeasure( bool live )
 	}
 	setMeasures( pts, m_auxN, 2.0 * m_scale );
 	m_info->setText( txt );
-	m_win->redraw( !live || m_mp.empty(), false );
+	winRedraw( !live || m_mp.empty(), false );
 }
 
 bool View3D::eventFilter( QObject* obj, QEvent* event )
@@ -1667,7 +1694,7 @@ bool View3D::eventFilter( QObject* obj, QEvent* event )
 		{
 			m_probeTimer->stop();
 			m_probeLayer->items.clear();
-			m_win->redraw( true, false );
+			winRedraw( true, false );
 		}
 	}
 	// pomocný řez: klávesy V a B (bez Ctrl/Alt/Shift), když je fokus v tomto okně nebo nad ním myš (i zadokované) → Def. podlahy
@@ -1699,10 +1726,10 @@ bool View3D::eventFilter( QObject* obj, QEvent* event )
 		const int d = e->angleDelta().y();
 		if ( d != 0 && !( e->modifiers() & ( Qt::ControlModifier | Qt::ShiftModifier | Qt::AltModifier ) ) )
 		{
-			zoomAtCursor( m_win, e->pos(), d / 8.0f );
+			zoomAtCursor( m_win, e->position().toPoint(), d / 8.0f );
 			if ( m_aux )
 			{
-				updateCross( e->pos(), true );
+				updateCross( e->position().toPoint(), true );
 			}
 			return true;
 		}
@@ -1726,7 +1753,7 @@ bool View3D::eventFilter( QObject* obj, QEvent* event )
 				m_pinPlan = false;
 				m_hasPin = true;
 				buildPin();
-				m_win->redraw();
+				winRedraw();
 				Q_EMIT pinPicked( P.x, P.y, P.z );
 			}
 		}
@@ -1862,13 +1889,13 @@ bool View3D::eventFilter( QObject* obj, QEvent* event )
 		}
 		else
 		{
-			m_win->redraw( true, false );
+			winRedraw( true, false );
 		}
 		break;
 	}
 	case QEvent::Leave:
 		updateCross( QPoint(), false );
-		m_win->redraw( true, false );
+		winRedraw( true, false );
 		break;
 	default:
 		break;
@@ -1944,7 +1971,7 @@ void View3D::writeMeasured()
 	m_measStep = 0;
 	clearMeasure();
 	m_info->setText( QStringLiteral( "<b>Zapsáno do půdorysu: %1</b>" ).arg( txt ) );
-	m_win->redraw();
+	winRedraw();
 	Q_EMIT writeHeight( txt, mode, at.x, at.y );
 }
 
@@ -1974,7 +2001,7 @@ void View3D::setMeasures( const std::vector<CCVector3d>& pts, const CCVector3d& 
 	clearMeasure();
 	if ( pts.size() < 2 )
 	{
-		m_win->redraw();
+		winRedraw();
 		return;
 	}
 	CCVector3d n( N.x, N.y, 0.0 );
@@ -2044,7 +2071,7 @@ void View3D::setMeasures( const std::vector<CCVector3d>& pts, const CCVector3d& 
 	}
 	m_measGroup->setDisplay_recursive( m_win );
 	m_win->addToOwnDB( m_measGroup );
-	m_win->redraw();
+	winRedraw();
 }
 
 void View3D::auxZoom( double len )

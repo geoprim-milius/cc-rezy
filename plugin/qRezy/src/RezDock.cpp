@@ -1612,6 +1612,7 @@ void RezDock::buildToolbar()
 
 std::vector<RezDock::FloorInfo> RezDock::loadFloors() const
 {
+	PerfScope perf_( "loadFloors" );
 	std::vector<FloorInfo> out;
 	ccHObject* group = m_draw ? m_draw->drawingGroup( false ) : nullptr;
 	if ( group && group->hasMetaData( "qRezy.floors" ) )
@@ -1980,7 +1981,7 @@ void RezDock::showLayerDisplayMenu()
 		saveIdSet( QStringLiteral( "qRezy/hiddenLayers" ), h );
 		m_draw->setHiddenLayers( h );
 		refresh3DLines();
-		m_app->refreshAll();
+		{ PerfScope pr_( "refreshAll" ); m_app->refreshAll(); }
 	}, false );
 }
 
@@ -1990,12 +1991,13 @@ void RezDock::showGuideLayersMenu()
 	{
 		saveIdSet( QStringLiteral( "qRezy/guideOffLayers" ), off );
 		m_draw->setGuideLayersOff( off );
-		m_app->refreshAll();
+		{ PerfScope pr_( "refreshAll" ); m_app->refreshAll(); }
 	}, true );
 }
 
 void RezDock::refreshRef2Combo()
 {
+	PerfScope perf_( "refreshRef2Combo" );
 	if ( !m_ref2Combo )
 	{
 		return;
@@ -2026,6 +2028,7 @@ void RezDock::refreshRef2Combo()
 
 void RezDock::applyRef2()
 {
+	PerfScope perf_( "applyRef2" );
 	if ( !m_ref2Combo || !m_draw )
 	{
 		return;
@@ -2047,6 +2050,7 @@ void RezDock::applyRef2()
 
 void RezDock::applyRoomLevels()
 {
+	PerfScope perf_( "applyRoomLevels" );
 	std::vector<DrawTool::RoomLevel> out;
 	SectionInfo si;
 	ccGenericPointCloud* c = cloud();
@@ -2726,6 +2730,7 @@ bool RezDock::probePoint( const QPoint& pos, CCVector3d& P, QString& text )
 
 void RezDock::showClip( ccGenericPointCloud* c, const std::vector<Tuple4Tpl<double>>& planes, double margin )
 {
+	PerfScope perf_( "showClip" );
 	m_curPlanes = planes;
 	ccPointCloud* pc = ccHObjectCaster::ToPointCloud( c );
 	// malé mračno nebo bez ořezu: přímo ořezové roviny na mračnu (jako dřív)
@@ -2740,7 +2745,7 @@ void RezDock::showClip( ccGenericPointCloud* c, const std::vector<Tuple4Tpl<doub
 			c->addClipPlanes( cp );
 		}
 		c->prepareDisplayForRefresh();
-		m_app->refreshAll();
+		{ PerfScope pr_( "refreshAll" ); m_app->refreshAll(); }
 		return;
 	}
 	m_slabExact = planes;
@@ -2774,11 +2779,12 @@ void RezDock::showClip( ccGenericPointCloud* c, const std::vector<Tuple4Tpl<doub
 		m_slab->addClipPlanes( cp );
 	}
 	m_slab->prepareDisplayForRefresh();
-	m_app->refreshAll();
+	{ PerfScope pr_( "refreshAll" ); m_app->refreshAll(); }
 }
 
 void RezDock::extractSlab()
 {
+	PerfScope perf_( "extractSlab" );
 	ccGenericPointCloud* c = cloud();
 	ccPointCloud* pc = c ? ccHObjectCaster::ToPointCloud( c ) : nullptr;
 	if ( !pc || m_slabExact.empty() || !c->getDisplay() )
@@ -2806,7 +2812,7 @@ void RezDock::extractSlab()
 			cp.equation = e;
 			c->addClipPlanes( cp );
 		}
-		m_app->refreshAll();
+		{ PerfScope pr_( "refreshAll" ); m_app->refreshAll(); }
 		return;
 	}
 	removeSlab();
@@ -2840,7 +2846,7 @@ void RezDock::extractSlab()
 	c->setVisible( false );
 	m_app->dispToConsole( QStringLiteral( "[Řezy] Zobrazen plátek řezu: %1 bodů z %2." ).arg( m_slab->size() ).arg( c->size() ) );
 	c->prepareDisplayForRefresh();
-	m_app->refreshAll();
+	{ PerfScope pr_( "refreshAll" ); m_app->refreshAll(); }
 }
 
 void RezDock::removeSlab()
@@ -2880,7 +2886,7 @@ void RezDock::clearClip()
 		c->prepareDisplayForRefresh();
 		if ( m_app )
 		{
-			m_app->refreshAll();
+			{ PerfScope pr_( "refreshAll" ); m_app->refreshAll(); }
 		}
 	}
 }
@@ -2970,7 +2976,7 @@ void RezDock::applyCloudShown()
 	{
 		c->prepareDisplayForRefresh();
 	}
-	m_app->refreshAll();
+	{ PerfScope pr_( "refreshAll" ); m_app->refreshAll(); }
 }
 
 void RezDock::onStatus( const QString& text )
@@ -4545,7 +4551,7 @@ void RezDock::transferDrawing()
 	m_app->dispToConsole( QStringLiteral( "[Řezy] Výkres přenesen z mračna %1 na %2%3." ).arg( src->getName(), dst->getName(), moved ? QStringLiteral( " (přepočten posun souřadnic)" ) : QString() ) );
 	QMessageBox::information( this, QStringLiteral( "Přenést výkres" ),
 	                          QStringLiteral( "Výkres je teď u mračna „%1“. Staré mračno „%2“ je skryté – když vše sedí, můžete ho zavřít a práci uložit (Uložit práci)." ).arg( dst->getName(), src->getName() ) );
-	m_app->refreshAll();
+	{ PerfScope pr_( "refreshAll" ); m_app->refreshAll(); }
 }
 
 void RezDock::importDgn()
@@ -5065,7 +5071,7 @@ void RezDock::deleteActiveSection()
 		refreshViewCombo();
 		refreshRefCombo();
 		refresh3DLines();
-		m_app->refreshAll();
+		{ PerfScope pr_( "refreshAll" ); m_app->refreshAll(); }
 		return;
 	}
 	SectionInfo si;
@@ -5099,7 +5105,7 @@ void RezDock::deleteActiveSection()
 	}
 	refreshViewCombo();
 	refresh3DLines();
-	m_app->refreshAll();
+	{ PerfScope pr_( "refreshAll" ); m_app->refreshAll(); }
 }
 
 DrawFrame RezDock::frameFor( int viewId ) const

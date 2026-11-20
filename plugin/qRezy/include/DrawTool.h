@@ -469,6 +469,7 @@ private:
 	void updateTip();
 	void updateStatus();
 	void redraw2D();
+	void redrawOverlay();
 	void redraw3D();
 	void keepCrossCursor();
 	void panBy( const QPoint& d );
@@ -755,7 +756,6 @@ private:
 	RoomGeom roomGeom( const CCVector2d& cursor ) const;
 	std::vector<CCVector2d> circlePts( const CCVector2d& c, double r ) const;
 	void buildRoomLabel( const CCVector2d& cursor );
-	double computeRoomArea( const CCVector2d& P ) const;
 	int m_doorKind = 0;
 	CCVector3d m_doorC;
 	CCVector3d m_doorT;

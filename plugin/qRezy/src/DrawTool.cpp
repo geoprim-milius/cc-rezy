@@ -374,7 +374,7 @@ DrawTool::DrawTool( ccMainAppInterface* app, QObject* parent )
 			m_probeText = t;
 		}
 		updateTip(); // náhled (dočasné položky) včetně výšky bodu
-		redraw2D();
+		redrawOverlay();
 	} );
 	QSettings st;
 	m_arcMethod = std::max( 0, std::min( 2, st.value( QStringLiteral( "qRezy/arcMethod" ), 0 ).toInt() ) );
@@ -1659,7 +1659,7 @@ void DrawTool::onHoverTimeout()
 			m_acquired.erase( m_acquired.begin() + static_cast<long>( i ) );
 			m_acqDirs.erase( m_acqDirs.begin() + static_cast<long>( i ) );
 			updateTip();
-			redraw2D();
+			redrawOverlay();
 			return;
 		}
 	}
@@ -1696,7 +1696,7 @@ void DrawTool::onHoverTimeout()
 		m_acqDirs.erase( m_acqDirs.begin() );
 	}
 	updateTip();
-	redraw2D();
+	redrawOverlay();
 }
 
 // ---------------------------------------------------------------- úpravy
@@ -1952,6 +1952,15 @@ void DrawTool::pushUndo( UndoItem&& u )
 		m_undo.push_back( std::move( u ) );
 		if ( m_undo.size() > 500 )
 		{
+			// nejstarší krok zpět zahodit; smazané prvky drží jen on → uvolnit (jinak únik paměti)
+			for ( Action& a : m_undo.front() )
+			{
+				if ( a.kind == Action::Remove && a.poly && !lineExists( a.poly ) )
+				{
+					delete a.poly;
+					a.poly = nullptr;
+				}
+			}
 			m_undo.erase( m_undo.begin() );
 		}
 		Q_EMIT drawingChanged();
@@ -5320,6 +5329,16 @@ void DrawTool::updateTip()
 	setOverlays( ovs );
 }
 
+void DrawTool::redrawOverlay()
+{
+	// jen kurzor a náhled (temp, překryvné čáry) – vrstva kresby se znovu nesestavuje
+	PerfScope perf_( "redrawOverlay" );
+	if ( m_win )
+	{
+		m_win->redraw( true, false );
+	}
+}
+
 void DrawTool::redraw2D()
 {
 	PerfScope perf_( "redraw2D" );
@@ -6221,7 +6240,8 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		keepCrossCursor();
 		updateTip();
 		updateStatus();
-		redraw2D();
+		// pohyb myši mění jen kurzor a náhled (updateTip) – vrstvu kresby (texty, kóty, reference) znovu nesestavovat
+		redrawOverlay();
 		if ( e->buttons() != Qt::NoButton )
 		{
 			return true; // tažení tlačítkem nepouštět do CloudCompare
@@ -6257,7 +6277,7 @@ bool DrawTool::eventFilter( QObject* obj, QEvent* event )
 		const int d = e->angleDelta().y();
 		if ( d != 0 && !( e->modifiers() & ( Qt::ShiftModifier | Qt::AltModifier ) ) )
 		{
-			zoomAtCursor( m_win, e->pos(), d / 8.0f );
+			zoomAtCursor( m_win, e->position().toPoint(), d / 8.0f );
 			updateTip();
 			redraw2D();
 			return true;
@@ -9036,7 +9056,7 @@ bool DrawTool::importPoints( const QString& path, QString& message )
 		{
 			continue;
 		}
-		QStringList tok = line.split( QRegExp( QStringLiteral( "[\\s;\\t]+" ) ), QString::SkipEmptyParts );
+		QStringList tok = line.split( QRegularExpression( QStringLiteral( "[\\s;\\t]+" ) ), Qt::SkipEmptyParts );
 		if ( tok.size() < 3 )
 		{
 			continue;
@@ -9820,223 +9840,3 @@ void DrawTool::buildRoomLabel( const CCVector2d& cursor )
 	updateTip();
 }
 
-double DrawTool::computeRoomArea( const CCVector2d& P ) const
-{
-	// obrys místnosti z nakreslených čar (zdi, slabé zdi, okna, překlady, hrany nad řezem – ne dveře, kóty, popisy):
-	// čáry rozdělit v průsečících, graf, paprsek z kliku k nejbližší čáře a obejít stěnu grafu po levé ruce
-	const double range = 30.0 * m_scale;
-	const double eps = 0.002 * m_scale;
-	std::vector<std::pair<CCVector2d, CCVector2d>> segs;
-	for ( const Segment& s : collectSegments() )
-	{
-		if ( s.ref || !s.poly || isText( s.poly ) )
-		{
-			continue;
-		}
-		const int cat = s.poly->hasMetaData( Drawing::MetaCategory ) ? s.poly->getMetaData( Drawing::MetaCategory ).toInt() : 0;
-		if ( cat == 6 || cat == 7 || cat == 8 || cat == 9 || cat == 10 )
-		{
-			continue;
-		}
-		if ( dist( closestOnSegment( s.a, s.b, P ), P ) > range || dist( s.a, s.b ) < eps )
-		{
-			continue;
-		}
-		segs.emplace_back( s.a, s.b );
-	}
-	const size_t n = segs.size();
-	if ( n < 3 )
-	{
-		return -1.0;
-	}
-	// parametry dělení každé čáry
-	std::vector<std::vector<double>> cuts( n, std::vector<double>{ 0.0, 1.0 } );
-	for ( size_t i = 0; i < n; ++i )
-	{
-		const CCVector2d a = segs[i].first;
-		const CCVector2d r = segs[i].second - a;
-		const double li = r.norm();
-		for ( size_t j = i + 1; j < n; ++j )
-		{
-			const CCVector2d b = segs[j].first;
-			const CCVector2d s = segs[j].second - b;
-			const double lj = s.norm();
-			// rychlé vyloučení obálkou
-			if ( std::max( a.x, a.x + r.x ) + eps < std::min( b.x, b.x + s.x ) || std::max( b.x, b.x + s.x ) + eps < std::min( a.x, a.x + r.x )
-			     || std::max( a.y, a.y + r.y ) + eps < std::min( b.y, b.y + s.y ) || std::max( b.y, b.y + s.y ) + eps < std::min( a.y, a.y + r.y ) )
-			{
-				continue;
-			}
-			const double den = r.x * s.y - r.y * s.x;
-			if ( std::abs( den ) < 1e-12 * li * lj )
-			{
-				continue; // rovnoběžné (překryvy nevadí – konce se spojí přes toleranci)
-			}
-			const CCVector2d q = b - a;
-			const double t = ( q.x * s.y - q.y * s.x ) / den;
-			const double u = ( q.x * r.y - q.y * r.x ) / den;
-			const double et = eps / li;
-			const double eu = eps / lj;
-			if ( t >= -et && t <= 1.0 + et && u >= -eu && u <= 1.0 + eu )
-			{
-				cuts[i].push_back( std::min( 1.0, std::max( 0.0, t ) ) );
-				cuts[j].push_back( std::min( 1.0, std::max( 0.0, u ) ) );
-			}
-		}
-	}
-	// vrcholy (sloučené do eps) a hrany
-	std::vector<CCVector2d> V;
-	std::map<std::pair<long long, long long>, std::vector<int>> grid;
-	const double cell = 4.0 * eps;
-	auto vid = [&]( const CCVector2d& p )
-	{
-		const long long gx = static_cast<long long>( std::floor( p.x / cell ) );
-		const long long gy = static_cast<long long>( std::floor( p.y / cell ) );
-		for ( long long dx = -1; dx <= 1; ++dx )
-		{
-			for ( long long dy = -1; dy <= 1; ++dy )
-			{
-				auto it = grid.find( { gx + dx, gy + dy } );
-				if ( it == grid.end() )
-				{
-					continue;
-				}
-				for ( int k : it->second )
-				{
-					if ( dist( V[static_cast<size_t>( k )], p ) <= eps )
-					{
-						return k;
-					}
-				}
-			}
-		}
-		V.push_back( p );
-		const int k = static_cast<int>( V.size() ) - 1;
-		grid[{ gx, gy }].push_back( k );
-		return k;
-	};
-	std::set<std::pair<int, int>> E;
-	for ( size_t i = 0; i < n; ++i )
-	{
-		std::vector<double>& c = cuts[i];
-		std::sort( c.begin(), c.end() );
-		const CCVector2d a = segs[i].first;
-		const CCVector2d r = segs[i].second - a;
-		int prev = vid( a + r * c[0] );
-		for ( size_t k = 1; k < c.size(); ++k )
-		{
-			const int cur = vid( a + r * c[k] );
-			if ( cur != prev )
-			{
-				E.insert( { std::min( prev, cur ), std::max( prev, cur ) } );
-			}
-			prev = cur;
-		}
-	}
-	// sousedé seřazení podle úhlu
-	std::vector<std::vector<int>> adj( V.size() );
-	for ( const auto& e : E )
-	{
-		adj[static_cast<size_t>( e.first )].push_back( e.second );
-		adj[static_cast<size_t>( e.second )].push_back( e.first );
-	}
-	for ( size_t v = 0; v < V.size(); ++v )
-	{
-		const CCVector2d c = V[v];
-		std::sort( adj[v].begin(), adj[v].end(), [&]( int x, int y )
-		{
-			const CCVector2d dx = V[static_cast<size_t>( x )] - c;
-			const CCVector2d dy = V[static_cast<size_t>( y )] - c;
-			return std::atan2( dx.y, dx.x ) < std::atan2( dy.y, dy.x );
-		} );
-	}
-	// paprsek z kliku: zásahy hran seřazené podle vzdálenosti
-	const CCVector2d dir( 0.9999995, 0.001 );
-	std::vector<std::pair<double, std::pair<int, int>>> hits;
-	for ( const auto& e : E )
-	{
-		const CCVector2d a = V[static_cast<size_t>( e.first )];
-		const CCVector2d s = V[static_cast<size_t>( e.second )] - a;
-		const double den = dir.x * s.y - dir.y * s.x;
-		if ( std::abs( den ) < 1e-15 )
-		{
-			continue;
-		}
-		const CCVector2d q = a - P;
-		const double t = ( q.x * s.y - q.y * s.x ) / den; // vzdálenost po paprsku
-		const double u = ( q.x * dir.y - q.y * dir.x ) / den;
-		if ( t > 0.0 && u >= 0.0 && u <= 1.0 )
-		{
-			hits.push_back( { t, e } );
-		}
-	}
-	std::sort( hits.begin(), hits.end(), []( const std::pair<double, std::pair<int, int>>& x, const std::pair<double, std::pair<int, int>>& y ) { return x.first < y.first; } );
-	auto inside = []( const std::vector<CCVector2d>& poly, const CCVector2d& p )
-	{
-		bool in = false;
-		for ( size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++ )
-		{
-			if ( ( ( poly[i].y > p.y ) != ( poly[j].y > p.y ) ) && ( p.x < ( poly[j].x - poly[i].x ) * ( p.y - poly[i].y ) / ( poly[j].y - poly[i].y ) + poly[i].x ) )
-			{
-				in = !in;
-			}
-		}
-		return in;
-	};
-	double holes = 0.0;
-	for ( size_t hi = 0; hi < hits.size() && hi < 50; ++hi )
-	{
-		int a = hits[hi].second.first;
-		int b = hits[hi].second.second;
-		const CCVector2d da = V[static_cast<size_t>( b )] - V[static_cast<size_t>( a )];
-		const CCVector2d dp = P - V[static_cast<size_t>( a )];
-		if ( da.x * dp.y - da.y * dp.x < 0 )
-		{
-			std::swap( a, b ); // místnost (bod kliku) vlevo od hrany
-		}
-		const int a0 = a;
-		const int b0 = b;
-		std::vector<CCVector2d> poly;
-		bool closed = false;
-		for ( int step = 0; step < 200000; ++step )
-		{
-			poly.push_back( V[static_cast<size_t>( a )] );
-			// v b: další hrana po směru hodinových ručiček od hrany zpět do a (obcházení stěny po levé ruce)
-			const std::vector<int>& nb = adj[static_cast<size_t>( b )];
-			const auto it = std::find( nb.begin(), nb.end(), a );
-			if ( it == nb.end() )
-			{
-				break;
-			}
-			const size_t idx = static_cast<size_t>( it - nb.begin() );
-			const int c = nb[( idx + nb.size() - 1 ) % nb.size()];
-			a = b;
-			b = c;
-			if ( a == a0 && b == b0 )
-			{
-				closed = true;
-				break;
-			}
-		}
-		if ( !closed || poly.size() < 3 )
-		{
-			continue;
-		}
-		double area2 = 0.0;
-		for ( size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++ )
-		{
-			area2 += ( poly[j].x * poly[i].y - poly[i].x * poly[j].y );
-		}
-		const double area = area2 / 2.0;
-		if ( area > 0.0 && inside( poly, P ) )
-		{
-			const double m2 = ( area - holes ) / ( m_scale * m_scale );
-			return m2 > 2000.0 ? -1.0 : m2;
-		}
-		if ( area < 0.0 )
-		{
-			holes += -area; // ostrůvek uvnitř místnosti (sloup) – odečíst a hledat dál po paprsku
-		}
-	}
-	return -1.0;
-}

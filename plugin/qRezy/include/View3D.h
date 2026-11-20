@@ -128,6 +128,8 @@ private:
 
 	ccMainAppInterface* m_app = nullptr;
 	ccGLWindowInterface* m_win = nullptr;
+	//! překreslení 3D okna (počítá se při QREZY_TIMING)
+	void winRedraw( bool only2D = false, bool resetLOD = true );
 	QWidget* m_widget = nullptr;
 	ccPointCloud* m_clone = nullptr;
 	ccHObject* m_linesGroup = nullptr;
